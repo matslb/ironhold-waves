@@ -1336,6 +1336,50 @@ import {
     return true;
   }
 
+  function crownringWaveXp(wave) {
+    return 18 + Math.min(62, Math.max(1, wave) * 8);
+  }
+
+  function grantCrownringWaveReward(wave) {
+    if (!arenaActivityActive()) {
+      return 0;
+    }
+    const activity = game.exploration.arenaActivity;
+    const xp = crownringWaveXp(wave);
+    awardExplorationXp(xp);
+    if (online.connected) {
+      sendOnlineMessage({
+        kind: "arenaReward",
+        activityId: activity.activityId,
+        participants: activity.participants.slice(0, 8),
+        wave,
+        xp
+      });
+    }
+    return xp;
+  }
+
+  function handleArenaReward(message) {
+    if (!message || game.mode !== "exploration") {
+      return;
+    }
+    if (!messageFromKnownHost(message)) {
+      return;
+    }
+    const participants = Array.isArray(message.participants) ? message.participants : [];
+    if (participants.length && !participants.includes(online.localId)) {
+      return;
+    }
+    if (message.activityId && game.exploration.arenaActivity.activityId && message.activityId !== game.exploration.arenaActivity.activityId) {
+      return;
+    }
+    const xp = Math.max(0, Math.floor(numberOrZero(message.xp)));
+    awardExplorationXp(xp);
+    if (xp > 0) {
+      showBanner("Crownring purse +" + xp + " XP", 2.4);
+    }
+  }
+
   function clearExplorationWorld() {
     if (game.explorationGroup) {
       scene.remove(game.explorationGroup);
@@ -6069,6 +6113,10 @@ import {
       handleEnemyReward(message);
       return;
     }
+    if (message.kind === "arenaReward") {
+      handleArenaReward(message);
+      return;
+    }
     if (message.kind === "potionPickup") {
       handlePotionPickupRequest(message);
       return;
@@ -8631,7 +8679,8 @@ import {
           activity.phase = "intermission";
           activity.nextWaveIn = game.nextWaveIn;
           activity.exitOpen = true;
-          showBanner("Crownring wave " + game.wave + " cleared - press Y to yield", 3);
+          const xp = grantCrownringWaveReward(game.wave);
+          showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP - press Y to yield", 3);
         } else {
           showBanner("Wave " + game.wave + " cleared");
         }
