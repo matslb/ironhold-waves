@@ -256,8 +256,8 @@
     }
 
     .action {
-      width: 78px;
-      height: 64px;
+      width: 86px;
+      height: 68px;
       position: relative;
       padding: 7px 7px 6px;
       display: grid;
@@ -283,15 +283,15 @@
 
     .keybind {
       width: 100%;
-      min-height: 14px;
-      overflow: hidden;
+      min-height: 20px;
+      overflow: visible;
       color: rgba(244, 239, 228, 0.76);
-      font-size: 10px;
+      font-size: 9.5px;
       font-weight: 900;
-      line-height: 1.15;
+      line-height: 1.08;
       text-align: center;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      text-overflow: clip;
+      white-space: normal;
     }
 
     .action.active {
@@ -478,6 +478,27 @@
       text-transform: uppercase;
     }
 
+    .online-choice {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .online-choice button {
+      min-height: 42px;
+      padding: 0 12px;
+      background: rgba(15, 18, 18, 0.72);
+      color: var(--ink);
+      border-color: var(--line);
+      box-shadow: none;
+    }
+
+    .online-choice button.selected {
+      color: #7ae8ff;
+      border-color: rgba(122, 232, 255, 0.6);
+      background: rgba(57, 157, 194, 0.14);
+    }
+
     .online-row {
       display: flex;
       align-items: center;
@@ -518,6 +539,11 @@
       display: flex;
       gap: 8px;
       align-items: center;
+    }
+
+    .code-entry[hidden],
+    #hostButton[hidden] {
+      display: none;
     }
 
     .name-input,
@@ -838,7 +864,7 @@
         <button class="character-card selected" type="button" data-character="knight" role="radio" aria-checked="true">
           <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg></span>
           <strong>Knight</strong>
-          <span>Blade and guard</span>
+          <span>Blade, guard, bash</span>
         </button>
         <button class="character-card" type="button" data-character="wizard" role="radio" aria-checked="false">
           <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg></span>
@@ -865,13 +891,17 @@
           <label for="playerNameInput">Name</label>
           <input class="name-input" id="playerNameInput" maxlength="14" autocomplete="nickname" aria-label="Player name" placeholder="Player">
         </div>
+        <div class="online-choice" role="group" aria-label="Online action">
+          <button id="hostFlowButton" class="secondary" type="button" aria-pressed="false">Host</button>
+          <button id="joinFlowButton" class="secondary selected" type="button" aria-pressed="true">Join</button>
+        </div>
         <div class="room-code-card" id="roomCodeCard" hidden>
           <span>Room Code</span>
           <strong id="roomCodeText">----</strong>
         </div>
         <div class="online-row">
-          <button id="hostButton" class="secondary" type="button">Host Game</button>
-          <div class="code-entry">
+          <button id="hostButton" class="secondary" type="button" hidden>Create Room</button>
+          <div class="code-entry" id="joinControls">
             <input class="code-input" id="roomCodeInput" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="Room code" placeholder="0000">
             <button id="joinButton" class="secondary" type="button">Join</button>
           </div>
@@ -918,12 +948,15 @@
       const characterCards = Array.from(document.querySelectorAll("[data-character]"));
       const modeCards = Array.from(document.querySelectorAll("[data-mode]"));
       const onlinePanel = document.getElementById("onlinePanel");
+      const hostFlowButton = document.getElementById("hostFlowButton");
+      const joinFlowButton = document.getElementById("joinFlowButton");
       const hostButton = document.getElementById("hostButton");
       const joinButton = document.getElementById("joinButton");
       const playerNameInput = document.getElementById("playerNameInput");
       const roomCodeCard = document.getElementById("roomCodeCard");
       const roomCodeText = document.getElementById("roomCodeText");
       const roomCodeInput = document.getElementById("roomCodeInput");
+      const joinControls = document.getElementById("joinControls");
       const onlineStatus = document.getElementById("onlineStatus");
       const talkPrompt = document.getElementById("talkPrompt");
       const talkTarget = document.getElementById("talkTarget");
@@ -947,6 +980,9 @@
 
       const TAU = Math.PI * 2;
       const arenaRadius = 25;
+      const knightBashGuardCost = 30;
+      const wizardLightningManaCost = 30;
+      const wizardBurstManaCost = 32;
       const tmpVec = new THREE.Vector3();
       const tmpVec2 = new THREE.Vector3();
       const up = new THREE.Vector3(0, 1, 0);
@@ -1074,6 +1110,7 @@
         topic: "",
         connected: false,
         role: null,
+        flow: "join",
         roomCode: "",
         sendTimer: 0,
         presenceTimer: 0,
@@ -1377,6 +1414,13 @@
           tree.add(crown, crownB);
         }
         tree.rotation.y = random() * TAU;
+        if (Math.hypot(x, z) > 92) {
+          tree.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = false;
+            }
+          });
+        }
         group.add(tree);
       }
 
@@ -1388,7 +1432,29 @@
         rock.scale.set(1.2 + random() * 1.4, 0.55 + random() * 0.55, 0.8 + random() * 1.2);
         rock.rotation.set(random() * 0.4, random() * TAU, random() * 0.28);
         addShadow(rock);
+        rock.castShadow = large;
         group.add(rock);
+      }
+
+      function addExplorationFlowers(group, random, count) {
+        const geometry = new THREE.SphereGeometry(0.09, 8, 6);
+        const material = materials.flower.clone();
+        const flowers = new THREE.InstancedMesh(geometry, material, count);
+        flowers.castShadow = false;
+        flowers.receiveShadow = false;
+        flowers.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+        const matrix = new THREE.Matrix4();
+        const quaternion = new THREE.Quaternion();
+        const scale = new THREE.Vector3();
+        for (let i = 0; i < count; i += 1) {
+          const point = randomExplorationPoint(random, 9, 165);
+          const size = 0.75 + random() * 0.55;
+          scale.set(size, 0.82 + random() * 0.45, size);
+          matrix.compose(new THREE.Vector3(point.x, 0.16, point.z), quaternion, scale);
+          flowers.setMatrixAt(i, matrix);
+        }
+        group.add(flowers);
       }
 
       function addExplorationLake(group, x, z, rx, rz, random) {
@@ -1852,6 +1918,7 @@
           const mountain = makeCone(4.2 + random() * 5.6, 7.5 + random() * 10, 7 + Math.floor(random() * 3), materials.darkStone, Math.cos(angle) * radius, 3.8 + random() * 3.6, Math.sin(angle) * radius);
           mountain.rotation.y = random() * TAU;
           mountain.scale.x *= 0.82 + random() * 0.6;
+          mountain.castShadow = false;
           group.add(mountain);
           if (i % 2 === 0) {
             addExplorationRock(group, Math.cos(angle) * (radius - 6), Math.sin(angle) * (radius - 6), random, true);
@@ -1866,11 +1933,7 @@
           const point = randomExplorationPoint(random, 13, 178);
           addExplorationRock(group, point.x, point.z, random, random() > 0.82);
         }
-        for (let i = 0; i < 120; i += 1) {
-          const point = randomExplorationPoint(random, 9, 165);
-          const flower = makeSphere(0.08 + random() * 0.04, materials.flower.clone(), point.x, 0.16, point.z);
-          group.add(flower);
-        }
+        addExplorationFlowers(group, random, 120);
 
         const mobCount = 42;
         for (let i = 0; i < mobCount; i += 1) {
@@ -2422,6 +2485,8 @@
         onlinePanel.hidden = mode === "solo";
         if (mode === "solo") {
           closeOnlineConnection();
+        } else {
+          setOnlineFlow(online.flow, false);
         }
         modeCards.forEach(card => {
           const selected = card.dataset.mode === mode;
@@ -2429,7 +2494,11 @@
           card.setAttribute("aria-checked", selected ? "true" : "false");
         });
         startButton.textContent = getStartButtonText();
-        updateOnlineStatus(mode === "solo" ? "Offline" : online.connected ? "Connected" : "Not connected");
+        if (mode === "solo") {
+          updateOnlineStatus("Offline");
+        } else if (online.connected) {
+          updateOnlineStatus("Connected");
+        }
       }
 
       function updateCharacterUi() {
@@ -2447,15 +2516,17 @@
           ? '<svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg>'
           : '<svg viewBox="0 0 32 32"><path d="M22 4l6 6M18 8l6 6M4 28l6-2 15-15-4-4L6 22zM6 22l4 4"/></svg>',
           "LMB / Space");
-        potionIcon.innerHTML = abilityMarkup(
-          '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>',
-          "MMB / H");
-        potionIcon.hidden = !wizard;
+        potionIcon.innerHTML = abilityMarkup(wizard
+          ? '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>'
+          : '<svg viewBox="0 0 32 32"><path d="M15 3l9 4v7c0 6-3.5 10.5-9 13-5.5-2.5-9-7-9-13V7z"/><path d="M15 8v14M9.5 15h11M24 12l5 4-5 4"/></svg>',
+          wizard ? "MMB / H" : "J / MMB");
+        potionIcon.hidden = false;
         if (secondaryTouchButton) {
           secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : "Block");
         }
         if (potionTouchButton) {
-          potionTouchButton.hidden = !wizard;
+          potionTouchButton.hidden = false;
+          potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : "Shield bash");
         }
         characterCards.forEach(card => {
           const selected = card.dataset.character === player.character;
@@ -2466,6 +2537,25 @@
 
       function updateOnlineStatus(text) {
         onlineStatus.textContent = text;
+      }
+
+      function setOnlineFlow(flow, closeCurrent = false) {
+        const nextFlow = flow === "host" ? "host" : "join";
+        if (closeCurrent && online.role && online.role !== nextFlow) {
+          closeOnlineConnection();
+        }
+        online.flow = nextFlow;
+        const hosting = online.flow === "host";
+        hostFlowButton.classList.toggle("selected", hosting);
+        joinFlowButton.classList.toggle("selected", !hosting);
+        hostFlowButton.setAttribute("aria-pressed", hosting ? "true" : "false");
+        joinFlowButton.setAttribute("aria-pressed", hosting ? "false" : "true");
+        hostButton.hidden = !hosting;
+        joinControls.hidden = hosting;
+        roomCodeCard.hidden = !(hosting && online.roomCode);
+        if (!online.connected) {
+          updateOnlineStatus(hosting ? "Create a room" : "Enter 4 digits");
+        }
       }
 
       function normalizeRoomCode(value) {
@@ -2491,7 +2581,7 @@
       function showRoomCode(code) {
         online.roomCode = code || "";
         roomCodeText.textContent = code || "----";
-        roomCodeCard.hidden = !code;
+        roomCodeCard.hidden = !(online.flow === "host" && code);
         if (code) {
           roomCodeInput.value = code;
         }
@@ -2622,6 +2712,7 @@
         if (!ensureMqttLibrary()) {
           return;
         }
+        setOnlineFlow("host");
         if (game.mode === "solo") {
           setGameMode("ffa");
         }
@@ -2632,6 +2723,7 @@
         if (!ensureMqttLibrary()) {
           return;
         }
+        setOnlineFlow("join");
         const code = normalizeRoomCode(roomCodeInput.value);
         roomCodeInput.value = code;
         if (code.length !== 4) {
@@ -3037,7 +3129,8 @@
       function applyRemoteAction(action, state) {
         const source = new THREE.Vector3(state.x || 0, 0, state.z || 0);
         const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
-        spawnImpact(source, game.mode === "exploration" ? 0x7ae8ff : 0xff705c, action === "burst" ? 18 : 10);
+        const actionColor = action === "bash" ? 0xffd889 : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
+        spawnImpact(source, actionColor, action === "burst" ? 18 : action === "bash" ? 14 : 10);
 
         if (game.mode === "exploration") {
           applyRemoteActionToEnemies(action, source, state.yaw || 0, forward);
@@ -3053,6 +3146,17 @@
               const direction = enemy.position.clone().sub(source).normalize();
               damageEnemy(enemy, 20, direction, 0.55);
             }
+          }
+          return;
+        }
+
+        if (action === "bash") {
+          for (const enemy of game.enemies) {
+            if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
+              continue;
+            }
+            damageEnemy(enemy, 18, forward, 0.78);
+            enemy.velocity.addScaledVector(forward, 3.4);
           }
           return;
         }
@@ -3084,13 +3188,16 @@
         if (action === "burst") {
           hit = player.position.distanceTo(source) < 3.35;
         } else {
-          hit = pointInAttackCone(source, yaw, player.position.clone(), action === "lightning" ? 14.0 : 2.7, action === "lightning" ? 0.55 : 0.18);
+          const range = action === "lightning" ? 14.0 : action === "bash" ? 2.55 : 2.7;
+          const minDot = action === "lightning" ? 0.55 : action === "bash" ? 0.24 : 0.18;
+          hit = pointInAttackCone(source, yaw, player.position.clone(), range, minDot);
         }
         if (!hit) {
           return;
         }
-        const damage = action === "lightning" ? 22 : action === "burst" ? 18 : 24;
-        applyPlayerDamage(damage, damage + 12, forward, action === "burst" ? 0.18 : 0.08);
+        const damage = action === "lightning" ? 22 : action === "burst" ? 18 : action === "bash" ? 14 : 24;
+        const guardDamage = action === "bash" ? 36 : damage + 12;
+        applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
       }
 
       function createBarbarianModel(scale) {
@@ -3641,7 +3748,7 @@
           player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
           if (player.blocking) {
             player.guard = Math.max(0, player.guard - dt * 8);
-          } else {
+          } else if (!(player.attacking && player.attackKind === "bash")) {
             player.guard = Math.min(player.maxGuard, player.guard + dt * 22);
           }
         }
@@ -3689,6 +3796,9 @@
 
           if (player.character === "wizard") {
             updateWizardCastAnimation(t, swing);
+          } else if (player.attackKind === "bash") {
+            player.swordPivot.rotation.set(-0.28 + swing * 0.2, -0.58 + swing * 0.22, -0.86 + swing * 0.28);
+            player.slashArc.visible = false;
           } else {
             player.swordPivot.rotation.set(-0.48 + swing * 1.0, -0.95 + swing * 1.85, -0.85 + swing * 1.2);
             player.slashArc.visible = true;
@@ -3696,13 +3806,15 @@
             player.slashArc.rotation.z = -1.3 + swing * 1.9;
           }
 
-          const hitFrame = player.attackKind === "lightning" ? t > 0.28 : player.attackKind === "burst" ? t > 0.36 : t > 0.34 && t < 0.68;
+          const hitFrame = player.attackKind === "lightning" ? t > 0.28 : player.attackKind === "burst" ? t > 0.36 : player.attackKind === "bash" ? t > 0.26 : t > 0.34 && t < 0.68;
           if (!player.attackHitDone && hitFrame) {
             player.attackHitDone = true;
             if (player.attackKind === "lightning") {
               launchLightningBall();
             } else if (player.attackKind === "burst") {
               performWizardBurst();
+            } else if (player.attackKind === "bash") {
+              performShieldBash();
             } else {
               performPlayerAttack();
             }
@@ -3729,11 +3841,13 @@
         }
 
         if (player.character === "knight") {
-          const shieldTargetY = player.blocking ? -0.15 : 0.38;
-          const shieldTargetZ = player.blocking ? -0.42 : 0;
+          const bashing = player.attacking && player.attackKind === "bash";
+          const shieldTargetY = bashing ? -0.42 : player.blocking ? -0.15 : 0.38;
+          const shieldTargetZ = bashing ? -0.78 : player.blocking ? -0.42 : 0;
+          const shieldTargetPosZ = bashing ? -0.58 : player.blocking ? -0.42 : -0.08;
           player.shieldPivot.rotation.y = lerp(player.shieldPivot.rotation.y, shieldTargetY, 1 - Math.pow(0.00001, dt));
           player.shieldPivot.rotation.z = lerp(player.shieldPivot.rotation.z, shieldTargetZ, 1 - Math.pow(0.00001, dt));
-          player.shieldPivot.position.z = lerp(player.shieldPivot.position.z, player.blocking ? -0.42 : -0.08, 1 - Math.pow(0.00001, dt));
+          player.shieldPivot.position.z = lerp(player.shieldPivot.position.z, shieldTargetPosZ, 1 - Math.pow(0.00001, dt));
         }
 
         const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
@@ -3814,7 +3928,7 @@
           return;
         }
         if (player.character === "wizard") {
-          const cost = 18;
+          const cost = wizardLightningManaCost;
           if (player.mana < cost) {
             return;
           }
@@ -3844,7 +3958,7 @@
         if (game.state !== "playing" || player.attacking || player.secondaryCooldown > 0) {
           return;
         }
-        const cost = 32;
+        const cost = wizardBurstManaCost;
         if (player.mana < cost) {
           return;
         }
@@ -3857,6 +3971,26 @@
         player.attackCooldown = Math.max(player.attackCooldown, 0.25);
         player.secondaryCooldown = 1.15;
         sendOnlineAction("burst");
+      }
+
+      function startKnightBash() {
+        if (game.state !== "playing" || !questDialog.hidden || player.character !== "knight" || player.attacking || player.attackCooldown > 0) {
+          return false;
+        }
+        if (player.guard < knightBashGuardCost) {
+          return false;
+        }
+        player.guard -= knightBashGuardCost;
+        player.blockHeld = false;
+        player.blocking = false;
+        player.attacking = true;
+        player.attackKind = "bash";
+        player.attackTimer = 0;
+        player.attackDuration = 0.5;
+        player.attackCooldown = 0.72;
+        player.attackHitDone = false;
+        sendOnlineAction("bash");
+        return true;
       }
 
       function performPlayerAttack() {
@@ -3884,6 +4018,31 @@
         if (hitAny) {
           player.guard = Math.min(player.maxGuard, player.guard + 6);
         }
+      }
+
+      function performShieldBash() {
+        const forward = forwardFromYaw(player.yaw, tmpVec);
+        const impactPosition = player.position.clone().addScaledVector(forward, 1.25);
+        let hitAny = false;
+        for (const enemy of game.enemies) {
+          if (enemy.dead) {
+            continue;
+          }
+          tmpVec2.copy(enemy.position).sub(player.position);
+          const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+          if (distance > 2.35 + enemy.radius) {
+            continue;
+          }
+          tmpVec2.y = 0;
+          tmpVec2.multiplyScalar(1 / distance);
+          if (forward.dot(tmpVec2) < 0.26) {
+            continue;
+          }
+          damageEnemy(enemy, 18 + Math.floor(Math.random() * 5), forward, 0.82);
+          enemy.velocity.addScaledVector(forward, 2.8);
+          hitAny = true;
+        }
+        spawnImpact(impactPosition, hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 16 : 8);
       }
 
       function launchLightningBall() {
@@ -3914,7 +4073,7 @@
           speed: 12.8,
           turnRate: 0.85,
           life: 2.45,
-          damage: 34 + Math.floor(Math.random() * 7),
+          damage: 31 + Math.floor(Math.random() * 6),
           stun: 0.36,
           radius: 0.56
         });
@@ -4662,10 +4821,11 @@
         koText.textContent = game.kills;
         xpReadout.hidden = game.mode !== "exploration";
         xpText.textContent = game.exploration.xp;
-        attackIcon.classList.toggle("active", player.attacking && player.attackKind !== "burst");
+        attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning"));
         blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : player.blocking);
-        blockIcon.classList.toggle("ready", wizard && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= 32);
-        potionIcon.classList.toggle("ready", wizard && player.potionCooldown <= 0);
+        blockIcon.classList.toggle("ready", wizard && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= wizardBurstManaCost);
+        potionIcon.classList.toggle("active", !wizard && player.attacking && player.attackKind === "bash");
+        potionIcon.classList.toggle("ready", wizard ? player.potionCooldown <= 0 : !player.attacking && player.attackCooldown <= 0 && player.guard >= knightBashGuardCost);
       }
 
       function tick() {
@@ -4742,9 +4902,17 @@
             return;
           }
           keys.add(event.code);
-          if (event.code === "Space" || event.code === "KeyJ") {
+          if (event.code === "Space") {
             event.preventDefault();
             startAttack();
+          }
+          if (event.code === "KeyJ") {
+            event.preventDefault();
+            if (player.character === "knight") {
+              startKnightBash();
+            } else {
+              startAttack();
+            }
           }
           if (event.code === "KeyK") {
             event.preventDefault();
@@ -4773,7 +4941,11 @@
           }
           if (event.button === 1) {
             event.preventDefault();
-            dropWizardHealthPotion();
+            if (player.character === "knight") {
+              startKnightBash();
+            } else {
+              dropWizardHealthPotion();
+            }
           }
         });
 
@@ -4824,7 +4996,13 @@
             event.preventDefault();
             if (action === "attack") startAttack();
             if (action === "block") startSecondaryAbility();
-            if (action === "potion") dropWizardHealthPotion();
+            if (action === "potion") {
+              if (player.character === "knight") {
+                startKnightBash();
+              } else {
+                dropWizardHealthPotion();
+              }
+            }
           });
           button.addEventListener("pointerup", event => {
             event.preventDefault();
@@ -4845,6 +5023,9 @@
         for (const card of modeCards) {
           card.addEventListener("click", () => setGameMode(card.dataset.mode));
         }
+
+        hostFlowButton.addEventListener("click", () => setOnlineFlow("host", true));
+        joinFlowButton.addEventListener("click", () => setOnlineFlow("join", true));
 
         hostButton.addEventListener("click", () => {
           hostOnlineGame().catch(error => updateOnlineStatus(error.message || "Host failed"));
