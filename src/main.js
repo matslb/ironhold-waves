@@ -1,5 +1,15 @@
 import mqtt from "https://cdn.jsdelivr.net/npm/mqtt@5.15.1/dist/mqtt.esm.js";
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+import {
+  abilityDisplayNames,
+  abilityUnlockLevels,
+  defaultCombatTuning,
+  defaultWeaponByCharacter,
+  equipmentDefs,
+  perkDefs,
+  progressStorageKey,
+  xpForLevel
+} from "./content/rpg.js";
 
 (() => {
   "use strict";
@@ -81,10 +91,6 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
   const TAU = Math.PI * 2;
   const arenaRadius = 25;
-  const knightBashGuardCost = 30;
-  const wizardLightningManaCost = 42;
-  const wizardBurstManaCost = 32;
-  const progressStorageKey = "ironholdProgressV2";
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
@@ -517,74 +523,6 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     }
   }
 
-  const defaultWeaponByCharacter = {
-    knight: "knight_arming_sword",
-    wizard: "wizard_oak_staff"
-  };
-
-  const equipmentDefs = {
-    knight_arming_sword: {
-      character: "knight",
-      name: "Arming Sword",
-      tuning: {}
-    },
-    knight_roadwarden_blade: {
-      character: "knight",
-      name: "Roadwarden Blade",
-      tuning: {
-        slashRange: 2.75,
-        slashDamageBonus: 2,
-        guardOnSlashHit: 8
-      }
-    },
-    wizard_oak_staff: {
-      character: "wizard",
-      name: "Oak Staff",
-      tuning: {}
-    },
-    wizard_wayfinder_focus: {
-      character: "wizard",
-      name: "Wayfinder Focus",
-      tuning: {
-        lightningDamageBonus: 2
-      }
-    }
-  };
-
-  const perkDefs = {
-    crownford_drill: {
-      name: "Crownford Drill",
-      tuning: {
-        bashGuardCost: 25,
-        burstManaCost: 28
-      }
-    }
-  };
-
-  const defaultCombatTuning = {
-    slashRange: 2.55,
-    slashDamageMin: 32,
-    slashDamageSpread: 8,
-    slashDamageBonus: 0,
-    slashKnockback: 0.42,
-    guardOnSlashHit: 6,
-    bashGuardCost: knightBashGuardCost,
-    bashDamageMin: 18,
-    bashDamageSpread: 5,
-    bashKnockback: 1.16,
-    bashVelocity: 6.4,
-    lightningManaCost: wizardLightningManaCost,
-    lightningDamageMin: 31,
-    lightningDamageSpread: 6,
-    lightningDamageBonus: 0,
-    lightningTurnRate: 0.85,
-    lightningLife: 2.45,
-    remoteLightningRange: 14.5,
-    burstManaCost: wizardBurstManaCost,
-    burstDamageMin: 24,
-    burstDamageSpread: 6
-  };
-
   function defaultCharacterProgress(character) {
     const key = character === "wizard" ? "wizard" : "knight";
     const weapon = defaultWeaponByCharacter[key];
@@ -878,11 +816,6 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return progression.characters[key];
   }
 
-  function xpForLevel(level) {
-    const steps = Math.max(0, Math.floor(level) - 1);
-    return steps * 65 + (steps * (steps - 1) / 2) * 20;
-  }
-
   function levelFromXp(xp) {
     let level = 1;
     const total = Math.max(0, Math.floor(numberOrZero(xp)));
@@ -897,27 +830,11 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   }
 
   function abilityUnlockLevel(ability) {
-    const levels = {
-      slash: 1,
-      lightning: 1,
-      block: 1,
-      bash: 3,
-      burst: 3,
-      potion: 5
-    };
-    return levels[ability] || 1;
+    return abilityUnlockLevels[ability] || 1;
   }
 
   function abilityDisplayName(ability) {
-    const names = {
-      slash: "Sword slash",
-      lightning: "Lightning ball",
-      block: "Shield block",
-      bash: "Shield bash",
-      burst: "Arcane burst",
-      potion: "Potion drop"
-    };
-    return names[ability] || "Ability";
+    return abilityDisplayNames[ability] || "Ability";
   }
 
   function hasAbility(ability, character = player.character) {

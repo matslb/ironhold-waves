@@ -18,6 +18,7 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 - `index.html`: Firebase/GitHub Pages entry point, redirect logic, and DOM markup.
 - `styles/app.css`: HUD, menu, desktop, and touch styling.
 - `src/main.js`: Current game runtime, Three.js scene, world generation, combat, networking, progression, and input. Treat this as the integration module until smaller systems are extracted.
+- `src/content/rpg.js`: RPG constants, equipment definitions, perk definitions, ability unlock data, and level XP curve.
 
 Near-term extraction order:
 - Pure data and helpers: constants, equipment, quests, biomes, progression, math.
