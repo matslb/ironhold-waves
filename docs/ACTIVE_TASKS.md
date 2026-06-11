@@ -643,9 +643,15 @@ Shipped slice: visible kit identity + sword tip geometry fix (owner: Cursor agen
 - UI: the lower-left kit panel got a second muted line with the kit's `summary` tag string (e.g. "+dmg +HP / -reach -speed") and a hover tooltip listing the kit's exact tuning overrides vs base values. Panel is now hoverable (combat mouse input is on `window`, so it does not eat clicks); still hidden sub-720px. The Help panel kit list shows the same summary tags.
 - Geometry fix: the knight sword `bladeTip` cone was both inverted (apex pointed at the hilt) and mis-rotated 45 degrees off-axis, reading as a floating diamond. `buildSwordTip` now spins the 4-sided cone about its own axis first (`rotation.y = PI/4`), points the apex forward (`rotation.x = -PI/2`), sizes the base to the blade cross-section (radius = halfWidth * sqrt2), and joins flush at the blade end z. Same fix applied to the arrow projectile head, which had the same inversion.
 
+Shipped slice: wizard/ranger health nerf + minimap allies + Help audit (owner: Cursor agent)
+- Balance: wizard base health cut from 62 +5/level to 48 +4/level, ranger from 68 +5/level to 54 +4/level in `progressionStatsFor` (`src/main.js`). Knight unchanged at 78 +6/level. Kit `kitHealthBonus` and exploration health boons still stack on top, so Crownring Maul / Briar Focus remain meaningful picks. Rationale: both ranged classes were too durable for their damage output after the earlier DPS nerfs.
+- Minimap: the dynamic blit pass in `updateQuestMap` now draws one palette-tinted dot (the remote's `remotePalette(id).glow` color, dark outline) per connected remote player, skipping non-playing remotes and clamping far-away allies to the map rim. Cheap per-frame cost: a couple of arcs every 0.16s tick.
+- Help panel audit vs tonight's shipped state: added a minimap paragraph (terrain/quests/compass/ally dots), "lightly built/armored" warnings to the wizard and ranger taglines, an expanded Weapon Kits paragraph covering visible weapon swaps + stat sidegrades + the hover tooltip, and a new "Dangers Of The Valley" section explaining the enemy tier system (white prowler / amber veteran 1.6x XP / red dread 2.4x XP, tougher farther from the homestead). Class ability lists and kit summaries were already data-driven and correct.
+
 Remaining work:
 - Playtest kit balance (maul vs blade, rod vs focus) in Crownring waves, now including the new kit stat modifiers.
-- Two-client smoke test: remote weapon model swap when a teammate presses G mid-session.
+- Playtest wizard/ranger survivability after the health cut, especially against tier 2/3 packs and dragon fireballs.
+- Two-client smoke test: remote weapon model swap when a teammate presses G mid-session, and ally dots on the minimap.
 - Playtest tier thresholds/multipliers and the six new abilities (especially Frostbind stun duration and Crown of Storms cost) against tier 2/3 packs.
 - Decide and implement the first inventory boundary.
 - Add temporary buffs/debuffs once UI and persistence surfaces are clear.

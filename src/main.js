@@ -2291,7 +2291,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     let stats;
     if (character === "wizard") {
       stats = {
-        maxHealth: 62 + steps * 5 + (boons.health || 0),
+        maxHealth: 48 + steps * 4 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 72 + steps * 8 + (boons.mana || 0),
         manaRegen: 16.5 + steps * 0.65,
@@ -2300,7 +2300,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     } else if (character === "ranger") {
       // Focus reuses the mana fields: small pool, fast regen.
       stats = {
-        maxHealth: 68 + steps * 5 + (boons.health || 0),
+        maxHealth: 54 + steps * 4 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 64 + steps * 6 + (boons.mana || 0),
         manaRegen: 13.5 + steps * 0.5,
@@ -5959,6 +5959,32 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         drawQuestMapArea(ctx, area, size, center, scale);
       }
     }
+    // Allies: one palette-tinted dot per connected remote player, clamped to
+    // the map rim so distant teammates pin at the edge. Runs in the cheap
+    // blit pass, so keep this to simple arcs.
+    if (online.connected && online.remotePlayers.size > 0) {
+      const rimDist = mapRadius - 4;
+      for (const [remoteId, remote] of online.remotePlayers) {
+        if (!remote.playing || !remote.group) {
+          continue;
+        }
+        const point = projectQuestMapPoint(remote.group.position.x, remote.group.position.z, size, center, scale);
+        const dx = point.x - center;
+        const dy = point.y - center;
+        const dist = Math.hypot(dx, dy);
+        if (dist > rimDist) {
+          point.x = center + (dx / dist) * rimDist;
+          point.y = center + (dy / dist) * rimDist;
+        }
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 3.1, 0, TAU);
+        ctx.fillStyle = "#" + remotePalette(remoteId).glow.toString(16).padStart(6, "0");
+        ctx.strokeStyle = "rgba(5, 9, 10, 0.9)";
+        ctx.lineWidth = 1.3;
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
     const playerPoint = projectQuestMapPoint(player.position.x, player.position.z, size, center, scale);
     ctx.translate(playerPoint.x, playerPoint.y);
     ctx.rotate(-player.yaw);
@@ -7952,7 +7978,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     },
     {
       character: "wizard",
-      tagline: "Storm caster. Magica fuels every spell and refills over time.",
+      tagline: "Storm caster. Magica fuels every spell and refills over time. Lightly built - keep your distance.",
       abilities: [
         { id: "lightning", keys: "LMB / Space / J" },
         { id: "burst", keys: "RMB / K" },
@@ -7963,7 +7989,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     },
     {
       character: "ranger",
-      tagline: "Skirmisher with bow and tumble roll. Focus powers shots and rolls.",
+      tagline: "Skirmisher with bow and tumble roll. Focus powers shots and rolls. Lightly armored - stay mobile.",
       abilities: [
         { id: "arrow", keys: "LMB / Space" },
         { id: "roll", keys: "RMB / K" },
@@ -8018,6 +8044,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const basics = helpSection("The Game");
     helpParagraph(basics, "Ironhold is an exploration RPG. Walk the valley, discover villages and Crownford, and take quests by talking to named NPCs. Quests reward XP, boons, perks, and weapon kits.");
     helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you.");
+    helpParagraph(basics, "The minimap in the lower right shows discovered terrain, roads, quest areas, and a compass. Your arrow sits at the center of attention; online teammates appear as small colored dots, pinned to the rim when they roam far away.");
 
     const controls = helpSection("Movement & Controls");
     helpList(controls, [
@@ -8048,7 +8075,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
 
     const kits = helpSection("Weapon Kits");
-    helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then press G to swap between unlocked kits. Your equipped kit shows in the lower left.");
+    helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then press G to swap between unlocked kits. Swapping visibly changes your held weapon and nudges your stats - small health, guard, magica, regen, or speed trade-offs on top of the weapon tuning. Your equipped kit and its trade-offs show in the lower left; hover the panel for exact numbers.");
     for (const entry of helpClassGuide) {
       const kitItems = Object.entries(equipmentDefs)
         .filter(([, def]) => def && def.character === entry.character && def.name)
@@ -8062,6 +8089,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         helpList(kits, kitItems);
       }
     }
+
+    const world = helpSection("Dangers Of The Valley");
+    helpParagraph(world, "Enemies grow tougher the farther you roam from the homestead. Near spawn they are prowlers; past the midlands they are veterans with amber health bars, and the far reaches hold dread beasts with red health bars - bigger, faster, harder-hitting, and worth far more XP.");
+    helpList(world, [
+      { label: "White HP bar", text: "prowler. Safe pickings near home." },
+      { label: "Amber HP bar", text: "veteran. Tougher, meaner, 1.6x XP." },
+      { label: "Red HP bar", text: "dread. Bring friends or a payoff ability. 2.4x XP." }
+    ]);
 
     const arena = helpSection("The Crownring Arena");
     helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each kill grants XP, every cleared wave pays a bonus, and every third wave lands a milestone reward.");
