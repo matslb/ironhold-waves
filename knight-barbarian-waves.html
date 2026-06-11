@@ -413,7 +413,7 @@
 
     .mode-select {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 8px;
       margin: -8px 0 18px;
     }
@@ -459,8 +459,7 @@
       display: none;
     }
 
-    .online-buttons,
-    .online-footer {
+    .online-row {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -468,28 +467,56 @@
       flex-wrap: wrap;
     }
 
-    .online-fields {
+    .room-code-card {
+      min-height: 76px;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      place-items: center;
       gap: 8px;
+      border: 1px solid rgba(122, 232, 255, 0.28);
+      border-radius: 8px;
+      background: rgba(57, 157, 194, 0.12);
     }
 
-    .signal-box {
-      width: 100%;
-      min-height: 70px;
-      resize: vertical;
+    .room-code-card[hidden] {
+      display: none;
+    }
+
+    .room-code-card span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .room-code-card strong {
+      color: #7ae8ff;
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .code-entry {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .code-input {
+      width: 112px;
+      height: 44px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: rgba(8, 10, 10, 0.74);
       color: var(--ink);
       font: inherit;
-      font-size: 11px;
-      line-height: 1.35;
-      padding: 8px;
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-align: center;
       outline: none;
     }
 
-    .signal-box:focus {
+    .code-input:focus {
       border-color: rgba(122, 232, 255, 0.58);
     }
 
@@ -595,8 +622,7 @@
         grid-template-columns: 1fr;
       }
 
-      .mode-select,
-      .online-fields {
+      .mode-select {
         grid-template-columns: 1fr;
       }
     }
@@ -696,21 +722,24 @@
           <strong>Co-op</strong>
           <span>Waves</span>
         </button>
+        <button class="mode-card" type="button" data-mode="exploration" role="radio" aria-checked="false">
+          <strong>Exploration</strong>
+          <span>Open world</span>
+        </button>
       </div>
       <div class="online-panel" id="onlinePanel" hidden>
-        <div class="online-buttons">
-          <button id="hostButton" class="secondary" type="button">Host</button>
-          <button id="joinButton" class="secondary" type="button">Join</button>
-          <button id="copySignalButton" class="secondary" type="button">Copy Code</button>
+        <div class="room-code-card" id="roomCodeCard" hidden>
+          <span>Room Code</span>
+          <strong id="roomCodeText">----</strong>
         </div>
-        <div class="online-fields">
-          <textarea class="signal-box" id="localSignal" readonly aria-label="Local connection code" placeholder="Local code"></textarea>
-          <textarea class="signal-box" id="remoteSignal" aria-label="Remote connection code" placeholder="Remote code"></textarea>
+        <div class="online-row">
+          <button id="hostButton" class="secondary" type="button">Host Game</button>
+          <div class="code-entry">
+            <input class="code-input" id="roomCodeInput" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="Room code" placeholder="0000">
+            <button id="joinButton" class="secondary" type="button">Join</button>
+          </div>
         </div>
-        <div class="online-footer">
-          <button id="connectSignalButton" class="secondary" type="button">Connect</button>
-          <span class="online-status" id="onlineStatus">Offline</span>
-        </div>
+        <span class="online-status" id="onlineStatus">Choose host or enter code</span>
       </div>
       <div class="button-row">
         <button id="startButton">Start as Knight</button>
@@ -720,6 +749,7 @@
   </div>
 
   <script type="module">
+    import mqtt from "https://cdn.jsdelivr.net/npm/mqtt@5.15.1/dist/mqtt.esm.js";
     import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
     (() => {
@@ -752,10 +782,9 @@
       const onlinePanel = document.getElementById("onlinePanel");
       const hostButton = document.getElementById("hostButton");
       const joinButton = document.getElementById("joinButton");
-      const copySignalButton = document.getElementById("copySignalButton");
-      const connectSignalButton = document.getElementById("connectSignalButton");
-      const localSignal = document.getElementById("localSignal");
-      const remoteSignal = document.getElementById("remoteSignal");
+      const roomCodeCard = document.getElementById("roomCodeCard");
+      const roomCodeText = document.getElementById("roomCodeText");
+      const roomCodeInput = document.getElementById("roomCodeInput");
       const onlineStatus = document.getElementById("onlineStatus");
       const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
       const potionTouchButton = document.querySelector("[data-touch-action='potion']");
@@ -788,7 +817,7 @@
       scene.background = new THREE.Color(0x82bee8);
       scene.fog = new THREE.FogExp2(0x9ac7e8, 0.018);
 
-      const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 140);
+      const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 220);
       camera.position.set(0, 6, 10);
 
       const materials = {
@@ -824,6 +853,15 @@
         crowdGold: new THREE.MeshStandardMaterial({ color: 0xb28a3d, roughness: 0.78 }),
         remoteAlly: new THREE.MeshStandardMaterial({ color: 0x43b7d8, roughness: 0.7 }),
         remoteEnemy: new THREE.MeshStandardMaterial({ color: 0xc65444, roughness: 0.72 }),
+        meadow: new THREE.MeshStandardMaterial({ color: 0x466b3c, roughness: 0.96 }),
+        path: new THREE.MeshStandardMaterial({ color: 0x8f774f, roughness: 0.98 }),
+        water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
+        pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
+        broadleaf: new THREE.MeshStandardMaterial({ color: 0x4d7d3d, roughness: 0.86 }),
+        roof: new THREE.MeshStandardMaterial({ color: 0x6f2f2b, roughness: 0.88 }),
+        plaster: new THREE.MeshStandardMaterial({ color: 0xd0bc91, roughness: 0.9 }),
+        npcCloth: new THREE.MeshStandardMaterial({ color: 0x7d6cb0, roughness: 0.82 }),
+        flower: new THREE.MeshBasicMaterial({ color: 0xffe28a }),
         cloud: new THREE.MeshBasicMaterial({ color: 0xf7fbff, transparent: true, opacity: 0.94, fog: false }),
         sunDisc: new THREE.MeshBasicMaterial({ color: 0xffdf7f, fog: false }),
         danger: new THREE.MeshBasicMaterial({ color: 0xff542e, transparent: true, opacity: 0.36, depthWrite: false }),
@@ -859,16 +897,30 @@
         pointerActive: false,
         startedOnce: false,
         selectedCharacter: "knight",
-        mode: "solo"
+        mode: "solo",
+        explorationGroup: null,
+        npcs: [],
+        exploration: {
+          origin: new THREE.Vector3(180, 0, 0),
+          radius: 78,
+          seed: "",
+          lakes: [],
+          villages: [],
+          discovered: new Set(),
+          completed: false,
+          spawn: new THREE.Vector3(180, 0, 1.6)
+        }
       };
 
       const online = {
         localId: (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2),
-        pc: null,
-        channel: null,
+        client: null,
+        topic: "",
         connected: false,
         role: null,
+        roomCode: "",
         sendTimer: 0,
+        presenceTimer: 0,
         remotePlayers: new Map()
       };
 
@@ -985,6 +1037,348 @@
         return texture;
       }
 
+      function hashString(value) {
+        let hash = 2166136261;
+        for (let i = 0; i < value.length; i += 1) {
+          hash ^= value.charCodeAt(i);
+          hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+      }
+
+      function seededRandom(seed) {
+        let state = hashString(seed || "ironhold");
+        return () => {
+          state += 0x6D2B79F5;
+          let t = state;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function createExplorationTexture(seed) {
+        const random = seededRandom(seed + "-meadow");
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#45683b";
+        ctx.fillRect(0, 0, 512, 512);
+        for (let i = 0; i < 2400; i += 1) {
+          const x = random() * 512;
+          const y = random() * 512;
+          const r = 0.7 + random() * 3.6;
+          ctx.fillStyle = random() > 0.64 ? "rgba(161, 139, 77, 0.18)" : "rgba(31, 78, 45, 0.2)";
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+        for (let i = 0; i < 42; i += 1) {
+          ctx.fillStyle = random() > 0.5 ? "rgba(255, 226, 138, 0.45)" : "rgba(184, 219, 137, 0.34)";
+          ctx.fillRect(random() * 512, random() * 512, 2 + random() * 2, 2 + random() * 2);
+        }
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(10, 10);
+        return texture;
+      }
+
+      function explorationToWorld(localX, localZ, out = new THREE.Vector3()) {
+        return out.set(game.exploration.origin.x + localX, 0, game.exploration.origin.z + localZ);
+      }
+
+      function explorationLocalPosition(position, out = new THREE.Vector3()) {
+        return out.set(position.x - game.exploration.origin.x, 0, position.z - game.exploration.origin.z);
+      }
+
+      function clearExplorationWorld() {
+        if (game.explorationGroup) {
+          scene.remove(game.explorationGroup);
+          game.explorationGroup = null;
+        }
+        for (const npc of game.npcs) {
+          scene.remove(npc.group);
+        }
+        game.npcs.length = 0;
+        game.exploration.lakes.length = 0;
+        game.exploration.villages.length = 0;
+        game.exploration.discovered = new Set();
+        game.exploration.completed = false;
+      }
+
+      function explorationSeed() {
+        return "explore-" + (online.roomCode || roomCodeInput.value || "local");
+      }
+
+      function makeCone(radius, height, segments, material, x, y, z) {
+        const mesh = new THREE.Mesh(new THREE.ConeGeometry(radius, height, segments || 16), material);
+        mesh.position.set(x || 0, y || 0, z || 0);
+        return addShadow(mesh);
+      }
+
+      function addExplorationPath(group, fromX, fromZ, toX, toZ, width) {
+        const dx = toX - fromX;
+        const dz = toZ - fromZ;
+        const length = Math.max(0.1, Math.hypot(dx, dz));
+        const path = new THREE.Mesh(new THREE.BoxGeometry(width, 0.035, length), materials.path);
+        path.position.set((fromX + toX) / 2, 0.035, (fromZ + toZ) / 2);
+        path.rotation.y = Math.atan2(dx, dz);
+        path.receiveShadow = true;
+        group.add(path);
+      }
+
+      function addExplorationHouse(group, x, z, scale, variant) {
+        const house = new THREE.Group();
+        house.position.set(x, 0, z);
+        house.scale.setScalar(scale);
+        const floor = makeBox(5.2, 0.12, 4.6, materials.paleWood, 0, 0.06, 0);
+        const back = makeBox(5.2, 2.25, 0.24, materials.plaster, 0, 1.18, 2.18);
+        const left = makeBox(0.24, 2.25, 4.6, materials.plaster, -2.48, 1.18, 0);
+        const right = makeBox(0.24, 2.25, 4.6, materials.plaster, 2.48, 1.18, 0);
+        const frontLeft = makeBox(1.8, 2.25, 0.24, materials.plaster, -1.7, 1.18, -2.18);
+        const frontRight = makeBox(1.8, 2.25, 0.24, materials.plaster, 1.7, 1.18, -2.18);
+        const lintel = makeBox(1.25, 0.34, 0.26, materials.plaster, 0, 2.13, -2.18);
+        const roofA = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, -0.92);
+        const roofB = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, 0.92);
+        roofA.rotation.x = 0.55;
+        roofB.rotation.x = -0.55;
+        const chimney = makeBox(0.45, 1.05, 0.45, materials.darkStone, 1.42, 3.06, 0.65);
+        const door = makeBox(0.86, 1.4, 0.08, materials.wood, 0, 0.76, -2.34);
+        const windowMat = materials.lightningCore.clone();
+        windowMat.color.setHex(0xffd889);
+        windowMat.opacity = 0.72;
+        const windowA = makeBox(0.62, 0.48, 0.07, windowMat, -1.4, 1.42, -2.35);
+        const windowB = makeBox(0.62, 0.48, 0.07, windowMat.clone(), 1.4, 1.42, -2.35);
+        if (variant % 2 === 1) {
+          house.rotation.y = Math.PI / 2;
+        }
+        house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, chimney, door, windowA, windowB);
+        group.add(house);
+        return house;
+      }
+
+      function addExplorationTree(group, x, z, random) {
+        const tree = new THREE.Group();
+        tree.position.set(x, 0, z);
+        const height = 2.3 + random() * 2.0;
+        const trunk = makeCylinder(0.16, 0.22, height, 8, materials.wood, 0, height / 2, 0);
+        tree.add(trunk);
+        if (random() > 0.42) {
+          const leafA = makeCone(1.05 + random() * 0.35, 1.85, 12, materials.pine, 0, height + 0.3, 0);
+          const leafB = makeCone(0.8 + random() * 0.28, 1.55, 12, materials.pine, 0, height + 1.08, 0);
+          tree.add(leafA, leafB);
+        } else {
+          const crown = makeSphere(1.0 + random() * 0.34, materials.broadleaf, 0, height + 0.42, 0);
+          crown.scale.set(1.08, 0.9, 1.05);
+          const crownB = makeSphere(0.72, materials.broadleaf, -0.42, height + 0.34, 0.2);
+          tree.add(crown, crownB);
+        }
+        tree.rotation.y = random() * TAU;
+        group.add(tree);
+      }
+
+      function addExplorationRock(group, x, z, random, large = false) {
+        const radius = large ? 1.15 + random() * 1.6 : 0.35 + random() * 0.85;
+        const geometry = new THREE.DodecahedronGeometry(radius, 0);
+        const rock = new THREE.Mesh(geometry, materials.stone);
+        rock.position.set(x, large ? radius * 0.34 : 0.22, z);
+        rock.scale.set(1.2 + random() * 1.4, 0.55 + random() * 0.55, 0.8 + random() * 1.2);
+        rock.rotation.set(random() * 0.4, random() * TAU, random() * 0.28);
+        addShadow(rock);
+        group.add(rock);
+      }
+
+      function addExplorationLake(group, x, z, rx, rz, random) {
+        const lake = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 48), materials.water.clone());
+        lake.position.set(x, 0.04, z);
+        lake.scale.set(rx, 1, rz);
+        lake.receiveShadow = true;
+        group.add(lake);
+        for (let i = 0; i < 14; i += 1) {
+          const angle = random() * TAU;
+          const radius = 1 + random() * 0.16;
+          addExplorationRock(group, x + Math.cos(angle) * rx * radius, z + Math.sin(angle) * rz * radius, random);
+        }
+        game.exploration.lakes.push({
+          x: game.exploration.origin.x + x,
+          z: game.exploration.origin.z + z,
+          rx,
+          rz
+        });
+      }
+
+      function createFriendlyNpc(x, z, random, homeRadius = 5.5) {
+        const group = new THREE.Group();
+        group.position.set(x, 0, z);
+        const body = makeCylinder(0.22, 0.28, 0.78, 12, materials.npcCloth.clone(), 0, 0.78, 0);
+        const head = makeSphere(0.18, materials.skin, 0, 1.32, 0);
+        const hood = makeCone(0.24, 0.34, 12, materials.paleWood, 0, 1.56, 0);
+        const leftLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, -0.1, 0.22, 0);
+        const rightLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, 0.1, 0.22, 0);
+        const leftArm = makeBox(0.1, 0.5, 0.1, materials.skin, -0.27, 0.85, 0);
+        const rightArm = makeBox(0.1, 0.5, 0.1, materials.skin, 0.27, 0.85, 0);
+        group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm);
+        scene.add(group);
+        return {
+          group,
+          leftLeg,
+          rightLeg,
+          leftArm,
+          rightArm,
+          home: new THREE.Vector3(x, 0, z),
+          target: new THREE.Vector3(x, 0, z),
+          homeRadius,
+          walkTime: random() * 10,
+          retarget: 0.5 + random() * 2,
+          healCooldown: 0,
+          friendly: true
+        };
+      }
+
+      function addExplorationVillage(group, x, z, random, index) {
+        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: 13.5 };
+        game.exploration.villages.push(village);
+        addExplorationPath(group, 0, 0, x, z, 2.6);
+        for (let i = 0; i < 4; i += 1) {
+          const angle = (i / 4) * TAU + random() * 0.45;
+          const hx = x + Math.cos(angle) * (4.6 + random() * 3.2);
+          const hz = z + Math.sin(angle) * (4.6 + random() * 3.2);
+          const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i);
+          house.rotation.y += angle + Math.PI;
+        }
+        const well = makeCylinder(0.62, 0.72, 0.62, 16, materials.stone, x, 0.31, z);
+        const beam = makeBox(1.8, 0.16, 0.18, materials.wood, x, 1.1, z);
+        const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, 0.75, z);
+        const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, 0.75, z);
+        group.add(well, beam, postA, postB);
+        for (let i = 0; i < 3; i += 1) {
+          const angle = random() * TAU;
+          game.npcs.push(createFriendlyNpc(
+            game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
+            game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
+            random,
+            8.5
+          ));
+        }
+      }
+
+      function isExplorationBlocked(localX, localZ) {
+        if (Math.hypot(localX, localZ) < 11) {
+          return true;
+        }
+        for (const lake of game.exploration.lakes) {
+          const lx = localX - (lake.x - game.exploration.origin.x);
+          const lz = localZ - (lake.z - game.exploration.origin.z);
+          if ((lx * lx) / ((lake.rx + 3.2) * (lake.rx + 3.2)) + (lz * lz) / ((lake.rz + 3.2) * (lake.rz + 3.2)) < 1) {
+            return true;
+          }
+        }
+        for (const village of game.exploration.villages) {
+          if (Math.hypot(game.exploration.origin.x + localX - village.x, game.exploration.origin.z + localZ - village.z) < village.radius + 4) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function randomExplorationPoint(random, minRadius, maxRadius) {
+        for (let attempt = 0; attempt < 80; attempt += 1) {
+          const angle = random() * TAU;
+          const radius = minRadius + random() * (maxRadius - minRadius);
+          const x = Math.cos(angle) * radius;
+          const z = Math.sin(angle) * radius;
+          if (!isExplorationBlocked(x, z)) {
+            return { x, z };
+          }
+        }
+        return { x: minRadius, z: minRadius };
+      }
+
+      function setupExplorationWorld() {
+        clearExplorationWorld();
+        const seed = explorationSeed();
+        const random = seededRandom(seed);
+        game.exploration.seed = seed;
+        game.exploration.spawn.copy(explorationToWorld(0, 1.6));
+
+        const group = new THREE.Group();
+        group.position.copy(game.exploration.origin);
+        scene.add(group);
+        game.explorationGroup = group;
+
+        const groundMaterial = materials.meadow.clone();
+        groundMaterial.map = createExplorationTexture(seed);
+        const groundGeometry = new THREE.PlaneGeometry(170, 170, 54, 54);
+        const pos = groundGeometry.attributes.position;
+        for (let i = 0; i < pos.count; i += 1) {
+          const x = pos.getX(i);
+          const y = pos.getY(i);
+          const distance = Math.hypot(x, y);
+          const roll = Math.sin(x * 0.13 + hashString(seed) * 0.0001) * 0.08 + Math.cos(y * 0.11) * 0.07;
+          pos.setZ(i, distance > 60 ? roll + (distance - 60) * 0.018 : roll);
+        }
+        groundGeometry.computeVertexNormals();
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        group.add(ground);
+
+        addExplorationHouse(group, 0, 0, 1.05, 0);
+        addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.2, game.exploration.origin.z - 3.4, random, 6));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.6, game.exploration.origin.z - 3.0, random, 6));
+
+        addExplorationLake(group, 24 + random() * 5, 31 + random() * 4, 9.5, 6.2, random);
+        addExplorationLake(group, -34 - random() * 5, -24 - random() * 7, 7.4, 5.4, random);
+        addExplorationVillage(group, 48 + random() * 8, -34 - random() * 6, random, 0);
+        addExplorationVillage(group, -52 - random() * 7, 42 + random() * 6, random, 1);
+
+        for (let i = 0; i < 26; i += 1) {
+          const angle = (i / 26) * TAU + (random() - 0.5) * 0.18;
+          const radius = 72 + random() * 11;
+          const mountain = makeCone(4.2 + random() * 5.6, 7.5 + random() * 10, 7 + Math.floor(random() * 3), materials.darkStone, Math.cos(angle) * radius, 3.8 + random() * 3.6, Math.sin(angle) * radius);
+          mountain.rotation.y = random() * TAU;
+          mountain.scale.x *= 0.82 + random() * 0.6;
+          group.add(mountain);
+          if (i % 2 === 0) {
+            addExplorationRock(group, Math.cos(angle) * (radius - 6), Math.sin(angle) * (radius - 6), random, true);
+          }
+        }
+
+        for (let i = 0; i < 92; i += 1) {
+          const point = randomExplorationPoint(random, 15, 68);
+          addExplorationTree(group, point.x, point.z, random);
+        }
+        for (let i = 0; i < 56; i += 1) {
+          const point = randomExplorationPoint(random, 12, 72);
+          addExplorationRock(group, point.x, point.z, random, random() > 0.82);
+        }
+        for (let i = 0; i < 34; i += 1) {
+          const point = randomExplorationPoint(random, 8, 58);
+          const flower = makeSphere(0.08 + random() * 0.04, materials.flower.clone(), point.x, 0.16, point.z);
+          group.add(flower);
+        }
+
+        const mobCount = 15;
+        for (let i = 0; i < mobCount; i += 1) {
+          const point = randomExplorationPoint(random, 24, 69);
+          const world = explorationToWorld(point.x, point.z);
+          const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
+          mob.exploration = true;
+          mob.home = world.clone();
+          mob.awareness = 11 + random() * 7;
+          mob.patrolTarget = world.clone();
+          mob.state = "patrol";
+          mob.cooldown = 0.8 + random() * 1.8;
+          mob.health *= 0.82;
+          mob.maxHealth = mob.health;
+          game.enemies.push(mob);
+        }
+      }
+
       function setupLighting() {
         const hemi = new THREE.HemisphereLight(0xd7eeff, 0x3b3328, 1.55);
         scene.add(hemi);
@@ -994,11 +1388,11 @@
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.camera.near = 1;
-        sun.shadow.camera.far = 80;
-        sun.shadow.camera.left = -34;
-        sun.shadow.camera.right = 34;
-        sun.shadow.camera.top = 34;
-        sun.shadow.camera.bottom = -34;
+        sun.shadow.camera.far = 340;
+        sun.shadow.camera.left = -150;
+        sun.shadow.camera.right = 260;
+        sun.shadow.camera.top = 150;
+        sun.shadow.camera.bottom = -150;
         sun.shadow.bias = -0.00025;
         scene.add(sun);
 
@@ -1505,6 +1899,9 @@
         if (game.mode === "coop") {
           return "Start Co-op as " + className;
         }
+        if (game.mode === "exploration") {
+          return "Start Exploration as " + className;
+        }
         return "Start as " + className;
       }
 
@@ -1559,147 +1956,180 @@
         onlineStatus.textContent = text;
       }
 
-      function encodeSignal(description) {
-        return btoa(JSON.stringify(description));
+      function normalizeRoomCode(value) {
+        return (value || "").replace(/\D/g, "").slice(0, 4);
       }
 
-      function decodeSignal(value) {
-        return JSON.parse(atob(value.trim()));
+      function randomRoomCode() {
+        return String(1000 + Math.floor(Math.random() * 9000));
       }
 
-      function waitForIceGathering(pc) {
-        if (pc.iceGatheringState === "complete") {
-          return Promise.resolve();
+      function topicForRoom(code) {
+        return "ironhold-waves/rooms/" + code;
+      }
+
+      function ensureMqttLibrary() {
+        if (mqtt && typeof mqtt.connect === "function") {
+          return true;
         }
-        return new Promise(resolve => {
-          const timeout = window.setTimeout(done, 2600);
-          function done() {
-            window.clearTimeout(timeout);
-            pc.removeEventListener("icegatheringstatechange", check);
-            resolve();
+        updateOnlineStatus("Network library unavailable");
+        return false;
+      }
+
+      function showRoomCode(code) {
+        online.roomCode = code || "";
+        roomCodeText.textContent = code || "----";
+        roomCodeCard.hidden = !code;
+        if (code) {
+          roomCodeInput.value = code;
+        }
+      }
+
+      function stopHostPresence() {
+        if (online.presenceTimer) {
+          window.clearInterval(online.presenceTimer);
+          online.presenceTimer = 0;
+        }
+      }
+
+      function publishHostPresence() {
+        if (online.role !== "host") {
+          return;
+        }
+        sendOnlineMessage({ kind: "host", state: serializePlayerState() }, true);
+      }
+
+      function startHostPresence() {
+        stopHostPresence();
+        publishHostPresence();
+        online.presenceTimer = window.setInterval(publishHostPresence, 5000);
+      }
+
+      function closeOnlineConnection(removeRemotes = true, clearRoom = true) {
+        const wasHost = online.role === "host";
+        const previousTopic = online.topic;
+        stopHostPresence();
+        if (online.client) {
+          if (wasHost && previousTopic && online.connected) {
+            online.client.publish(previousTopic, "", { qos: 1, retain: true });
           }
-          function check() {
-            if (pc.iceGatheringState === "complete") {
-              done();
-            }
-          }
-          pc.addEventListener("icegatheringstatechange", check);
-        });
-      }
-
-      function closeOnlineConnection(removeRemotes = true, clearSignals = true) {
-        if (online.channel) {
-          online.channel.close();
+          online.client.end(false);
         }
-        if (online.pc) {
-          online.pc.close();
-        }
-        online.pc = null;
-        online.channel = null;
+        online.client = null;
+        online.topic = "";
         online.connected = false;
         online.role = null;
+        if (clearRoom) {
+          showRoomCode("");
+          roomCodeInput.value = "";
+        }
         if (removeRemotes) {
           for (const remote of online.remotePlayers.values()) {
             scene.remove(remote.group);
           }
           online.remotePlayers.clear();
         }
-        if (clearSignals) {
-          localSignal.value = "";
-          remoteSignal.value = "";
-        }
         updateOnlineStatus(game.mode === "solo" ? "Offline" : "Not connected");
       }
 
-      function setupPeerConnection() {
+      function connectRoom(code, role) {
+        if (!ensureMqttLibrary()) {
+          return;
+        }
         closeOnlineConnection(false, false);
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-        });
-        online.pc = pc;
-        pc.ondatachannel = event => setupDataChannel(event.channel);
-        pc.onconnectionstatechange = () => {
-          const state = pc.connectionState;
-          online.connected = state === "connected";
-          updateOnlineStatus(online.connected ? "Connected" : state.charAt(0).toUpperCase() + state.slice(1));
+        online.role = role;
+        online.topic = topicForRoom(code);
+        showRoomCode(code);
+        updateOnlineStatus(role === "host" ? "Opening room" : "Joining room");
+        const safeId = online.localId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 18);
+        const clientOptions = {
+          clean: true,
+          connectTimeout: 5000,
+          forceNativeWebSocket: true,
+          reconnectPeriod: 1500,
+          clientId: "ironhold_" + safeId + "_" + Math.floor(Math.random() * 10000)
         };
-        pc.oniceconnectionstatechange = () => {
-          if (!online.connected) {
-            updateOnlineStatus(pc.iceConnectionState.charAt(0).toUpperCase() + pc.iceConnectionState.slice(1));
-          }
-        };
-        return pc;
-      }
+        if (role === "host") {
+          clientOptions.will = { topic: online.topic, payload: "", qos: 0, retain: true };
+        }
+        const client = mqtt.connect("wss://broker.emqx.io:8084/mqtt", clientOptions);
+        online.client = client;
 
-      function setupDataChannel(channel) {
-        online.channel = channel;
-        channel.onopen = () => {
+        client.on("connect", () => {
+          if (online.client !== client) {
+            return;
+          }
           online.connected = true;
-          updateOnlineStatus("Connected");
-          sendOnlineMessage({ kind: "state", state: serializePlayerState() });
-        };
-        channel.onclose = () => {
-          online.connected = false;
-          updateOnlineStatus("Closed");
-        };
-        channel.onerror = () => updateOnlineStatus("Channel error");
-        channel.onmessage = event => handleOnlineMessage(event.data);
+          client.subscribe(online.topic, error => {
+            if (online.client !== client) {
+              return;
+            }
+            if (error) {
+              updateOnlineStatus("Room failed");
+              return;
+            }
+            updateOnlineStatus(role === "host" ? "Give code to friend" : "Looking for host");
+            if (role === "host") {
+              startHostPresence();
+            } else {
+              sendOnlineMessage({ kind: "hello", state: serializePlayerState() });
+            }
+          });
+        });
+
+        client.on("message", (topic, payload) => {
+          if (online.client === client && topic === online.topic) {
+            handleOnlineMessage(payload.toString());
+          }
+        });
+
+        client.on("reconnect", () => {
+          if (online.client === client) {
+            online.connected = false;
+            updateOnlineStatus("Reconnecting");
+          }
+        });
+
+        client.on("close", () => {
+          if (online.client === client) {
+            online.connected = false;
+            if (game.mode !== "solo") {
+              updateOnlineStatus("Disconnected");
+            }
+          }
+        });
+
+        client.on("error", () => {
+          if (online.client === client) {
+            updateOnlineStatus("Connection error");
+          }
+        });
       }
 
       async function hostOnlineGame() {
+        if (!ensureMqttLibrary()) {
+          return;
+        }
         if (game.mode === "solo") {
           setGameMode("ffa");
         }
-        const pc = setupPeerConnection();
-        online.role = "host";
-        setupDataChannel(pc.createDataChannel("ironhold"));
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await waitForIceGathering(pc);
-        localSignal.value = encodeSignal(pc.localDescription);
-        updateOnlineStatus("Host code ready");
+        connectRoom(randomRoomCode(), "host");
       }
 
       async function joinOnlineGame() {
-        if (!remoteSignal.value.trim()) {
-          updateOnlineStatus("Need host code");
+        if (!ensureMqttLibrary()) {
           return;
         }
-        const pc = setupPeerConnection();
-        online.role = "join";
-        await pc.setRemoteDescription(decodeSignal(remoteSignal.value));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await waitForIceGathering(pc);
-        localSignal.value = encodeSignal(pc.localDescription);
-        updateOnlineStatus("Answer ready");
-      }
-
-      async function connectOnlineAnswer() {
-        if (!online.pc || online.role !== "host") {
-          await joinOnlineGame();
+        const code = normalizeRoomCode(roomCodeInput.value);
+        roomCodeInput.value = code;
+        if (code.length !== 4) {
+          updateOnlineStatus("Enter 4 digits");
           return;
         }
-        if (!remoteSignal.value.trim()) {
-          updateOnlineStatus("Need answer");
-          return;
+        if (game.mode === "solo") {
+          setGameMode("ffa");
         }
-        await online.pc.setRemoteDescription(decodeSignal(remoteSignal.value));
-        updateOnlineStatus("Connecting");
-      }
-
-      async function copyLocalSignal() {
-        if (!localSignal.value.trim()) {
-          updateOnlineStatus("No code");
-          return;
-        }
-        try {
-          await navigator.clipboard.writeText(localSignal.value);
-          updateOnlineStatus("Code copied");
-        } catch (error) {
-          localSignal.select();
-          updateOnlineStatus("Select code");
-        }
+        connectRoom(code, "join");
       }
 
       function serializePlayerState() {
@@ -1715,15 +2145,17 @@
         };
       }
 
-      function sendOnlineMessage(message) {
-        if (!online.channel || online.channel.readyState !== "open") {
+      function sendOnlineMessage(message, retain = false) {
+        if (!online.client || !online.connected || !online.topic) {
           return;
         }
-        online.channel.send(JSON.stringify({
+        const payload = {
           ...message,
           id: online.localId,
-          mode: game.mode
-        }));
+          mode: game.mode,
+          sentAt: Date.now()
+        };
+        online.client.publish(online.topic, JSON.stringify(payload), { qos: retain ? 1 : 0, retain });
       }
 
       function sendOnlineAction(action) {
@@ -1740,15 +2172,25 @@
       function handleOnlineMessage(raw) {
         let message;
         try {
-          message = JSON.parse(raw);
+          message = typeof raw === "string" ? JSON.parse(raw) : raw;
         } catch (error) {
           return;
         }
         if (!message || message.id === online.localId) {
           return;
         }
+        if (message.kind === "host" && (!message.sentAt || Date.now() - message.sentAt > 45000)) {
+          return;
+        }
+        if (online.role === "join" && message.kind === "host" && message.mode && game.state !== "playing" && game.mode !== message.mode) {
+          setGameMode(message.mode);
+        }
         if (message.state) {
           upsertRemotePlayer(message.state);
+          updateOnlineStatus(online.role === "host" ? "Player joined" : "Joined room");
+        }
+        if (message.kind === "hello" && online.role === "host") {
+          sendOnlineMessage({ kind: "welcome", state: serializePlayerState() });
         }
         if (message.kind === "state" && !message.state) {
           upsertRemotePlayer(message);
@@ -1760,13 +2202,14 @@
 
       function createRemotePlayerModel(character) {
         const group = new THREE.Group();
-        const remoteMaterial = game.mode === "coop" ? materials.remoteAlly.clone() : materials.remoteEnemy.clone();
+        const allyMode = game.mode === "coop" || game.mode === "exploration";
+        const remoteMaterial = allyMode ? materials.remoteAlly.clone() : materials.remoteEnemy.clone();
         const trimMaterial = character === "wizard" ? materials.wizardTrim.clone() : materials.gold;
         const body = makeCylinder(0.34, 0.44, 1.0, 14, remoteMaterial, 0, 0.88, 0);
         const head = makeSphere(0.23, materials.skin, 0, 1.58, 0);
         const marker = new THREE.Mesh(
           new THREE.RingGeometry(0.52, 0.58, 32),
-          new THREE.MeshBasicMaterial({ color: game.mode === "coop" ? 0x7ae8ff : 0xff705c, transparent: true, opacity: 0.5, depthWrite: false })
+          new THREE.MeshBasicMaterial({ color: allyMode ? 0x7ae8ff : 0xff705c, transparent: true, opacity: 0.5, depthWrite: false })
         );
         marker.rotation.x = Math.PI / 2;
         marker.position.y = 0.03;
@@ -1858,9 +2301,9 @@
       function applyRemoteAction(action, state) {
         const source = new THREE.Vector3(state.x || 0, 0, state.z || 0);
         const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
-        spawnImpact(source, game.mode === "coop" ? 0x7ae8ff : 0xff705c, action === "burst" ? 18 : 10);
+        spawnImpact(source, game.mode === "coop" || game.mode === "exploration" ? 0x7ae8ff : 0xff705c, action === "burst" ? 18 : 10);
 
-        if (game.mode === "coop") {
+        if (game.mode === "coop" || game.mode === "exploration") {
           applyRemoteActionToEnemies(action, source, state.yaw || 0, forward);
         } else if (game.mode === "ffa") {
           applyRemoteActionToPlayer(action, source, state.yaw || 0, forward);
@@ -2265,7 +2708,14 @@
         game.state = "playing";
         game.cameraYaw = 0;
         game.startedOnce = true;
-        player.position.set(0, 0, 0);
+        if (game.mode === "exploration") {
+          setupExplorationWorld();
+          player.position.copy(game.exploration.spawn);
+          game.cameraYaw = Math.PI;
+        } else {
+          clearExplorationWorld();
+          player.position.set(0, 0, 0);
+        }
         player.velocity.set(0, 0, 0);
         player.yaw = 0;
         setPlayerCharacter(game.selectedCharacter, true);
@@ -2277,6 +2727,8 @@
         restartButton.hidden = true;
         if (game.mode === "ffa") {
           showBanner("Free for all");
+        } else if (game.mode === "exploration") {
+          showBanner("Expedition begins");
         } else {
           spawnWave();
         }
@@ -2378,9 +2830,11 @@
         }
         const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
         const dropPosition = tmpVec2.copy(player.position).add(behind);
-        const dist = Math.hypot(dropPosition.x, dropPosition.z);
-        if (dist > arenaRadius - 2.2) {
-          dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+        if (game.mode !== "exploration") {
+          const dist = Math.hypot(dropPosition.x, dropPosition.z);
+          if (dist > arenaRadius - 2.2) {
+            dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+          }
         }
         game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "wizard", healAmount: 28 }));
         trimPotionDrops();
@@ -2409,6 +2863,31 @@
 
       function yawFromDirection(direction) {
         return Math.atan2(-direction.x, -direction.z);
+      }
+
+      function constrainExplorationPlayer() {
+        const local = explorationLocalPosition(player.position, tmpVec);
+        const distance = Math.hypot(local.x, local.z);
+        const maxRadius = game.exploration.radius;
+        if (distance > maxRadius) {
+          local.multiplyScalar(maxRadius / Math.max(0.001, distance));
+          player.position.x = game.exploration.origin.x + local.x;
+          player.position.z = game.exploration.origin.z + local.z;
+        }
+
+        for (const lake of game.exploration.lakes) {
+          const dx = player.position.x - lake.x;
+          const dz = player.position.z - lake.z;
+          const rx = lake.rx + 0.85;
+          const rz = lake.rz + 0.85;
+          const normalized = (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz);
+          if (normalized < 1) {
+            const angle = Math.atan2(dz / rz, dx / rx);
+            player.position.x = lake.x + Math.cos(angle) * rx;
+            player.position.z = lake.z + Math.sin(angle) * rz;
+            player.velocity.multiplyScalar(0.35);
+          }
+        }
       }
 
       function updatePlayer(dt) {
@@ -2456,9 +2935,13 @@
         }
 
         player.position.addScaledVector(player.velocity, dt);
-        const dist = Math.hypot(player.position.x, player.position.z);
-        if (dist > arenaRadius - 1.6) {
-          player.position.multiplyScalar((arenaRadius - 1.6) / dist);
+        if (game.mode === "exploration") {
+          constrainExplorationPlayer();
+        } else {
+          const dist = Math.hypot(player.position.x, player.position.z);
+          if (dist > arenaRadius - 1.6) {
+            player.position.multiplyScalar((arenaRadius - 1.6) / dist);
+          }
         }
 
         if (player.attacking) {
@@ -2804,8 +3287,11 @@
             continue;
           }
 
-          const dist = Math.hypot(projectile.group.position.x, projectile.group.position.z);
-          if (projectile.life <= 0 || dist > arenaRadius + 14) {
+          const dist = game.mode === "exploration"
+            ? projectile.group.position.distanceTo(game.exploration.origin)
+            : Math.hypot(projectile.group.position.x, projectile.group.position.z);
+          const maxProjectileDistance = game.mode === "exploration" ? game.exploration.radius + 28 : arenaRadius + 14;
+          if (projectile.life <= 0 || dist > maxProjectileDistance) {
             spawnImpact(projectile.group.position, 0x7ae8ff, 10);
             scene.remove(projectile.group);
             game.playerProjectiles.splice(i, 1);
@@ -2823,13 +3309,187 @@
           enemy.dead = true;
           if (enemy.type === "dragon") {
             dropDragonHealthPotion(enemy);
+          } else if (game.mode === "exploration" && Math.random() < 0.3) {
+            game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 18 }));
+            trimPotionDrops();
           }
           scene.remove(enemy.group);
           game.kills += 1;
         }
       }
 
+      function chooseExplorationPatrolTarget(enemy) {
+        const angle = Math.random() * TAU;
+        const radius = 2.5 + Math.random() * 9.5;
+        enemy.patrolTarget.set(
+          enemy.home.x + Math.cos(angle) * radius,
+          0,
+          enemy.home.z + Math.sin(angle) * radius
+        );
+        const local = explorationLocalPosition(enemy.patrolTarget, tmpVec);
+        const maxRadius = game.exploration.radius - 4;
+        const distance = Math.hypot(local.x, local.z);
+        if (distance > maxRadius) {
+          local.multiplyScalar(maxRadius / Math.max(0.001, distance));
+          enemy.patrolTarget.x = game.exploration.origin.x + local.x;
+          enemy.patrolTarget.z = game.exploration.origin.z + local.z;
+        }
+      }
+
+      function updateExplorationNpcs(dt) {
+        for (const npc of game.npcs) {
+          npc.retarget -= dt;
+          npc.healCooldown = Math.max(0, npc.healCooldown - dt);
+          if (npc.retarget <= 0 || npc.group.position.distanceTo(npc.target) < 0.45) {
+            const angle = Math.random() * TAU;
+            const radius = Math.random() * npc.homeRadius;
+            npc.target.set(npc.home.x + Math.cos(angle) * radius, 0, npc.home.z + Math.sin(angle) * radius);
+            npc.retarget = 2 + Math.random() * 3.5;
+          }
+          const toTarget = tmpVec.copy(npc.target).sub(npc.group.position);
+          const distance = Math.hypot(toTarget.x, toTarget.z);
+          if (distance > 0.08) {
+            toTarget.multiplyScalar(1 / Math.max(0.001, distance));
+            npc.group.position.addScaledVector(toTarget, dt * 1.05);
+            npc.group.rotation.y = yawFromDirection(toTarget);
+            npc.walkTime += dt * 2.8;
+          }
+          const swing = Math.sin(npc.walkTime * 5.8) * 0.18;
+          npc.leftLeg.rotation.x = swing;
+          npc.rightLeg.rotation.x = -swing;
+          const playerDistance = npc.group.position.distanceTo(player.position);
+          if (playerDistance < 3.0 && npc.healCooldown <= 0 && player.health < player.maxHealth) {
+            player.health = Math.min(player.maxHealth, player.health + 10);
+            npc.healCooldown = 16;
+            npc.leftArm.rotation.z = -1.2;
+            npc.rightArm.rotation.z = 1.2;
+            spawnImpact(player.position, 0xffd889, 12);
+            showBanner("Villager aid");
+          } else {
+            npc.leftArm.rotation.z = lerp(npc.leftArm.rotation.z, 0, 1 - Math.pow(0.0003, dt));
+            npc.rightArm.rotation.z = lerp(npc.rightArm.rotation.z, 0, 1 - Math.pow(0.0003, dt));
+          }
+        }
+      }
+
+      function updateExplorationGoals() {
+        for (const village of game.exploration.villages) {
+          if (game.exploration.discovered.has(village.id)) {
+            continue;
+          }
+          const distance = Math.hypot(player.position.x - village.x, player.position.z - village.z);
+          if (distance < village.radius) {
+            game.exploration.discovered.add(village.id);
+            spawnImpact(new THREE.Vector3(village.x, 0, village.z), 0xffd889, 24);
+            showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
+          }
+        }
+
+        if (!game.exploration.completed && game.exploration.villages.length > 0 && game.exploration.discovered.size === game.exploration.villages.length && game.enemies.length === 0) {
+          game.exploration.completed = true;
+          game.potions.push(createHealthPotion(player.position.x + 1.8, player.position.z + 1.2, { kind: "full" }));
+          trimPotionDrops();
+          showBanner("Expedition secured");
+        }
+      }
+
+      function updateExplorationEnemies(dt) {
+        updateExplorationNpcs(dt);
+        for (const enemy of game.enemies) {
+          if (enemy.dead) {
+            continue;
+          }
+
+          enemy.cooldown = Math.max(0, enemy.cooldown - dt);
+          enemy.stunned = Math.max(0, enemy.stunned - dt);
+          enemy.healthRoot.lookAt(camera.position);
+          enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
+          enemy.hpFill.position.x = -0.41 * (1 - enemy.hpFill.scale.x);
+
+          const toPlayer = tmpVec.copy(player.position).sub(enemy.position);
+          const playerDistance = Math.max(0.001, toPlayer.length());
+          const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
+
+          if (enemy.stunned > 0) {
+            enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
+            enemy.telegraph.visible = false;
+          } else if (enemy.state === "attack") {
+            enemy.yaw = yawFromDirection(playerDirection);
+            updateEnemyAttack(enemy, dt, playerDistance, playerDirection);
+          } else {
+            const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.65);
+            if (shouldChase) {
+              enemy.state = "chase";
+              enemy.yaw = yawFromDirection(playerDirection);
+              if (playerDistance < 2.15 && enemy.cooldown <= 0) {
+                beginEnemyAttack(enemy, Math.random() < 0.24 ? "heavy" : "slash");
+              } else {
+                const desired = playerDirection.multiplyScalar(enemy.speed * 0.86);
+                enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.015, dt));
+                enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.015, dt));
+                enemy.walkTime += dt * enemy.speed;
+              }
+            } else {
+              enemy.state = "patrol";
+              if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.65) {
+                chooseExplorationPatrolTarget(enemy);
+              }
+              const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
+              const patrolDistance = Math.max(0.001, Math.hypot(toPatrol.x, toPatrol.z));
+              toPatrol.multiplyScalar(1 / patrolDistance);
+              enemy.yaw = yawFromDirection(toPatrol);
+              const desired = toPatrol.multiplyScalar(enemy.speed * 0.42);
+              enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.02, dt));
+              enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.02, dt));
+              enemy.walkTime += dt * enemy.speed * 0.45;
+              enemy.telegraph.visible = false;
+            }
+          }
+
+          for (const other of game.enemies) {
+            if (other === enemy || other.dead) {
+              continue;
+            }
+            const dx = enemy.position.x - other.position.x;
+            const dz = enemy.position.z - other.position.z;
+            const d2 = dx * dx + dz * dz;
+            const minDistance = enemy.radius + other.radius + 0.2;
+            if (d2 > 0.0001 && d2 < minDistance * minDistance) {
+              const d = Math.sqrt(d2);
+              const push = (minDistance - d) * 0.45;
+              enemy.velocity.x += (dx / d) * push * 2.4;
+              enemy.velocity.z += (dz / d) * push * 2.4;
+            }
+          }
+
+          enemy.position.addScaledVector(enemy.velocity, dt);
+          enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
+          const local = explorationLocalPosition(enemy.position, tmpVec);
+          const maxRadius = game.exploration.radius - 2.5;
+          const distance = Math.hypot(local.x, local.z);
+          if (distance > maxRadius) {
+            local.multiplyScalar(maxRadius / Math.max(0.001, distance));
+            enemy.position.x = game.exploration.origin.x + local.x;
+            enemy.position.z = game.exploration.origin.z + local.z;
+            enemy.velocity.multiplyScalar(0.25);
+          }
+          enemy.group.position.copy(enemy.position);
+          enemy.group.rotation.y = enemy.yaw;
+          const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
+          enemy.leftLeg.rotation.x = legSwing;
+          enemy.rightLeg.rotation.x = -legSwing;
+          enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+        }
+
+        game.enemies = game.enemies.filter(enemy => !enemy.dead);
+        updateExplorationGoals();
+      }
+
       function updateEnemies(dt) {
+        if (game.mode === "exploration") {
+          updateExplorationEnemies(dt);
+          return;
+        }
         for (const enemy of game.enemies) {
           if (enemy.dead) {
             continue;
@@ -3103,13 +3763,17 @@
       }
 
       function handlePlayerDefeat() {
-        if (game.mode === "ffa") {
+        if (game.mode === "ffa" || game.mode === "exploration") {
           player.health = player.maxHealth;
           player.guard = player.maxGuard;
           player.mana = player.maxMana;
-          const angle = Math.random() * TAU;
-          const radius = 7 + Math.random() * 9;
-          player.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+          if (game.mode === "exploration") {
+            player.position.copy(game.exploration.spawn);
+          } else {
+            const angle = Math.random() * TAU;
+            const radius = 7 + Math.random() * 9;
+            player.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+          }
           player.velocity.set(0, 0, 0);
           player.hurtTimer = 0;
           player.group.position.copy(player.position);
@@ -3247,7 +3911,7 @@
         guardFill.style.transform = "scaleX(" + guardPct.toFixed(3) + ")";
         healthText.textContent = Math.ceil(player.health);
         guardText.textContent = Math.ceil(resourceValue);
-        waveLabel.textContent = "Wave " + Math.max(1, game.wave);
+        waveLabel.textContent = game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
         enemyText.textContent = game.mode === "ffa" ? online.remotePlayers.size : game.enemies.length;
         koText.textContent = game.kills;
         const nearby = game.mode === "ffa"
@@ -3425,12 +4089,15 @@
           joinOnlineGame().catch(error => updateOnlineStatus(error.message || "Join failed"));
         });
 
-        connectSignalButton.addEventListener("click", () => {
-          connectOnlineAnswer().catch(error => updateOnlineStatus(error.message || "Connect failed"));
+        roomCodeInput.addEventListener("input", () => {
+          roomCodeInput.value = normalizeRoomCode(roomCodeInput.value);
         });
 
-        copySignalButton.addEventListener("click", () => {
-          copyLocalSignal().catch(error => updateOnlineStatus(error.message || "Copy failed"));
+        roomCodeInput.addEventListener("keydown", event => {
+          if (event.code === "Enter") {
+            event.preventDefault();
+            joinOnlineGame().catch(error => updateOnlineStatus(error.message || "Join failed"));
+          }
         });
 
         startButton.addEventListener("click", beginPlay);
