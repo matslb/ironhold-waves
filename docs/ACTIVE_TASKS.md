@@ -502,9 +502,16 @@ Status: `[~] Active`
 Done evidence:
 - Levels, XP, lower starting stats, level-based ability unlocks, equipment definitions, perks, Roadwarden Tack, and quest reward hooks exist.
 
+In progress: Crownring sidegrade weapon kits (owner: Cursor agent / RPG Mechanics, reviewer: Gameplay Systems)
+- `knight_crownring_maul` and `wizard_stormcall_rod` are defined in `src/content/rpg.js` as sidegrades, not upgrades: the maul trades reach and guard sustain for damage and knockback; the rod trades mana cost and homing for heavier lightning and burst.
+- Acquisition: Crownring trial quest claim grants both kits without auto-equip.
+- A desktop key cycles the equipped weapon among unlocked kits, with banner + kit HUD feedback. Persistence reuses `equipment.weapon`/`unlockedEquipment`; multiplayer reuses the existing `weaponId` in player state, so no new messages or storage.
+- COORDINATION NOTE for Codex: the remaining hooks for this slice are three small edits to `src/main.js` (`grantRpgRewardForQuest` quest branch, a `cycleEquippedWeapon` helper beside `equippedWeapon`, and one keydown case). These are intentionally deferred until the in-flight arena netcode slice is committed, to avoid concurrent edits to `src/main.js`. Please keep `src/content/rpg.js` and this slice's hooks out of your write scope.
+
 Remaining work:
+- Land the `src/main.js` hooks for the weapon kit slice once the worktree is free.
 - Decide and implement the first inventory boundary.
-- Add temporary buffs/debuffs and more weapon identity once UI and persistence surfaces are clear.
+- Add temporary buffs/debuffs once UI and persistence surfaces are clear.
 
 Purpose:
 - Turn Ironhold from a set of activities into a satisfying RPG loop with meaningful choices, rewards, and character growth.

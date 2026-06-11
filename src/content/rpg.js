@@ -23,6 +23,20 @@ export const equipmentDefs = {
       guardOnSlashHit: 8
     }
   },
+  knight_crownring_maul: {
+    character: "knight",
+    name: "Crownring Maul",
+    // Sidegrade vs Roadwarden Blade: raw damage and knockback, but shorter
+    // reach and no guard recovery on hit.
+    tuning: {
+      slashRange: 2.4,
+      slashDamageBonus: 7,
+      slashKnockback: 0.62,
+      guardOnSlashHit: 0,
+      bashDamageMin: 22,
+      bashKnockback: 1.3
+    }
+  },
   wizard_oak_staff: {
     character: "wizard",
     name: "Oak Staff",
@@ -33,6 +47,18 @@ export const equipmentDefs = {
     name: "Wayfinder Focus",
     tuning: {
       lightningDamageBonus: 2
+    }
+  },
+  wizard_stormcall_rod: {
+    character: "wizard",
+    name: "Stormcall Rod",
+    // Sidegrade vs Wayfinder Focus: heavier lightning and burst, but costlier
+    // casts and much weaker projectile homing.
+    tuning: {
+      lightningDamageBonus: 5,
+      lightningManaCost: 50,
+      lightningTurnRate: 0.55,
+      burstDamageMin: 28
     }
   }
 };
