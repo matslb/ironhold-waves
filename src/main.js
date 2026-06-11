@@ -4454,31 +4454,35 @@ import {
   }
 
   function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
+    const villageGroundY = explorationGroundLocalY(x, z);
     const village = {
       id: "village-" + index,
       x: game.exploration.origin.x + x,
       z: game.exploration.origin.z + z,
       localX: x,
       localZ: z,
-      radius: biome === "desert" ? 17.5 : biome === "swamp" ? 18.5 : 15.5,
+      radius: biome === "desert" ? 23.5 : biome === "swamp" ? 24.5 : biome === "mountain" ? 23.0 : 22.0,
       biome
     };
     game.exploration.villages.push(village);
     const houses = [];
+    const baseHouseRadius = biome === "swamp" ? 10.2 : biome === "desert" ? 10.8 : biome === "mountain" ? 10.4 : 9.8;
+    const houseRadiusRange = biome === "swamp" ? 5.8 : 5.2;
     for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * TAU + random() * 0.45;
-      const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
-      const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
+      const angle = (i / 5) * TAU + random() * 0.34;
+      const houseRadius = baseHouseRadius + random() * houseRadiusRange;
+      const hx = x + Math.cos(angle) * houseRadius;
+      const hz = z + Math.sin(angle) * houseRadius;
       const houseScale = 1.02 + random() * 0.16;
       const house = addExplorationHouse(group, hx, hz, houseScale, i, biome);
       house.rotation.y += angle + Math.PI;
       houses.push({ x: hx, z: hz, rotation: house.rotation.y, scale: houseScale });
     }
     const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.stone;
-    const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, 0.31, z);
-    const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.wood, x, 1.1, z);
-    const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, 0.75, z);
-    const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, 0.75, z);
+    const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, villageGroundY + 0.31, z);
+    const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.wood, x, villageGroundY + 1.1, z);
+    const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, villageGroundY + 0.75, z);
+    const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, villageGroundY + 0.75, z);
     group.add(well, beam, postA, postB);
     addExplorationCollider(x, z, 1.15, "structure");
     const names = biome === "desert"
@@ -4501,9 +4505,10 @@ import {
         questId = "bogRelics";
       }
       const name = questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : names[(index * 3 + i) % names.length];
+      const npcRadius = 5.2 + random() * 7.4;
       game.npcs.push(createFriendlyNpc(
-        game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
-        game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
+        game.exploration.origin.x + x + Math.cos(angle) * npcRadius,
+        game.exploration.origin.z + z + Math.sin(angle) * npcRadius,
         random,
         8.5,
         name,
@@ -9869,9 +9874,16 @@ import {
     const mounted = isPlayerMounted();
     const shoulder = new THREE.Vector3(0.95, mounted ? 4.9 : 4.1, mounted ? 9.2 : 7.7);
     shoulder.applyAxisAngle(up, game.cameraYaw);
-    const desired = tmpVec.copy(player.position).add(shoulder);
+    const cameraAnchor = tmpVec.copy(player.position);
+    if (game.mode === "exploration") {
+      cameraAnchor.y = explorationGroundWorldY(player.position.x, player.position.z);
+    }
+    const desired = cameraAnchor.add(shoulder);
     camera.position.lerp(desired, 1 - Math.pow(0.00004, dt));
     const look = tmpVec2.copy(player.position);
+    if (game.mode === "exploration") {
+      look.y = explorationGroundWorldY(player.position.x, player.position.z);
+    }
     look.y += mounted ? 1.85 : 1.35;
     camera.lookAt(look);
   }
