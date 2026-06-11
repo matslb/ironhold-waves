@@ -389,7 +389,6 @@ canvas {
 }
 
 .session-select[hidden],
-.mode-select[hidden],
 .character-select[hidden],
 .menu-back[hidden],
 .session-note[hidden] {
@@ -494,49 +493,6 @@ canvas {
   color: #7ae8ff;
   border-color: rgba(122, 232, 255, 0.66);
   background: rgba(57, 157, 194, 0.14);
-}
-
-.mode-select {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0 0 18px;
-}
-
-.mode-card {
-  min-height: 70px;
-  padding: 10px;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 5px;
-  background: rgba(15, 18, 18, 0.72);
-  color: var(--ink);
-  border-color: var(--line);
-  box-shadow: none;
-  text-transform: none;
-}
-
-.mode-card strong {
-  font-size: 13px;
-  text-transform: uppercase;
-}
-
-.mode-card span {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.mode-card.selected {
-  color: #f7df9a;
-  border-color: rgba(213, 170, 80, 0.66);
-  background: rgba(213, 170, 80, 0.14);
-}
-
-.mode-card:disabled {
-  cursor: default;
-  opacity: 0.72;
 }
 
 .online-panel {
@@ -958,7 +914,4 @@ button[hidden] {
     grid-template-columns: 1fr;
   }
 
-  .mode-select {
-    grid-template-columns: 1fr;
-  }
 }

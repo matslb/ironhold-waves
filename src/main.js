@@ -47,10 +47,8 @@ import {
   const resumeGameSummary = document.getElementById("resumeGameSummary");
   const joinSessionButton = document.getElementById("joinSessionButton");
   const backMenuButton = document.getElementById("backMenuButton");
-  const modeSelect = document.getElementById("modeSelect");
   const characterSelect = document.getElementById("characterSelect");
   const characterCards = Array.from(document.querySelectorAll("[data-character]"));
-  const modeCards = Array.from(document.querySelectorAll("[data-mode]"));
   const onlinePanel = document.getElementById("onlinePanel");
   const joinButton = document.getElementById("joinButton");
   const playerNameInput = document.getElementById("playerNameInput");
@@ -92,6 +90,12 @@ import {
 
   const TAU = Math.PI * 2;
   const arenaRadius = 25;
+  const EXPLORATION_NPC_UPDATE_DISTANCE_SQ = 70 * 70;
+  const EXPLORATION_NPC_VISIBLE_DISTANCE_SQ = 145 * 145;
+  const EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ = 92 * 92;
+  const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
+  const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
+  const QUEST_MAP_UPDATE_INTERVAL = 0.16;
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
@@ -203,6 +207,13 @@ import {
     hit: new THREE.MeshBasicMaterial({ color: 0xffe1a6, transparent: true, opacity: 0.0, depthWrite: false })
   };
 
+  const modelScale = {
+    npc: 1.04,
+    barbarianBase: 1.08,
+    dragonBase: 1.32,
+    spiderBase: 1.42
+  };
+
   const game = {
     state: "menu",
     wave: 0,
@@ -237,6 +248,7 @@ import {
     activeNpc: null,
     dialogNpc: null,
     dialogActionIndex: 0,
+    questMapTimer: 0,
     exploration: {
       origin: new THREE.Vector3(180, 0, 0),
       radius: 350,
@@ -1035,7 +1047,9 @@ import {
       exitOpen: false,
       endedReason: null,
       returnPosition: null,
-      infirmaryPosition: null
+      infirmaryPosition: null,
+      localReturnPosition: null,
+      localOptOutActivityId: ""
     };
   }
 
@@ -1045,7 +1059,13 @@ import {
 
   function localPlayerInArenaActivity() {
     const activity = game.exploration.arenaActivity;
-    return arenaActivityActive() && (!activity.participants.length || activity.participants.includes(online.localId));
+    if (!arenaActivityActive()) {
+      return false;
+    }
+    if (activity.activityId && activity.localOptOutActivityId === activity.activityId) {
+      return false;
+    }
+    return !activity.participants.length || activity.participants.includes(online.localId);
   }
 
   function resetArenaActivityState() {
@@ -1069,14 +1089,94 @@ import {
     };
   }
 
+  function arenaParticipantsForRoom() {
+    const participants = new Set([online.localId]);
+    for (const id of online.remotePlayers.keys()) {
+      participants.add(id);
+    }
+    return Array.from(participants).slice(0, 8);
+  }
+
+  function removeArenaParticipant(id) {
+    const activity = game.exploration.arenaActivity;
+    if (!activity.active || !id) {
+      return false;
+    }
+    const nextParticipants = activity.participants.filter(participant => participant !== id);
+    if (nextParticipants.length === activity.participants.length) {
+      return false;
+    }
+    activity.participants = nextParticipants;
+    if (activity.participants.length === 0 || (activity.participants.length === 1 && activity.participants[0] === online.localId && online.role !== "host")) {
+      endCrownringArenaActivity("yield");
+      return true;
+    }
+    sendWorldSnapshot(true);
+    return true;
+  }
+
+  function enterLocalArenaActivity() {
+    const activity = game.exploration.arenaActivity;
+    if (!activity.active) {
+      return;
+    }
+    activity.localReturnPosition = { x: player.position.x, z: player.position.z };
+    closeQuestDialog();
+    parkHorseNear(player.position);
+    clearPlayerProjectiles();
+    setArenaVisible(true);
+    scene.fog.density = 0.018;
+    player.position.set(activity.center?.x || 0, 0, activity.center?.z || 0);
+    player.velocity.set(0, 0, 0);
+    player.yaw = 0;
+    player.group.position.copy(player.position);
+    player.group.rotation.y = 0;
+    game.cameraYaw = 0;
+    showBanner("Crownring opened - press Y to yield", 3);
+    updateHud();
+  }
+
+  function exitLocalArenaActivity(reason = "yield") {
+    const activity = game.exploration.arenaActivity;
+    const defeated = reason === "defeat";
+    const returnPosition = defeated
+      ? crownfordInfirmaryPosition()
+      : new THREE.Vector3(activity.localReturnPosition?.x ?? activity.returnPosition?.x ?? game.exploration.spawn.x, 0, activity.localReturnPosition?.z ?? activity.returnPosition?.z ?? game.exploration.spawn.z);
+    setArenaVisible(false);
+    scene.fog.density = 0.0065;
+    game.wave = 0;
+    game.nextWaveIn = 0;
+    player.position.copy(returnPosition);
+    player.velocity.set(0, 0, 0);
+    player.hurtTimer = 0;
+    if (defeated) {
+      player.health = player.maxHealth;
+      player.guard = player.maxGuard;
+      player.mana = player.maxMana;
+    }
+    player.group.position.copy(player.position);
+    player.group.rotation.y = player.yaw;
+    parkHorseNear(player.position);
+    spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
+    showBanner(defeated ? "Recovered at Crownford infirmary" : "Yielded from the Crownring", 2.6);
+    saveProgress();
+    updateHud();
+  }
+
   function applyArenaActivitySnapshot(snapshot) {
     if (!snapshot || online.role !== "join") {
       return;
     }
     const activity = game.exploration.arenaActivity;
+    const wasLocal = localPlayerInArenaActivity();
+    const previousActivityId = activity.activityId;
+    const localReturnPosition = activity.localReturnPosition;
+    const localOptOutActivityId = activity.localOptOutActivityId;
     activity.active = !!snapshot.active;
     activity.phase = snapshot.phase || (activity.active ? "wave" : "idle");
     activity.activityId = snapshot.activityId || "";
+    activity.localReturnPosition = previousActivityId === activity.activityId ? localReturnPosition : null;
+    activity.localOptOutActivityId = previousActivityId === activity.activityId ? localOptOutActivityId : "";
     activity.wave = Math.max(0, Math.floor(numberOrZero(snapshot.wave)));
     activity.center = snapshot.center || { x: 0, z: 0 };
     activity.radius = Math.max(8, numberOrZero(snapshot.radius) || arenaRadius);
@@ -1085,8 +1185,15 @@ import {
     activity.nextWaveIn = Math.max(0, numberOrZero(snapshot.nextWaveIn));
     activity.exitOpen = !!snapshot.exitOpen;
     activity.endedReason = snapshot.endedReason || null;
-    setArenaVisible(localPlayerInArenaActivity());
-    if (!localPlayerInArenaActivity() && activity.active) {
+    const nowLocal = localPlayerInArenaActivity();
+    if (nowLocal && !wasLocal) {
+      enterLocalArenaActivity();
+    } else if (!nowLocal && wasLocal) {
+      exitLocalArenaActivity(activity.endedReason || "yield");
+    } else {
+      setArenaVisible(nowLocal);
+    }
+    if (!nowLocal && activity.active && !wasLocal) {
       showBanner("Crownring match in progress", 2.2);
     }
   }
@@ -1177,7 +1284,7 @@ import {
       activityId: "arena-" + Date.now().toString(36),
       center: { x: 0, z: 0 },
       radius: arenaRadius,
-      participants: [online.localId],
+      participants: arenaParticipantsForRoom(),
       startedBy: online.localId,
       returnPosition: { x: returnPosition.x, z: returnPosition.z },
       infirmaryPosition: { x: infirmaryPosition.x, z: infirmaryPosition.z }
@@ -1211,32 +1318,17 @@ import {
       return false;
     }
     const defeated = reason === "defeat";
-    const returnPosition = defeated
-      ? crownfordInfirmaryPosition()
-      : new THREE.Vector3(activity.returnPosition?.x ?? game.exploration.spawn.x, 0, activity.returnPosition?.z ?? game.exploration.spawn.z);
+    const activityId = activity.activityId;
     clearArenaActivityActors(activity.activityId);
+    exitLocalArenaActivity(reason);
     resetArenaActivityState();
-    setArenaVisible(false);
-    scene.fog.density = 0.0065;
-    game.wave = 0;
-    game.nextWaveIn = 0;
-    player.position.copy(returnPosition);
-    player.velocity.set(0, 0, 0);
-    player.hurtTimer = 0;
-    if (defeated) {
-      player.health = player.maxHealth;
-      player.guard = player.maxGuard;
-      player.mana = player.maxMana;
+    game.exploration.arenaActivity.activityId = activityId;
+    game.exploration.arenaActivity.endedReason = reason;
+    if (isJoinedClient()) {
+      game.exploration.arenaActivity.localOptOutActivityId = activityId;
     }
-    player.group.position.copy(player.position);
-    player.group.rotation.y = player.yaw;
-    parkHorseNear(player.position);
-    spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
-    showBanner(defeated ? "Recovered at Crownford infirmary" : "Yielded from the Crownring", 2.6);
-    saveProgress();
     sendOnlineMessage({ kind: defeated ? "arenaDefeated" : "arenaLeaveRequest", state: serializePlayerState() });
     sendWorldSnapshot(true);
-    updateHud();
     return true;
   }
 
@@ -2066,10 +2158,10 @@ import {
     const frontLeft = makeBox(1.72, 2.0, 0.26, walls, -1.55, 1.08, -1.98);
     const frontRight = makeBox(1.72, 2.0, 0.26, walls, 1.55, 1.08, -1.98);
     const lintel = makeBox(1.18, 0.3, 0.28, walls, 0, 1.98, -1.98);
-    const flatRoof = makeBox(5.35, 0.32, 4.65, roofMat, 0, 2.22, 0);
+    const flatRoof = makeBox(5.55, 0.28, 4.86, roofMat, 0, 2.18, 0);
     const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 1.54, -2.42);
     shade.rotation.x = -0.18;
-    const dome = makeCylinder(0.1, 0.82, 0.55, 18, walls, variant % 2 ? -1.2 : 1.1, 2.58, 0.85);
+    const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, 2.5, 0.85);
     const door = makeBox(0.82, 1.25, 0.08, materials.darkLeather, 0, 0.68, -2.16);
     house.add(base, back, left, right, frontLeft, frontRight, lintel, flatRoof, shade, dome, door);
     if (variant % 2 === 1) {
@@ -2092,10 +2184,10 @@ import {
     const frontLeft = makeBox(1.7, 2.18, 0.28, wall, -1.62, 1.18, -2.08);
     const frontRight = makeBox(1.7, 2.18, 0.28, wall, 1.62, 1.18, -2.08);
     const lintel = makeBox(1.35, 0.34, 0.3, materials.wood, 0, 2.08, -2.08);
-    const roofA = makeBox(5.8, 0.42, 2.85, materials.darkStone, 0, 2.7, -0.9);
-    const roofB = makeBox(5.8, 0.42, 2.85, materials.darkStone, 0, 2.7, 0.9);
-    roofA.rotation.x = -0.68;
-    roofB.rotation.x = 0.68;
+    const roofA = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 2.66, -0.9);
+    const roofB = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 2.66, 0.9);
+    roofA.rotation.x = -0.6;
+    roofB.rotation.x = 0.6;
     const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.44, -2.2);
     const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.08, 0.42);
     const door = makeBox(0.82, 1.34, 0.08, materials.wood, 0, 0.72, -2.25);
@@ -2125,10 +2217,10 @@ import {
     const frontLeft = makeBox(1.45, 1.72, 0.24, materials.swampPlank, -1.35, 1.58, -1.72);
     const frontRight = makeBox(1.45, 1.72, 0.24, materials.swampPlank, 1.35, 1.58, -1.72);
     const door = makeBox(0.74, 1.16, 0.08, materials.darkLeather, 0, 1.18, -1.86);
-    const roof = makeCone(3.6, 1.12, 4, materials.thatch, 0, 2.88, 0);
+    const roof = makeCone(3.72, 1.0, 4, materials.thatch, 0, 2.78, 0);
     roof.rotation.y = Math.PI / 4;
-    roof.scale.set(1.22, 0.72, 1.0);
-    const eave = makeBox(5.3, 0.12, 4.5, materials.thatch, 0, 2.38, 0);
+    roof.scale.set(1.2, 0.76, 1.0);
+    const eave = makeBox(5.55, 0.12, 4.72, materials.thatch, 0, 2.34, 0);
     const lanternMat = materials.wispCore.clone();
     lanternMat.opacity = 0.78;
     const lantern = makeSphere(0.095, lanternMat, -1.72, 1.84, -1.9);
@@ -2163,11 +2255,11 @@ import {
     const frontLeft = makeBox(1.8, 2.25, 0.24, materials.plaster, -1.7, 1.18, -2.18);
     const frontRight = makeBox(1.8, 2.25, 0.24, materials.plaster, 1.7, 1.18, -2.18);
     const lintel = makeBox(1.25, 0.34, 0.26, materials.plaster, 0, 2.13, -2.18);
-    const roofA = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, -0.92);
-    const roofB = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, 0.92);
-    roofA.rotation.x = -0.55;
-    roofB.rotation.x = 0.55;
-    const chimney = makeBox(0.45, 1.05, 0.45, materials.darkStone, 1.42, 3.06, 0.65);
+    const roofA = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 2.6, -0.92);
+    const roofB = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 2.6, 0.92);
+    roofA.rotation.x = -0.5;
+    roofB.rotation.x = 0.5;
+    const chimney = makeBox(0.44, 0.92, 0.44, materials.darkStone, 1.42, 2.96, 0.65);
     const door = makeBox(0.86, 1.4, 0.08, materials.wood, 0, 0.76, -2.34);
     const windowMat = materials.lightningCore.clone();
     windowMat.color.setHex(0xffd889);
@@ -2415,7 +2507,7 @@ import {
   function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null, biome = "meadow") {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
-    group.scale.setScalar(1.18);
+    group.scale.setScalar(modelScale.npc);
     const cloth = materials.npcCloth.clone();
     if (biome === "desert") {
       cloth.color.setHex(0xb8894f);
@@ -2427,13 +2519,13 @@ import {
       cloth.color.setHex(0x365f4a);
     }
     const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : materials.paleWood;
-    const body = makeCylinder(0.22, 0.28, 0.78, 12, cloth, 0, 0.78, 0);
-    const head = makeSphere(0.18, materials.skin, 0, 1.32, 0);
-    const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.56, 0);
-    const leftLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, -0.1, 0.22, 0);
-    const rightLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, 0.1, 0.22, 0);
-    const leftArm = makeBox(0.1, 0.5, 0.1, materials.skin, -0.27, 0.85, 0);
-    const rightArm = makeBox(0.1, 0.5, 0.1, materials.skin, 0.27, 0.85, 0);
+    const body = makeCylinder(0.21, 0.26, 0.76, 12, cloth, 0, 0.76, 0);
+    const head = makeSphere(0.17, materials.skin, 0, 1.28, 0);
+    const hood = makeCone(0.23, 0.31, 12, hoodMat, 0, 1.49, 0);
+    const leftLeg = makeBox(0.11, 0.4, 0.13, materials.darkLeather, -0.1, 0.21, 0);
+    const rightLeg = makeBox(0.11, 0.4, 0.13, materials.darkLeather, 0.1, 0.21, 0);
+    const leftArm = makeBox(0.09, 0.48, 0.09, materials.skin, -0.25, 0.82, 0);
+    const rightArm = makeBox(0.09, 0.48, 0.09, materials.skin, 0.25, 0.82, 0);
     if (biome === "desert") {
       const scarf = makeCylinder(0.19, 0.22, 0.12, 12, materials.dryBrush, 0, 1.18, 0);
       group.add(scarf);
@@ -2445,7 +2537,7 @@ import {
       const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
       group.add(reedWrap, satchel);
     }
-    const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.25, 0);
+    const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.02, 0);
     questMarker.visible = !!questId;
     group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
     scene.add(group);
@@ -2519,6 +2611,7 @@ import {
       color,
       collected: false,
       respawnTimer: 0,
+      visibleActive: false,
       position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
       bobSeed: random() * 10
     });
@@ -2844,17 +2937,31 @@ import {
         }
       }
       const quest = getQuest(item.questId);
-      item.group.visible = !item.collected && !!quest && quest.state === "active";
-      if (!item.group.visible) {
+      const active = !item.collected && !!quest && quest.state === "active";
+      if (!active) {
+        item.visibleActive = false;
+        item.group.visible = false;
+        continue;
+      }
+      const dx = player.position.x - item.position.x;
+      const dz = player.position.z - item.position.z;
+      const distanceSq = dx * dx + dz * dz;
+      if (!item.visibleActive) {
+        item.visibleActive = true;
+        item.group.visible = true;
+      }
+      if (distanceSq >= EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ) {
+        item.light.intensity = 0;
         continue;
       }
       item.group.position.y = 0.12 + Math.sin(clock.elapsedTime * 2.8 + item.bobSeed) * 0.06;
       item.bloom.scale.setScalar(0.9 + Math.sin(clock.elapsedTime * 5.5 + item.bobSeed) * 0.14);
       item.ring.rotation.z += dt * 1.5;
       item.light.intensity = 0.58 + Math.sin(clock.elapsedTime * 4.2 + item.bobSeed) * 0.18;
-      if (player.position.distanceTo(item.position) < 1.25) {
+      if (distanceSq < 1.25 * 1.25) {
         item.collected = true;
         item.respawnTimer = 22 + (item.bobSeed % 7);
+        item.visibleActive = false;
         item.group.visible = false;
         spawnImpact(item.position, item.color || 0x9fffd1, 12);
         awardExplorationXp(5);
@@ -2865,12 +2972,14 @@ import {
 
   function nearestNpc(maxDistance = 3.4) {
     let nearest = null;
-    let nearestDistance = maxDistance;
+    let nearestDistanceSq = maxDistance * maxDistance;
     for (const npc of game.npcs) {
-      const distance = Math.hypot(player.position.x - npc.group.position.x, player.position.z - npc.group.position.z);
-      if (distance < nearestDistance) {
+      const dx = player.position.x - npc.group.position.x;
+      const dz = player.position.z - npc.group.position.z;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq < nearestDistanceSq) {
         nearest = npc;
-        nearestDistance = distance;
+        nearestDistanceSq = distanceSq;
       }
     }
     return nearest;
@@ -3571,16 +3680,16 @@ import {
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.cityWall : materials.stone;
     const floor = makeBox(4.6, 0.12, 4.0, materials.darkStone, 0, 0.06, 0);
-    const back = makeBox(4.6, 2.45, 0.24, wall, 0, 1.28, 1.88);
-    const left = makeBox(0.24, 2.45, 4.0, wall, -2.18, 1.28, 0);
-    const right = makeBox(0.24, 2.45, 4.0, wall, 2.18, 1.28, 0);
-    const frontLeft = makeBox(1.48, 2.45, 0.24, wall, -1.56, 1.28, -1.88);
-    const frontRight = makeBox(1.48, 2.45, 0.24, wall, 1.56, 1.28, -1.88);
+    const back = makeBox(4.6, 2.6, 0.24, wall, 0, 1.35, 1.88);
+    const left = makeBox(0.24, 2.6, 4.0, wall, -2.18, 1.35, 0);
+    const right = makeBox(0.24, 2.6, 4.0, wall, 2.18, 1.35, 0);
+    const frontLeft = makeBox(1.48, 2.6, 0.24, wall, -1.56, 1.35, -1.88);
+    const frontRight = makeBox(1.48, 2.6, 0.24, wall, 1.56, 1.35, -1.88);
     const door = makeBox(0.82, 1.36, 0.08, materials.wood, 0, 0.74, -2.04);
-    const roofA = makeBox(5.2, 0.34, 2.55, materials.cityRoof, 0, 2.88, -0.8);
-    const roofB = makeBox(5.2, 0.34, 2.55, materials.cityRoof, 0, 2.88, 0.8);
-    roofA.rotation.x = -0.56;
-    roofB.rotation.x = 0.56;
+    const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, -0.8);
+    const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, 0.8);
+    roofA.rotation.x = -0.52;
+    roofB.rotation.x = 0.52;
     const sign = makeBox(1.0, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, 0, 1.55, -2.07);
     const windowA = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), -1.28, 1.58, -2.06);
     const windowB = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), 1.28, 1.58, -2.06);
@@ -3594,7 +3703,7 @@ import {
     const castle = new THREE.Group();
     castle.position.set(x, 0, z);
     const base = makeBox(14, 0.18, 10.5, materials.darkStone, 0, 0.09, 0);
-    const keep = makeBox(7.2, 6.2, 6.2, materials.cityWall, 0, 3.2, 0.6);
+    const keep = makeBox(7.2, 6.75, 6.2, materials.cityWall, 0, 3.48, 0.6);
     const gate = makeBox(1.55, 2.3, 0.12, materials.wood, 0, 1.18, -2.58);
     const lintel = makeBox(2.1, 0.3, 0.18, materials.darkStone, 0, 2.42, -2.62);
     castle.add(base, keep, gate, lintel);
@@ -3605,12 +3714,12 @@ import {
       [4.6, 4.4]
     ];
     for (const [tx, tz] of towerPositions) {
-      const tower = makeCylinder(0.92, 1.08, 6.9, 18, materials.cityWall, tx, 3.45, tz);
-      const cap = makeCone(1.24, 1.6, 18, materials.cityRoof, tx, 7.68, tz);
+      const tower = makeCylinder(0.92, 1.08, 7.25, 18, materials.cityWall, tx, 3.62, tz);
+      const cap = makeCone(1.28, 1.7, 18, materials.cityRoof, tx, 8.1, tz);
       castle.add(tower, cap);
     }
     for (let i = 0; i < 5; i += 1) {
-      castle.add(makeBox(0.62, 0.54, 0.48, materials.darkStone, -2.7 + i * 1.35, 6.58, -2.55));
+      castle.add(makeBox(0.62, 0.54, 0.48, materials.darkStone, -2.7 + i * 1.35, 7.15, -2.55));
     }
     const banner = makeBox(0.1, 1.45, 0.86, materials.blue, -3.7, 4.6, -2.72);
     castle.add(banner);
@@ -3633,12 +3742,12 @@ import {
     const roofB = makeBox(7.9, 0.44, 6.8, materials.cityRoof, 0, 3.72, 1.7);
     roofA.rotation.x = -0.62;
     roofB.rotation.x = 0.62;
-    const tower = makeBox(3.0, 6.1, 3.0, materials.cityWall, 0, 3.08, -5.55);
-    const spire = makeCone(1.85, 3.6, 24, materials.cityRoof, 0, 7.95, -5.55);
+    const tower = makeBox(3.0, 6.5, 3.0, materials.cityWall, 0, 3.28, -5.55);
+    const spire = makeCone(1.82, 3.95, 24, materials.cityRoof, 0, 8.38, -5.55);
     const door = makeBox(1.0, 1.7, 0.08, materials.wood, 0, 0.9, -7.1);
     const glass = makeBox(0.74, 1.2, 0.08, materials.stainedGlass.clone(), 0, 3.72, -7.12);
-    const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, 9.72, -5.55);
-    const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, 9.88, -5.55);
+    const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, 10.26, -5.55);
+    const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, 10.42, -5.55);
     church.add(nave, apse, roofA, roofB, tower, spire, door, glass, crossV, crossH);
     group.add(church);
     addExplorationCollider(x, z, 4.9, "structure");
@@ -3763,15 +3872,15 @@ import {
       [37, 22, 0.7, 30]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
-      const wall = makeBox(ww, 2.2, wd, materials.cityWall, x + wx, 1.1, z + wz);
+      const wall = makeBox(ww, 2.45, wd, materials.cityWall, x + wx, 1.23, z + wz);
       group.add(wall);
       addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
     }
     for (let i = 0; i < 4; i += 1) {
       const sx = i % 2 ? 37 : -37;
       const sz = i > 1 ? 37 : -37;
-      const tower = makeCylinder(1.05, 1.2, 3.4, 16, materials.cityWall, x + sx, 1.7, z + sz);
-      const roof = makeCone(1.45, 1.45, 16, materials.cityRoof, x + sx, 4.12, z + sz);
+      const tower = makeCylinder(1.05, 1.2, 3.75, 16, materials.cityWall, x + sx, 1.88, z + sz);
+      const roof = makeCone(1.48, 1.55, 16, materials.cityRoof, x + sx, 4.52, z + sz);
       group.add(tower, roof);
       addExplorationCollider(x + sx, z + sz, 1.55, "structure");
     }
@@ -4667,11 +4776,6 @@ import {
   function setGameMode(mode) {
     mode = "exploration";
     game.mode = mode;
-    modeCards.forEach(card => {
-      const selected = card.dataset.mode === mode;
-      card.classList.toggle("selected", selected);
-      card.setAttribute("aria-checked", selected ? "true" : "false");
-    });
     startButton.textContent = getStartButtonText();
     updateModeDescription();
     if (online.role === "host" && online.connected) {
@@ -4794,7 +4898,6 @@ import {
     }
     backMenuButton.hidden = phase === "landing" || pausePhase;
     onlinePanel.hidden = !showOnlinePanel;
-    modeSelect.hidden = true;
     characterSelect.hidden = activeSessionMenu || !(hostPhase || joinReady);
     startButton.hidden = activeSessionMenu || !(hostPhase || joinReady);
     resumeButton.hidden = !pausePhase;
@@ -4807,16 +4910,14 @@ import {
     joinButton.textContent = online.connected ? "Retry" : "Join";
     roomCodeCard.hidden = !(online.role === "host" && online.roomCode && (hostPhase || pausePhase));
 
-    modeCards.forEach(card => {
-      card.disabled = online.role === "join";
-    });
-
     if (phase === "landing") {
-      overlayCopy.textContent = activeGame ? "Resume your save, start fresh, or join with a four digit code." : "Start a room or join one with a four digit code.";
+      overlayCopy.textContent = activeGame
+        ? "Resume your exploration save, start fresh, or join a friend's world."
+        : "Start a new exploration room or join a friend's world.";
       setSessionNote("");
       updateOnlineStatus(online.lastRoomCode ? "Last room " + online.lastRoomCode + " ready to rejoin" : "Choose start or join");
     } else if (hostPhase) {
-      overlayCopy.textContent = "Pick your character, then start Exploration. Share the room code whenever friends are joining.";
+      overlayCopy.textContent = "Pick your character, then start Exploration. Crownring waves are found in the world.";
       setSessionNote(online.roomCode ? "Room " + online.roomCode + " - " + modeDisplayName() : "Creating room");
       if (!online.connected && online.role === "host") {
         updateOnlineStatus("Opening room");
@@ -4828,7 +4929,7 @@ import {
         updateOnlineStatus("Enter 4 digits");
       }
     } else if (joinReady) {
-      overlayCopy.textContent = "Connected to " + modeDisplayName() + ". Saved progress carries into the room.";
+      overlayCopy.textContent = "Connected to the host world. Saved progress carries into the room.";
       setSessionNote("Room " + (online.roomCode || "----") + " - " + modeDisplayName());
     } else if (pausePhase) {
       overlayCopy.textContent = online.role === "join"
@@ -4953,7 +5054,7 @@ import {
       sendOnlineMessage({ kind: "roomClosed" });
     }
     closeOnlineConnection(true, true, false);
-    returnToLanding("Room closed. Start Session opens a fresh room.");
+    returnToLanding("Room closed. Start New Session opens a fresh room.");
   }
 
   function leaveRoomToMenu(message = "Left room", preserveCode = true) {
@@ -5852,6 +5953,26 @@ import {
       handleRemotePotionDrop(message);
       return;
     }
+    if (message.kind === "arenaStartRequest") {
+      if (online.role !== "host" || game.mode !== "exploration" || game.state !== "playing") {
+        return;
+      }
+      if (message.state) {
+        upsertRemotePlayer(message.state);
+      }
+      startCrownringArenaActivity();
+      return;
+    }
+    if (message.kind === "arenaLeaveRequest" || message.kind === "arenaDefeated") {
+      if (online.role !== "host") {
+        return;
+      }
+      if (message.state) {
+        upsertRemotePlayer(message.state);
+      }
+      removeArenaParticipant(message.id);
+      return;
+    }
     if (message.kind === "potionPicked") {
       if (!messageFromKnownHost(message)) {
         return;
@@ -6476,25 +6597,23 @@ import {
     const group = new THREE.Group();
     group.scale.setScalar(scale);
 
-    const hips = makeCylinder(0.42, 0.5, 0.58, 14, materials.leather, 0, 0.66, 0);
-    const chest = makeCylinder(0.52, 0.43, 0.86, 14, materials.skin, 0, 1.28, 0);
-    const fur = makeBox(1.06, 0.22, 0.62, materials.fur, 0, 1.76, 0);
-    const head = makeSphere(0.28, materials.skin, 0, 2.02, 0);
-    const beard = makeBox(0.36, 0.3, 0.12, materials.fur, 0, 1.88, -0.22);
-    const hair = makeCylinder(0.22, 0.29, 0.24, 12, materials.fur, 0, 2.25, 0);
-    const leftEye = makeSphere(0.035, materials.emberEye, -0.09, 2.06, -0.24);
-    const rightEye = makeSphere(0.035, materials.emberEye, 0.09, 2.06, -0.24);
-    const nose = makeBox(0.06, 0.09, 0.08, materials.skin, 0, 1.99, -0.28);
-    const warPaint = makeBox(0.38, 0.035, 0.025, materials.warPaint, 0, 2.1, -0.27);
-    const helmetBand = makeCylinder(0.31, 0.31, 0.12, 16, materials.iron, 0, 2.2, 0);
-    const hornLeft = makeCylinder(0.02, 0.085, 0.36, 8, materials.bone, -0.28, 2.28, -0.02);
-    const hornRight = makeCylinder(0.02, 0.085, 0.36, 8, materials.bone, 0.28, 2.28, -0.02);
-    hornLeft.rotation.z = 1.05;
-    hornLeft.rotation.y = -0.18;
-    hornRight.rotation.z = -1.05;
-    hornRight.rotation.y = 0.18;
-    const leftLeg = makeBox(0.22, 0.66, 0.24, materials.leather, -0.22, 0.28, 0);
-    const rightLeg = makeBox(0.22, 0.66, 0.24, materials.leather, 0.22, 0.28, 0);
+    const hips = makeCylinder(0.44, 0.52, 0.62, 14, materials.leather, 0, 0.68, 0);
+    const chest = makeCylinder(0.55, 0.45, 0.92, 14, materials.skin, 0, 1.34, 0);
+    const fur = makeBox(1.12, 0.24, 0.66, materials.fur, 0, 1.84, 0);
+    const head = makeSphere(0.28, materials.skin, 0, 2.1, 0);
+    const beard = makeBox(0.36, 0.3, 0.12, materials.fur, 0, 1.96, -0.22);
+    const hair = makeCylinder(0.22, 0.29, 0.24, 12, materials.fur, 0, 2.33, 0);
+    const leftEye = makeSphere(0.035, materials.emberEye, -0.09, 2.14, -0.24);
+    const rightEye = makeSphere(0.035, materials.emberEye, 0.09, 2.14, -0.24);
+    const nose = makeBox(0.06, 0.09, 0.08, materials.skin, 0, 2.07, -0.28);
+    const warPaint = makeBox(0.38, 0.035, 0.025, materials.warPaint, 0, 2.18, -0.27);
+    const helmetBand = makeCylinder(0.31, 0.31, 0.12, 16, materials.iron, 0, 2.28, 0);
+    const hornLeft = makeCylinder(0.018, 0.082, 0.36, 8, materials.bone, -0.26, 2.34, -0.08);
+    const hornRight = makeCylinder(0.018, 0.082, 0.36, 8, materials.bone, 0.26, 2.34, -0.08);
+    hornLeft.rotation.set(-0.18, -0.34, 1.0);
+    hornRight.rotation.set(-0.18, 0.34, -1.0);
+    const leftLeg = makeBox(0.23, 0.7, 0.25, materials.leather, -0.23, 0.3, 0);
+    const rightLeg = makeBox(0.23, 0.7, 0.25, materials.leather, 0.23, 0.3, 0);
     const leftBoot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.04);
     const rightBoot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, 0.22, -0.04, -0.04);
     const leftArm = makeBox(0.2, 0.68, 0.2, materials.skin, -0.58, 1.25, 0);
@@ -6526,7 +6645,7 @@ import {
     weaponPivot.rotation.set(-0.12, -0.3, -0.7);
 
     const healthRoot = new THREE.Group();
-    healthRoot.position.set(0, 2.55, 0);
+    healthRoot.position.set(0, 2.7, 0);
     const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: 0x240c0b, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
     const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.045), new THREE.MeshBasicMaterial({ color: 0xff6a5d, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
     hpFill.position.z = 0.003;
@@ -6551,9 +6670,9 @@ import {
     const geometry = new THREE.BufferGeometry();
     const vertices = new Float32Array([
       0, 0.04, 0,
-      side * 2.65, 0.22, -0.42,
-      side * 1.18, -0.14, -1.78,
-      side * 0.26, -0.02, -0.74
+      side * 3.05, 0.26, -0.48,
+      side * 1.34, -0.18, -1.98,
+      side * 0.28, -0.02, -0.82
     ]);
     geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
     geometry.setIndex([0, 1, 3, 1, 2, 3]);
@@ -6568,45 +6687,43 @@ import {
     const group = new THREE.Group();
     group.scale.setScalar(scale);
 
-    const body = makeCylinder(0.46, 0.68, 1.82, 18, materials.dragonScale, 0, 0, 0);
+    const body = makeCylinder(0.54, 0.76, 2.05, 18, materials.dragonScale, 0, 0, 0);
     body.rotation.x = Math.PI / 2;
-    const belly = makeBox(0.56, 0.1, 1.18, materials.dragonBelly, 0, -0.27, -0.14);
-    const neck = makeCylinder(0.22, 0.32, 0.72, 14, materials.dragonScale, 0, 0.3, -0.9);
-    neck.rotation.x = 0.78;
-    const head = makeSphere(0.38, materials.dragonScale, 0, 0.58, -1.34);
-    head.scale.set(1.15, 0.82, 1.08);
-    const snout = makeBox(0.48, 0.24, 0.46, materials.dragonScale, 0, 0.5, -1.72);
-    const upperJaw = makeBox(0.44, 0.13, 0.5, materials.dragonScale, 0, 0.56, -1.86);
-    const lowerJaw = makeBox(0.42, 0.1, 0.43, materials.dragonBelly, 0, 0.39, -1.84);
-    const leftEye = makeSphere(0.055, materials.dragonEye, -0.18, 0.64, -1.68);
-    const rightEye = makeSphere(0.055, materials.dragonEye, 0.18, 0.64, -1.68);
-    const hornLeft = makeCylinder(0.02, 0.08, 0.44, 8, materials.bone || materials.gold, -0.18, 0.86, -1.28);
-    const hornRight = makeCylinder(0.02, 0.08, 0.44, 8, materials.bone || materials.gold, 0.18, 0.86, -1.28);
-    hornLeft.rotation.x = -0.52;
-    hornLeft.rotation.z = -0.22;
-    hornRight.rotation.x = -0.52;
-    hornRight.rotation.z = 0.22;
+    const belly = makeBox(0.64, 0.12, 1.36, materials.dragonBelly, 0, -0.31, -0.12);
+    const neck = makeCylinder(0.24, 0.36, 0.86, 14, materials.dragonScale, 0, 0.36, -1.02);
+    neck.rotation.x = 0.7;
+    const head = makeSphere(0.42, materials.dragonScale, 0, 0.68, -1.54);
+    head.scale.set(1.18, 0.88, 1.12);
+    const snout = makeBox(0.54, 0.26, 0.54, materials.dragonScale, 0, 0.58, -1.96);
+    const upperJaw = makeBox(0.5, 0.14, 0.58, materials.dragonScale, 0, 0.64, -2.12);
+    const lowerJaw = makeBox(0.48, 0.11, 0.48, materials.dragonBelly, 0, 0.45, -2.1);
+    const leftEye = makeSphere(0.06, materials.dragonEye, -0.2, 0.75, -1.9);
+    const rightEye = makeSphere(0.06, materials.dragonEye, 0.2, 0.75, -1.9);
+    const hornLeft = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, -0.21, 0.98, -1.46);
+    const hornRight = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, 0.21, 0.98, -1.46);
+    hornLeft.rotation.set(-0.82, -0.22, -0.18);
+    hornRight.rotation.set(-0.82, 0.22, 0.18);
 
-    const tail = makeCylinder(0.08, 0.32, 1.64, 12, materials.dragonScale, 0, -0.04, 1.26);
+    const tail = makeCylinder(0.09, 0.36, 1.92, 12, materials.dragonScale, 0, -0.04, 1.48);
     tail.rotation.x = Math.PI / 2 + 0.18;
-    const tailTip = makeCylinder(0.03, 0.12, 0.56, 10, materials.dragonScale, 0, 0.08, 2.14);
+    const tailTip = makeCylinder(0.035, 0.13, 0.66, 10, materials.dragonScale, 0, 0.08, 2.48);
     tailTip.rotation.x = Math.PI / 2 + 0.42;
 
     const leftWing = new THREE.Group();
-    leftWing.position.set(-0.42, 0.24, -0.18);
+    leftWing.position.set(-0.48, 0.3, -0.2);
     leftWing.add(makeWing(-1));
     const rightWing = new THREE.Group();
-    rightWing.position.set(0.42, 0.24, -0.18);
+    rightWing.position.set(0.48, 0.3, -0.2);
     rightWing.add(makeWing(1));
 
-    const leftClaw = makeBox(0.18, 0.14, 0.58, materials.dragonScale, -0.34, -0.34, -0.52);
-    const rightClaw = makeBox(0.18, 0.14, 0.58, materials.dragonScale, 0.34, -0.34, -0.52);
+    const leftClaw = makeBox(0.2, 0.15, 0.64, materials.dragonScale, -0.38, -0.38, -0.58);
+    const rightClaw = makeBox(0.2, 0.15, 0.64, materials.dragonScale, 0.38, -0.38, -0.58);
     leftClaw.rotation.x = -0.5;
     rightClaw.rotation.x = -0.5;
-    const rearLeftLeg = makeBox(0.18, 0.5, 0.18, materials.dragonScale, -0.4, -0.42, 0.42);
-    const rearRightLeg = makeBox(0.18, 0.5, 0.18, materials.dragonScale, 0.4, -0.42, 0.42);
-    const rearLeftFoot = makeBox(0.24, 0.12, 0.44, materials.dragonBelly, -0.4, -0.7, 0.22);
-    const rearRightFoot = makeBox(0.24, 0.12, 0.44, materials.dragonBelly, 0.4, -0.7, 0.22);
+    const rearLeftLeg = makeBox(0.2, 0.56, 0.2, materials.dragonScale, -0.45, -0.46, 0.52);
+    const rearRightLeg = makeBox(0.2, 0.56, 0.2, materials.dragonScale, 0.45, -0.46, 0.52);
+    const rearLeftFoot = makeBox(0.28, 0.13, 0.5, materials.dragonBelly, -0.45, -0.78, 0.3);
+    const rearRightFoot = makeBox(0.28, 0.13, 0.5, materials.dragonBelly, 0.45, -0.78, 0.3);
     rearLeftLeg.rotation.x = 0.18;
     rearRightLeg.rotation.x = 0.18;
     rearLeftFoot.rotation.x = -0.18;
@@ -6628,12 +6745,12 @@ import {
       spineSpikes.add(spike);
     }
 
-    const mouthGlow = makeSphere(0.12, materials.fireCore.clone(), 0, 0.47, -1.98);
+    const mouthGlow = makeSphere(0.13, materials.fireCore.clone(), 0, 0.52, -2.24);
     mouthGlow.material.transparent = true;
     mouthGlow.visible = false;
 
     const healthRoot = new THREE.Group();
-    healthRoot.position.set(0, 1.34, 0.16);
+    healthRoot.position.set(0, 1.58, 0.16);
     const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.08), new THREE.MeshBasicMaterial({ color: 0x240c0b, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
     const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(1.01, 0.045), new THREE.MeshBasicMaterial({ color: 0xffa35d, transparent: true, opacity: 0.94, side: THREE.DoubleSide }));
     hpFill.position.z = 0.003;
@@ -6648,17 +6765,17 @@ import {
     const group = new THREE.Group();
     group.scale.setScalar(scale);
 
-    const abdomen = makeSphere(0.44, materials.spiderCarapace, 0, 0.48, 0.22);
-    abdomen.scale.set(1.15, 0.62, 1.28);
-    const thorax = makeSphere(0.32, materials.spiderCarapace.clone(), 0, 0.5, -0.32);
-    thorax.scale.set(1.0, 0.58, 0.9);
-    const head = makeSphere(0.22, materials.spiderCarapace.clone(), 0, 0.48, -0.68);
-    head.scale.set(1.05, 0.72, 0.78);
-    const marking = makeBox(0.34, 0.035, 0.18, materials.spiderMarking, 0, 0.76, 0.28);
-    const leftEye = makeSphere(0.04, materials.emberEye, -0.09, 0.58, -0.82);
-    const rightEye = makeSphere(0.04, materials.emberEye, 0.09, 0.58, -0.82);
-    const leftFang = makeCone(0.045, 0.18, 8, materials.bone, -0.08, 0.32, -0.86);
-    const rightFang = makeCone(0.045, 0.18, 8, materials.bone, 0.08, 0.32, -0.86);
+    const abdomen = makeSphere(0.44, materials.spiderCarapace, 0, 0.54, 0.24);
+    abdomen.scale.set(1.18, 0.7, 1.3);
+    const thorax = makeSphere(0.32, materials.spiderCarapace.clone(), 0, 0.55, -0.32);
+    thorax.scale.set(1.04, 0.66, 0.92);
+    const head = makeSphere(0.22, materials.spiderCarapace.clone(), 0, 0.52, -0.69);
+    head.scale.set(1.05, 0.78, 0.8);
+    const marking = makeBox(0.34, 0.035, 0.18, materials.spiderMarking, 0, 0.84, 0.3);
+    const leftEye = makeSphere(0.04, materials.emberEye, -0.09, 0.64, -0.83);
+    const rightEye = makeSphere(0.04, materials.emberEye, 0.09, 0.64, -0.83);
+    const leftFang = makeCone(0.045, 0.18, 8, materials.bone, -0.08, 0.36, -0.87);
+    const rightFang = makeCone(0.045, 0.18, 8, materials.bone, 0.08, 0.36, -0.87);
     leftFang.rotation.x = Math.PI;
     rightFang.rotation.x = Math.PI;
 
@@ -6666,10 +6783,10 @@ import {
     for (let side = -1; side <= 1; side += 2) {
       for (let i = 0; i < 4; i += 1) {
         const z = -0.46 + i * 0.25;
-        const leg = makeCylinder(0.032, 0.045, 0.92, 7, materials.spiderCarapace.clone(), side * 0.45, 0.38, z);
+        const leg = makeCylinder(0.032, 0.045, 0.95, 7, materials.spiderCarapace.clone(), side * 0.47, 0.42, z);
         leg.rotation.z = side * (Math.PI / 2.35);
         leg.rotation.x = (i - 1.5) * 0.16;
-        const shin = makeCylinder(0.026, 0.036, 0.72, 7, materials.spiderCarapace.clone(), side * 0.92, 0.2, z + (i - 1.5) * 0.1);
+        const shin = makeCylinder(0.026, 0.036, 0.74, 7, materials.spiderCarapace.clone(), side * 0.96, 0.24, z + (i - 1.5) * 0.1);
         shin.rotation.z = side * (Math.PI / 2.7);
         shin.rotation.x = (i - 1.5) * 0.22;
         legs.push(leg, shin);
@@ -6678,7 +6795,7 @@ import {
     }
 
     const healthRoot = new THREE.Group();
-    healthRoot.position.set(0, 1.18, 0);
+    healthRoot.position.set(0, 1.26, 0);
     const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: 0x240c0b, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
     const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.045), new THREE.MeshBasicMaterial({ color: 0xd9a648, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
     hpFill.position.z = 0.003;
@@ -6732,7 +6849,7 @@ import {
   }
 
   function createBarbarian(x, z, wave) {
-    const scale = 0.98 + Math.random() * 0.16 + Math.min(wave * 0.01, 0.12);
+    const scale = modelScale.barbarianBase + Math.random() * 0.14 + Math.min(wave * 0.01, 0.1);
     const model = createBarbarianModel(scale);
     const enemy = {
       ...model,
@@ -6762,7 +6879,7 @@ import {
   }
 
   function createDragon(x, z, wave) {
-    const scale = 1.12 + Math.random() * 0.18 + Math.min(wave * 0.012, 0.16);
+    const scale = modelScale.dragonBase + Math.random() * 0.16 + Math.min(wave * 0.012, 0.14);
     const model = createDragonModel(scale);
     const enemy = {
       ...model,
@@ -6771,12 +6888,12 @@ import {
       velocity: new THREE.Vector3(),
       yaw: 0,
       scale,
-      hoverHeight: 2.55 + Math.random() * 0.38,
-      desiredRange: 8.0 + Math.random() * 2.2,
+      hoverHeight: 2.9 + Math.random() * 0.42,
+      desiredRange: 8.8 + Math.random() * 2.2,
       health: 92 + wave * 14,
       maxHealth: 92 + wave * 14,
       speed: 2.8 + Math.min(wave * 0.035, 0.44),
-      radius: 1.35 * scale,
+      radius: 1.5 * scale,
       cooldown: 1.0 + Math.random() * 1.4,
       state: "chase",
       attackTimer: 0,
@@ -6794,7 +6911,7 @@ import {
   }
 
   function createSpider(x, z, wave) {
-    const scale = 1.45 + Math.random() * 0.18;
+    const scale = modelScale.spiderBase + Math.random() * 0.16;
     const model = createSpiderModel(scale);
     const enemy = {
       ...model,
@@ -8122,9 +8239,18 @@ import {
 
   function updateExplorationNpcs(dt) {
     for (const npc of game.npcs) {
-      npc.retarget -= dt;
+      const dx = player.position.x - npc.group.position.x;
+      const dz = player.position.z - npc.group.position.z;
+      const playerDistanceSq = dx * dx + dz * dz;
+      npc.group.visible = playerDistanceSq < EXPLORATION_NPC_VISIBLE_DISTANCE_SQ;
       npc.healCooldown = Math.max(0, npc.healCooldown - dt);
-      if (npc.retarget <= 0 || npc.group.position.distanceTo(npc.target) < 0.45) {
+      if (playerDistanceSq > EXPLORATION_NPC_UPDATE_DISTANCE_SQ) {
+        continue;
+      }
+      npc.retarget -= dt;
+      const targetDx = npc.group.position.x - npc.target.x;
+      const targetDz = npc.group.position.z - npc.target.z;
+      if (npc.retarget <= 0 || targetDx * targetDx + targetDz * targetDz < 0.45 * 0.45) {
         const angle = Math.random() * TAU;
         const radius = Math.random() * npc.homeRadius;
         npc.target.set(npc.home.x + Math.cos(angle) * radius, 0, npc.home.z + Math.sin(angle) * radius);
@@ -8141,8 +8267,7 @@ import {
       const swing = Math.sin(npc.walkTime * 5.8) * 0.18;
       npc.leftLeg.rotation.x = swing;
       npc.rightLeg.rotation.x = -swing;
-      const playerDistance = npc.group.position.distanceTo(player.position);
-      if (playerDistance < 3.0 && npc.healCooldown <= 0 && player.health < player.maxHealth) {
+      if (playerDistanceSq < 3.0 * 3.0 && npc.healCooldown <= 0 && player.health < player.maxHealth) {
         player.health = Math.min(player.maxHealth, player.health + 10);
         npc.healCooldown = 16;
         npc.leftArm.rotation.z = -1.2;
@@ -8193,15 +8318,18 @@ import {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.stunned = Math.max(0, enemy.stunned - dt);
-      enemy.healthRoot.lookAt(camera.position);
-      enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
-      enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
 
       const target = nearestCombatTarget(enemy);
       enemy.targetId = target.id;
       const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
       const playerDistance = Math.max(0.001, toPlayer.length());
       const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
+      const detailed = playerDistance * playerDistance < EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ || enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse" || enemy.state === "fire" || enemy.stunned > 0;
+      if (detailed) {
+        enemy.healthRoot.lookAt(camera.position);
+        enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
+        enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
+      }
 
       if (enemy.type === "dragon") {
         updateExplorationDragonEnemy(enemy, dt, playerDistance, playerDirection);
@@ -8252,19 +8380,21 @@ import {
         }
       }
 
-      for (const other of game.enemies) {
-        if (other === enemy || other.dead) {
-          continue;
-        }
-        const dx = enemy.position.x - other.position.x;
-        const dz = enemy.position.z - other.position.z;
-        const d2 = dx * dx + dz * dz;
-        const minDistance = enemy.radius + other.radius + 0.2;
-        if (d2 > 0.0001 && d2 < minDistance * minDistance) {
-          const d = Math.sqrt(d2);
-          const push = (minDistance - d) * 0.45;
-          enemy.velocity.x += (dx / d) * push * 2.4;
-          enemy.velocity.z += (dz / d) * push * 2.4;
+      if (playerDistance < EXPLORATION_ENEMY_SEPARATION_DISTANCE || enemy.state !== "patrol") {
+        for (const other of game.enemies) {
+          if (other === enemy || other.dead) {
+            continue;
+          }
+          const dx = enemy.position.x - other.position.x;
+          const dz = enemy.position.z - other.position.z;
+          const d2 = dx * dx + dz * dz;
+          const minDistance = enemy.radius + other.radius + 0.2;
+          if (d2 > 0.0001 && d2 < minDistance * minDistance) {
+            const d = Math.sqrt(d2);
+            const push = (minDistance - d) * 0.45;
+            enemy.velocity.x += (dx / d) * push * 2.4;
+            enemy.velocity.z += (dz / d) * push * 2.4;
+          }
         }
       }
 
@@ -8810,7 +8940,11 @@ import {
           updateQuestItems(dt);
           updateHorse(dt);
           updateTalkPrompt();
-          updateQuestMap();
+          game.questMapTimer -= dt;
+          if (game.questMapTimer <= 0) {
+            game.questMapTimer = QUEST_MAP_UPDATE_INTERVAL;
+            updateQuestMap();
+          }
         } else {
           talkPrompt.hidden = true;
         }
@@ -9029,15 +9163,6 @@ import {
       card.addEventListener("click", () => {
         setPlayerCharacter(card.dataset.character, true);
         updateHud();
-      });
-    }
-
-    for (const card of modeCards) {
-      card.addEventListener("click", () => {
-        if (online.role === "join") {
-          return;
-        }
-        setGameMode(card.dataset.mode);
       });
     }
 
