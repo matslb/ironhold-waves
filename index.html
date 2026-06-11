@@ -66,6 +66,7 @@
       <div class="quest-actions">
         <button id="questAcceptButton" class="secondary" type="button">Accept</button>
         <button id="questClaimButton" type="button">Claim Reward</button>
+        <button id="questServiceButton" class="secondary" type="button">Enter Crownring</button>
         <button id="questCloseButton" class="secondary" type="button">Close</button>
       </div>
     </section>
@@ -103,11 +104,11 @@
   <div id="overlay">
     <section class="start-card panel">
       <h1>Ironhold</h1>
-      <p id="overlayCopy">Start a room or join one with a four digit code.</p>
+      <p id="overlayCopy">Start exploring, resume your local journey, or join a friend's world.</p>
       <div class="session-select" id="sessionSelect" aria-label="Session action">
         <button class="session-card" id="startSessionButton" type="button">
           <strong>Start New Session</strong>
-          <span>Wipe local progress, open an exploration room, then choose your hero.</span>
+          <span>Wipe local progress, open a new exploration room, then choose your hero.</span>
         </button>
         <button class="session-card" id="resumeGameButton" type="button" hidden>
           <strong>Resume Game</strong>
@@ -115,7 +116,7 @@
         </button>
         <button class="session-card" id="joinSessionButton" type="button">
           <strong>Join Session</strong>
-          <span>Enter a room code and carry your save into a friend's world.</span>
+          <span>Enter a room code and carry your progress into the host world.</span>
         </button>
       </div>
       <button class="secondary menu-back" id="backMenuButton" type="button" hidden>Back</button>
@@ -135,12 +136,6 @@
           </div>
         </div>
         <span class="online-status" id="onlineStatus">Choose start or join</span>
-      </div>
-      <div class="mode-select" id="modeSelect" role="radiogroup" aria-label="Choose game mode" hidden>
-        <button class="mode-card" type="button" data-mode="exploration" role="radio" aria-checked="false">
-          <strong>Exploration</strong>
-          <span>Open world</span>
-        </button>
       </div>
       <div class="character-select" id="characterSelect" role="radiogroup" aria-label="Choose character" hidden>
         <button class="character-card selected" type="button" data-character="knight" role="radio" aria-checked="true">
