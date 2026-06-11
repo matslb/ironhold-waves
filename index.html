@@ -1319,6 +1319,10 @@
         playerProjectiles: [],
         potions: [],
         particles: [],
+        nextEnemyId: 1,
+        nextFireballId: 1,
+        nextPotionId: 1,
+        nextProjectileId: 1,
         gates: [],
         nextWaveIn: 0,
         bannerTime: 0,
@@ -1369,6 +1373,8 @@
         lastRoomMode: "solo",
         hostId: "",
         sendTimer: 0,
+        worldSendTimer: 0,
+        effectSeq: 0,
         presenceTimer: 0,
         remotePlayers: new Map(),
         kickedIds: new Set()
@@ -5025,6 +5031,7 @@
         online.connected = false;
         online.role = null;
         online.hostId = "";
+        online.worldSendTimer = 0;
         if (clearRoom) {
           showRoomCode("");
           if (preserveCode && previousCode) {
@@ -5193,6 +5200,536 @@
         });
       }
 
+      function isJoinedClient() {
+        return online.role === "join" && !!online.topic;
+      }
+
+      function canSimulateSharedWorld() {
+        return online.role !== "join";
+      }
+
+      function nextNetworkId(prefix) {
+        if (prefix === "enemy") {
+          return "e" + game.nextEnemyId++;
+        }
+        if (prefix === "fireball") {
+          return "f" + game.nextFireballId++;
+        }
+        if (prefix === "potion") {
+          return "p" + game.nextPotionId++;
+        }
+        return "x" + game.nextProjectileId++;
+      }
+
+      function assignEnemyId(enemy, id = "") {
+        enemy.netId = id || enemy.netId || nextNetworkId("enemy");
+        return enemy;
+      }
+
+      function assignFireballId(fireball, id = "") {
+        fireball.netId = id || fireball.netId || nextNetworkId("fireball");
+        return fireball;
+      }
+
+      function assignPotionId(potion, id = "") {
+        potion.netId = id || potion.netId || nextNetworkId("potion");
+        return potion;
+      }
+
+      function clearSharedWorldActors({ enemies = true, fireballs = true, potions = true } = {}) {
+        if (enemies) {
+          for (const enemy of game.enemies) {
+            scene.remove(enemy.group);
+          }
+          game.enemies.length = 0;
+        }
+        if (fireballs) {
+          for (const fireball of game.fireballs) {
+            scene.remove(fireball.group);
+          }
+          game.fireballs.length = 0;
+        }
+        if (potions) {
+          for (const potion of game.potions) {
+            scene.remove(potion.group);
+          }
+          game.potions.length = 0;
+        }
+      }
+
+      function serializeEnemyState(enemy) {
+        const groupY = enemy.group ? enemy.group.position.y : 0;
+        return {
+          enemyId: enemy.netId,
+          type: enemy.type,
+          x: enemy.position.x,
+          z: enemy.position.z,
+          y: groupY,
+          yaw: enemy.yaw || 0,
+          scale: enemy.scale || 1,
+          radius: enemy.radius || 0.7,
+          health: Math.max(0, enemy.health),
+          maxHealth: enemy.maxHealth,
+          speed: enemy.speed,
+          state: enemy.state,
+          attackType: enemy.attackType || "",
+          attackTimer: enemy.attackTimer || 0,
+          attackDuration: enemy.attackDuration || 0,
+          cooldown: enemy.cooldown || 0,
+          stunned: enemy.stunned || 0,
+          entering: !!enemy.entering,
+          hoverHeight: enemy.hoverHeight || 0,
+          desiredRange: enemy.desiredRange || 0,
+          exploration: !!enemy.exploration
+        };
+      }
+
+      function serializeFireballState(fireball) {
+        return {
+          fireballId: fireball.netId,
+          x: fireball.group.position.x,
+          y: fireball.group.position.y,
+          z: fireball.group.position.z,
+          vx: fireball.velocity.x,
+          vy: fireball.velocity.y,
+          vz: fireball.velocity.z,
+          speed: fireball.speed,
+          turnRate: fireball.turnRate,
+          life: fireball.life,
+          damage: fireball.damage,
+          guardDamage: fireball.guardDamage,
+          targetId: fireball.targetId || online.localId
+        };
+      }
+
+      function serializePotionState(potion) {
+        return {
+          potionId: potion.netId,
+          x: potion.position.x,
+          z: potion.position.z,
+          kind: potion.kind || (potion.fullHeal ? "full" : "small"),
+          healAmount: potion.healAmount,
+          fullHeal: !!potion.fullHeal
+        };
+      }
+
+      function serializeWorldSnapshot() {
+        return {
+          wave: game.wave,
+          kills: game.kills,
+          nextWaveIn: game.nextWaveIn,
+          enemies: game.enemies.filter(enemy => !enemy.dead).map(serializeEnemyState),
+          fireballs: game.fireballs.map(serializeFireballState),
+          potions: game.potions.map(serializePotionState)
+        };
+      }
+
+      function sendWorldSnapshot(force = false) {
+        if (online.role !== "host" || !online.connected || game.state !== "playing") {
+          return;
+        }
+        if (!force && online.remotePlayers.size === 0) {
+          return;
+        }
+        sendOnlineMessage({ kind: "world", world: serializeWorldSnapshot() });
+      }
+
+      function createEnemyFromSnapshot(state) {
+        const wave = Math.max(1, game.wave || 1);
+        let enemy;
+        if (state.type === "dragon") {
+          enemy = createDragon(state.x, state.z, wave);
+        } else if (state.type === "spider") {
+          enemy = createSpider(state.x, state.z, wave);
+        } else if (state.type === "wisp") {
+          enemy = createWisp(state.x, state.z, wave);
+        } else {
+          enemy = createBarbarian(state.x, state.z, wave);
+        }
+        enemy.remoteControlled = true;
+        assignEnemyId(enemy, state.enemyId);
+        game.enemies.push(enemy);
+        return enemy;
+      }
+
+      function applyEnemySnapshot(enemy, state, firstSeen = false) {
+        enemy.remoteControlled = true;
+        enemy.networkTargetPosition = enemy.networkTargetPosition || new THREE.Vector3();
+        enemy.networkTargetPosition.set(state.x || 0, 0, state.z || 0);
+        enemy.networkTargetY = state.y || 0;
+        enemy.networkTargetYaw = state.yaw || 0;
+        enemy.type = state.type || enemy.type;
+        enemy.scale = state.scale || enemy.scale || 1;
+        enemy.radius = state.radius || enemy.radius;
+        enemy.health = state.health ?? enemy.health;
+        enemy.maxHealth = state.maxHealth || enemy.maxHealth;
+        enemy.speed = state.speed || enemy.speed;
+        enemy.state = state.state || enemy.state;
+        enemy.attackType = state.attackType || null;
+        enemy.attackTimer = state.attackTimer || 0;
+        enemy.attackDuration = state.attackDuration || enemy.attackDuration || 0;
+        enemy.cooldown = state.cooldown || 0;
+        enemy.stunned = state.stunned || 0;
+        enemy.entering = !!state.entering;
+        enemy.hoverHeight = state.hoverHeight || enemy.hoverHeight || 0;
+        enemy.desiredRange = state.desiredRange || enemy.desiredRange || 0;
+        enemy.exploration = !!state.exploration;
+        enemy.lastWorldSeen = clock.elapsedTime;
+        if (enemy.group) {
+          enemy.group.scale.setScalar(enemy.scale);
+        }
+        if (firstSeen) {
+          enemy.position.copy(enemy.networkTargetPosition);
+          enemy.yaw = enemy.networkTargetYaw;
+          if (enemy.group) {
+            enemy.group.position.set(state.x || 0, state.y || 0, state.z || 0);
+            enemy.group.rotation.y = enemy.yaw;
+          }
+        }
+      }
+
+      function upsertEnemySnapshot(state) {
+        if (!state || !state.enemyId) {
+          return null;
+        }
+        let enemy = game.enemies.find(candidate => candidate.netId === state.enemyId);
+        const firstSeen = !enemy;
+        if (!enemy) {
+          enemy = createEnemyFromSnapshot(state);
+        }
+        applyEnemySnapshot(enemy, state, firstSeen);
+        return enemy;
+      }
+
+      function createFireballVisual(state) {
+        const group = new THREE.Group();
+        group.position.set(state.x || 0, state.y || 0.9, state.z || 0);
+        const shell = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), materials.fire.clone());
+        const core = new THREE.Mesh(new THREE.SphereGeometry(0.08, 14, 10), materials.fireCore.clone());
+        const glow = new THREE.PointLight(0xff7b2e, 2.6, 9, 1.7);
+        shell.castShadow = true;
+        group.add(shell, core, glow);
+        scene.add(group);
+        return assignFireballId({
+          group,
+          shell,
+          core,
+          velocity: new THREE.Vector3(state.vx || 0, state.vy || 0, state.vz || 0),
+          speed: state.speed || 5.1,
+          turnRate: state.turnRate || 0.82,
+          life: state.life || 4.2,
+          damage: state.damage || 24,
+          guardDamage: state.guardDamage || 36,
+          targetId: state.targetId || online.localId,
+          remoteControlled: true
+        }, state.fireballId);
+      }
+
+      function upsertFireballSnapshot(state) {
+        if (!state || !state.fireballId) {
+          return null;
+        }
+        let fireball = game.fireballs.find(candidate => candidate.netId === state.fireballId);
+        const firstSeen = !fireball;
+        if (!fireball) {
+          fireball = createFireballVisual(state);
+          game.fireballs.push(fireball);
+        }
+        fireball.remoteControlled = true;
+        fireball.networkTargetPosition = fireball.networkTargetPosition || new THREE.Vector3();
+        fireball.networkTargetPosition.set(state.x || 0, state.y || 0.9, state.z || 0);
+        fireball.velocity.set(state.vx || 0, state.vy || 0, state.vz || 0);
+        fireball.speed = state.speed || fireball.speed;
+        fireball.turnRate = state.turnRate || fireball.turnRate;
+        fireball.life = state.life || fireball.life;
+        fireball.damage = state.damage || fireball.damage;
+        fireball.guardDamage = state.guardDamage || fireball.guardDamage;
+        fireball.targetId = state.targetId || fireball.targetId;
+        fireball.lastWorldSeen = clock.elapsedTime;
+        if (firstSeen) {
+          fireball.group.position.copy(fireball.networkTargetPosition);
+        }
+        return fireball;
+      }
+
+      function upsertPotionSnapshot(state) {
+        if (!state || !state.potionId) {
+          return null;
+        }
+        let potion = game.potions.find(candidate => candidate.netId === state.potionId);
+        if (!potion) {
+          const kind = state.fullHeal ? "full" : state.kind || "small";
+          potion = createHealthPotion(state.x || 0, state.z || 0, {
+            kind,
+            healAmount: state.healAmount,
+            netId: state.potionId
+          });
+          potion.remoteControlled = true;
+          game.potions.push(potion);
+        }
+        potion.position.set(state.x || 0, 0, state.z || 0);
+        potion.group.position.x = potion.position.x;
+        potion.group.position.z = potion.position.z;
+        potion.healAmount = state.healAmount || potion.healAmount;
+        potion.fullHeal = !!state.fullHeal;
+        potion.kind = state.kind || potion.kind;
+        potion.lastWorldSeen = clock.elapsedTime;
+        return potion;
+      }
+
+      function removeActorsMissingFromSnapshot(collection, ids, idKey = "netId") {
+        for (let i = collection.length - 1; i >= 0; i -= 1) {
+          const actor = collection[i];
+          if (!actor[idKey] || ids.has(actor[idKey])) {
+            continue;
+          }
+          scene.remove(actor.group);
+          collection.splice(i, 1);
+        }
+      }
+
+      function applyWorldSnapshot(world) {
+        if (!world || online.role !== "join") {
+          return;
+        }
+        game.wave = world.wave ?? game.wave;
+        game.kills = world.kills ?? 0;
+        game.nextWaveIn = world.nextWaveIn ?? 0;
+
+        const enemyIds = new Set();
+        for (const enemyState of world.enemies || []) {
+          enemyIds.add(enemyState.enemyId);
+          upsertEnemySnapshot(enemyState);
+        }
+        removeActorsMissingFromSnapshot(game.enemies, enemyIds);
+
+        const fireballIds = new Set();
+        for (const fireballState of world.fireballs || []) {
+          fireballIds.add(fireballState.fireballId);
+          upsertFireballSnapshot(fireballState);
+        }
+        removeActorsMissingFromSnapshot(game.fireballs, fireballIds);
+
+        const potionIds = new Set();
+        for (const potionState of world.potions || []) {
+          potionIds.add(potionState.potionId);
+          upsertPotionSnapshot(potionState);
+        }
+        removeActorsMissingFromSnapshot(game.potions, potionIds);
+      }
+
+      function updateRemoteWorldActors(dt) {
+        for (const enemy of game.enemies) {
+          if (!enemy.remoteControlled) {
+            continue;
+          }
+          const previous = enemy.position.clone();
+          const target = enemy.networkTargetPosition || enemy.position;
+          enemy.position.lerp(target, 1 - Math.pow(0.0001, dt));
+          enemy.velocity.copy(enemy.position).sub(previous).multiplyScalar(1 / Math.max(0.001, dt));
+          enemy.yaw = lerp(enemy.yaw || 0, enemy.networkTargetYaw || 0, 1 - Math.pow(0.0001, dt));
+          if (enemy.healthRoot) {
+            enemy.healthRoot.lookAt(camera.position);
+          }
+          if (enemy.hpFill) {
+            enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
+            enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
+          }
+          if (enemy.telegraph) {
+            enemy.telegraph.visible = enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse";
+          }
+          if (enemy.type === "dragon") {
+            const targetY = enemy.networkTargetY || enemy.hoverHeight || 2.2;
+            const y = lerp(enemy.group.position.y, targetY, 1 - Math.pow(0.0001, dt));
+            enemy.group.position.set(enemy.position.x, y, enemy.position.z);
+            updateDragonAnimation(enemy, dt);
+          } else {
+            enemy.group.position.copy(enemy.position);
+            if (enemy.type === "spider") {
+              updateSpiderAnimation(enemy, dt);
+            } else if (enemy.type === "wisp") {
+              updateWispAnimation(enemy, dt);
+            } else {
+              enemy.walkTime += enemy.velocity.length() * dt;
+              const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
+              enemy.leftLeg.rotation.x = legSwing;
+              enemy.rightLeg.rotation.x = -legSwing;
+              enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+            }
+          }
+          enemy.group.rotation.y = enemy.yaw;
+        }
+
+        for (const fireball of game.fireballs) {
+          if (!fireball.remoteControlled) {
+            continue;
+          }
+          const target = fireball.networkTargetPosition || fireball.group.position;
+          fireball.group.position.lerp(target, 1 - Math.pow(0.00005, dt));
+          fireball.shell.rotation.y += dt * 7.5;
+          fireball.shell.rotation.x += dt * 5.8;
+          const pulse = 1 + Math.sin(clock.elapsedTime * 18) * 0.14;
+          fireball.shell.scale.setScalar(pulse);
+          fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24) * 0.2);
+        }
+      }
+
+      function broadcastOnlineEffect(effect) {
+        if (online.role !== "host" || !online.connected || !online.topic) {
+          return;
+        }
+        online.effectSeq += 1;
+        sendOnlineMessage({
+          kind: "effect",
+          effect: {
+            ...effect,
+            effectId: online.localId + "-" + online.effectSeq
+          }
+        });
+      }
+
+      function applyOnlineEffect(effect) {
+        if (!effect || effect.ownerId === online.localId) {
+          return;
+        }
+        if (effect.type === "impact") {
+          spawnImpact(new THREE.Vector3(effect.x || 0, effect.y || 0, effect.z || 0), effect.color || 0xffffff, effect.count || 10);
+          return;
+        }
+        if (effect.type === "action" && effect.state) {
+          applyRemoteAction(effect.action, effect.state, { damageEnemies: false, broadcast: false });
+        }
+      }
+
+      function removePotionById(potionId) {
+        const index = game.potions.findIndex(potion => potion.netId === potionId);
+        if (index < 0) {
+          return null;
+        }
+        const [potion] = game.potions.splice(index, 1);
+        scene.remove(potion.group);
+        return potion;
+      }
+
+      function handlePotionPickupRequest(message) {
+        if (online.role !== "host" || !message.potionId || !message.state) {
+          return;
+        }
+        upsertRemotePlayer(message.state);
+        const remote = online.remotePlayers.get(message.id);
+        const potion = game.potions.find(candidate => candidate.netId === message.potionId);
+        if (!remote || !potion || remote.health >= remote.maxHealth) {
+          return;
+        }
+        const remotePosition = remote.targetPosition || remote.group.position;
+        const distance = Math.hypot(remotePosition.x - potion.position.x, remotePosition.z - potion.position.z);
+        if (distance > potion.pickupRadius + 1.0) {
+          return;
+        }
+        removePotionById(potion.netId);
+        sendOnlineMessage({
+          kind: "potionPicked",
+          targetId: message.id,
+          potionId: message.potionId,
+          healAmount: potion.healAmount,
+          fullHeal: potion.fullHeal
+        });
+        broadcastOnlineEffect({ type: "impact", x: potion.position.x, y: 0, z: potion.position.z, color: 0xff7f96, count: 16 });
+      }
+
+      function handleRemotePotionDrop(message) {
+        if (online.role !== "host" || !message.state) {
+          return;
+        }
+        upsertRemotePlayer(message.state);
+        const remote = online.remotePlayers.get(message.id);
+        if (!remote) {
+          return;
+        }
+        const remotePosition = remote.targetPosition || remote.group.position;
+        const x = Number.isFinite(message.x) ? message.x : remotePosition.x;
+        const z = Number.isFinite(message.z) ? message.z : remotePosition.z;
+        if (Math.hypot(remotePosition.x - x, remotePosition.z - z) > 4.0) {
+          return;
+        }
+        game.potions.push(createHealthPotion(x, z, { kind: "wizard", healAmount: 28 }));
+        trimPotionDrops();
+        broadcastOnlineEffect({ type: "impact", ownerId: message.id, x, y: 0, z, color: 0x7ae8ff, count: 12 });
+        sendWorldSnapshot(true);
+      }
+
+      function handlePotionPicked(message) {
+        if (!message || !message.potionId) {
+          return;
+        }
+        removePotionById(message.potionId);
+        if (message.targetId !== online.localId) {
+          return;
+        }
+        const beforeHeal = player.health;
+        player.health = message.fullHeal ? player.maxHealth : Math.min(player.maxHealth, player.health + (message.healAmount || 0));
+        const healed = Math.ceil(player.health - beforeHeal);
+        spawnImpact(player.position, 0xff7f96, 18);
+        showBanner(message.fullHeal ? "Fully recovered" : "Recovered +" + healed);
+      }
+
+      function handlePlayerDamageMessage(message) {
+        if (!message || message.targetId !== online.localId) {
+          return;
+        }
+        const direction = new THREE.Vector3(message.dx || 0, 0, message.dz || 0);
+        if (direction.lengthSq() < 0.0001) {
+          direction.copy(forwardFromYaw(player.yaw, direction)).multiplyScalar(-1);
+        } else {
+          direction.normalize();
+        }
+        applyPlayerDamage(message.damage || 0, message.guardDamage || 0, direction, message.extraPush || 0);
+      }
+
+      function explorationRewardForEnemy(enemy) {
+        return enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12;
+      }
+
+      function explorationProgressForEnemy(enemy) {
+        const progress = ["raiders"];
+        if (enemy.type === "spider") {
+          progress.push("spiders");
+        } else if (enemy.type === "dragon") {
+          progress.push("dragons");
+        } else if (enemy.type === "wisp") {
+          progress.push("wisps");
+        }
+        return progress;
+      }
+
+      function applyExplorationEnemyReward(enemy, sourceId) {
+        const xp = explorationRewardForEnemy(enemy);
+        const progress = explorationProgressForEnemy(enemy);
+        if (sourceId === online.localId || !online.connected) {
+          awardExplorationXp(xp);
+          for (const questType of progress) {
+            updateQuestProgress(questType, 1);
+          }
+          return;
+        }
+        sendOnlineMessage({
+          kind: "enemyReward",
+          targetId: sourceId,
+          xp,
+          progress
+        });
+      }
+
+      function handleEnemyReward(message) {
+        if (!message || message.targetId !== online.localId || game.mode !== "exploration") {
+          return;
+        }
+        awardExplorationXp(message.xp || 0);
+        for (const questType of message.progress || []) {
+          updateQuestProgress(questType, 1);
+        }
+      }
+
       function handleOnlineMessage(raw) {
         const text = typeof raw === "string" ? raw.trim() : raw;
         if (!text) {
@@ -5227,6 +5764,34 @@
           leaveRoomToMenu("Room closed", false);
           return;
         }
+        if (message.kind === "playerDamage") {
+          handlePlayerDamageMessage(message);
+          return;
+        }
+        if (message.kind === "enemyReward") {
+          handleEnemyReward(message);
+          return;
+        }
+        if (message.kind === "potionPickup") {
+          handlePotionPickupRequest(message);
+          return;
+        }
+        if (message.kind === "dropPotion") {
+          handleRemotePotionDrop(message);
+          return;
+        }
+        if (message.kind === "potionPicked") {
+          handlePotionPicked(message);
+          return;
+        }
+        if (message.kind === "world") {
+          applyWorldSnapshot(message.world);
+          return;
+        }
+        if (message.kind === "effect") {
+          applyOnlineEffect(message.effect);
+          return;
+        }
         if (message.kind === "host") {
           online.hostId = message.id || online.hostId;
         }
@@ -5244,13 +5809,19 @@
         }
         if (message.kind === "hello" && online.role === "host") {
           sendOnlineMessage({ kind: "welcome", state: serializePlayerState() });
+          sendWorldSnapshot(true);
           updateSessionMenu();
         }
         if (message.kind === "state" && !message.state) {
           upsertRemotePlayer(message);
         }
         if (message.kind === "action" && message.state) {
-          applyRemoteAction(message.action, message.state);
+          if (online.role === "host") {
+            applyRemoteAction(message.action, message.state, { damageEnemies: true, broadcast: true });
+            sendWorldSnapshot(true);
+          } else if (message.id === online.hostId) {
+            applyRemoteAction(message.action, message.state, { damageEnemies: false, broadcast: false });
+          }
         }
       }
 
@@ -5621,6 +6192,13 @@
           online.sendTimer = 0.08;
           sendOnlineMessage({ kind: "state", state: serializePlayerState() });
         }
+        if (online.role === "host") {
+          online.worldSendTimer -= dt;
+          if (online.worldSendTimer <= 0) {
+            online.worldSendTimer = 0.12;
+            sendWorldSnapshot();
+          }
+        }
         updateRemotePlayers(dt);
       }
 
@@ -5636,23 +6214,29 @@
         return forward.dot(toTarget) >= minDot;
       }
 
-      function applyRemoteAction(action, state) {
+      function applyRemoteAction(action, state, options = {}) {
         const source = new THREE.Vector3(state.x || 0, 0, state.z || 0);
         const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
         const actionColor = action === "bash" ? 0xffd889 : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
         spawnImpact(source, actionColor, action === "burst" ? 18 : action === "bash" ? 14 : 10);
+        if (action === "lightning") {
+          spawnRemoteLightningVisual(source, state.yaw || 0);
+        }
+        if (options.broadcast) {
+          broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
+        }
 
-        if (game.mode === "exploration" || game.mode === "solo") {
-          applyRemoteActionToEnemies(action, source, state.yaw || 0, forward);
+        if (options.damageEnemies && (game.mode === "exploration" || game.mode === "solo")) {
+          applyRemoteActionToEnemies(action, source, state.yaw || 0, forward, state.id || online.localId);
         }
       }
 
-      function applyRemoteActionToEnemies(action, source, yaw, forward) {
+      function applyRemoteActionToEnemies(action, source, yaw, forward, sourceId = online.localId) {
         if (action === "burst") {
           for (const enemy of game.enemies) {
             if (!enemy.dead && enemy.position.distanceTo(source) < 3.45 + enemy.radius) {
               const direction = enemy.position.clone().sub(source).normalize();
-              damageEnemy(enemy, 20, direction, 0.55);
+              damageEnemy(enemy, 20, direction, 0.55, sourceId);
             }
           }
           return;
@@ -5663,7 +6247,7 @@
             if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
               continue;
             }
-            damageEnemy(enemy, 18, forward, 1.12);
+            damageEnemy(enemy, 18, forward, 1.12, sourceId);
             enemy.velocity.addScaledVector(forward, 6.2);
           }
           return;
@@ -5684,7 +6268,7 @@
           }
         }
         if (best) {
-          damageEnemy(best, action === "lightning" ? 30 : 28, forward, action === "lightning" ? 0.35 : 0.42);
+          damageEnemy(best, action === "lightning" ? 30 : 28, forward, action === "lightning" ? 0.35 : 0.42, sourceId);
         }
       }
 
@@ -5706,6 +6290,90 @@
         const damage = action === "lightning" ? 22 : action === "burst" ? 18 : action === "bash" ? 14 : 24;
         const guardDamage = action === "bash" ? 36 : damage + 12;
         applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
+      }
+
+      function combatTargets() {
+        const targets = [{
+          id: online.localId,
+          local: true,
+          position: player.position,
+          health: player.health,
+          maxHealth: player.maxHealth
+        }];
+        if (online.role === "host") {
+          for (const [id, remote] of online.remotePlayers) {
+            targets.push({
+              id,
+              local: false,
+              position: remote.targetPosition || remote.group.position,
+              health: remote.health,
+              maxHealth: remote.maxHealth
+            });
+          }
+        }
+        return targets.filter(target => target.health > 0);
+      }
+
+      function combatTargetById(id) {
+        if (!id || id === online.localId) {
+          return {
+            id: online.localId,
+            local: true,
+            position: player.position,
+            health: player.health,
+            maxHealth: player.maxHealth
+          };
+        }
+        const remote = online.remotePlayers.get(id);
+        if (!remote) {
+          return null;
+        }
+        return {
+          id,
+          local: false,
+          position: remote.targetPosition || remote.group.position,
+          health: remote.health,
+          maxHealth: remote.maxHealth
+        };
+      }
+
+      function nearestCombatTarget(enemy) {
+        let best = null;
+        let bestDistance = Infinity;
+        for (const target of combatTargets()) {
+          const distance = enemy.position.distanceTo(target.position);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = target;
+          }
+        }
+        return best || combatTargetById(online.localId);
+      }
+
+      function applyCombatTargetDamage(target, damage, guardDamage, direction, extraPush) {
+        if (!target) {
+          return;
+        }
+        if (target.local) {
+          applyPlayerDamage(damage, guardDamage, direction, extraPush);
+          return;
+        }
+        sendOnlineMessage({
+          kind: "playerDamage",
+          targetId: target.id,
+          damage,
+          guardDamage,
+          dx: direction.x,
+          dz: direction.z,
+          extraPush
+        });
+        const remote = online.remotePlayers.get(target.id);
+        if (remote) {
+          remote.health = Math.max(0, remote.health - damage);
+        }
+        const impact = target.position.clone();
+        spawnImpact(impact, 0xff6350, 12);
+        broadcastOnlineEffect({ type: "impact", x: impact.x, y: 0, z: impact.z, color: 0xff6350, count: 12 });
       }
 
       function createBarbarianModel(scale) {
@@ -5991,6 +6659,7 @@
           dead: false,
           walkTime: Math.random() * 10
         };
+        assignEnemyId(enemy);
         enemy.group.position.copy(enemy.position);
         scene.add(enemy.group);
         return enemy;
@@ -6022,6 +6691,7 @@
           wingTime: Math.random() * 10,
           bobSeed: Math.random() * 10
         };
+        assignEnemyId(enemy);
         enemy.group.position.set(enemy.position.x, enemy.hoverHeight, enemy.position.z);
         scene.add(enemy.group);
         return enemy;
@@ -6050,6 +6720,7 @@
           dead: false,
           walkTime: Math.random() * 10
         };
+        assignEnemyId(enemy);
         enemy.group.position.copy(enemy.position);
         scene.add(enemy.group);
         return enemy;
@@ -6078,6 +6749,7 @@
           dead: false,
           bobSeed: Math.random() * 10
         };
+        assignEnemyId(enemy);
         enemy.group.position.copy(enemy.position);
         scene.add(enemy.group);
         return enemy;
@@ -6196,6 +6868,11 @@
         game.playerProjectiles.length = 0;
         game.potions.length = 0;
         game.particles.length = 0;
+        game.nextEnemyId = 1;
+        game.nextFireballId = 1;
+        game.nextPotionId = 1;
+        game.nextProjectileId = 1;
+        online.worldSendTimer = 0;
         game.wave = 0;
         game.kills = 0;
         game.nextWaveIn = 0;
@@ -6207,6 +6884,9 @@
           setArenaVisible(false);
           scene.fog.density = 0.0065;
           setupExplorationWorld();
+          if (isJoinedClient()) {
+            clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
+          }
           player.position.copy(savedExplorationWorldPosition() || game.exploration.spawn);
           game.cameraYaw = Math.PI;
         } else {
@@ -6236,9 +6916,14 @@
           progression.exploration.guidanceSeen = true;
           saveProgress();
         } else {
-          spawnWave();
+          if (canSimulateSharedWorld()) {
+            spawnWave();
+          } else {
+            showBanner("Syncing room", 2.2);
+          }
         }
         sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+        sendWorldSnapshot(true);
         updateHud();
       }
 
@@ -6296,7 +6981,7 @@
         group.add(marker, bottle, liquid, neck, cork, glow);
         scene.add(group);
 
-        return {
+        return assignPotionId({
           group,
           glow,
           marker,
@@ -6306,7 +6991,7 @@
           fullHeal,
           pickupRadius: fullHeal ? 1.25 : 0.9,
           bobSeed: Math.random() * 10
-        };
+        }, options.netId);
       }
 
       function dropWaveHealthPotion() {
@@ -6348,10 +7033,23 @@
             dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
           }
         }
+        if (isJoinedClient()) {
+          sendOnlineMessage({
+            kind: "dropPotion",
+            x: dropPosition.x,
+            z: dropPosition.z,
+            state: serializePlayerState()
+          });
+          player.potionCooldown = player.potionCooldownMax;
+          spawnImpact(dropPosition, 0x7ae8ff, 12);
+          showBanner("Potion dropped");
+          return true;
+        }
         game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "wizard", healAmount: 28 }));
         trimPotionDrops();
         player.potionCooldown = player.potionCooldownMax;
         spawnImpact(dropPosition, 0x7ae8ff, 12);
+        broadcastOnlineEffect({ type: "impact", x: dropPosition.x, y: 0, z: dropPosition.z, color: 0x7ae8ff, count: 12 });
         showBanner("Potion dropped");
         return true;
       }
@@ -6744,6 +7442,9 @@
       function performPlayerAttack() {
         const forward = forwardFromYaw(player.yaw, tmpVec);
         let hitAny = false;
+        if (!canSimulateSharedWorld()) {
+          return;
+        }
         for (const enemy of game.enemies) {
           if (enemy.dead || enemy.stunned > 0.2) {
             continue;
@@ -6772,6 +7473,10 @@
         const forward = forwardFromYaw(player.yaw, tmpVec);
         const impactPosition = player.position.clone().addScaledVector(forward, 1.25);
         let hitAny = false;
+        if (!canSimulateSharedWorld()) {
+          spawnImpact(impactPosition, 0xc7d3d3, 8);
+          return;
+        }
         for (const enemy of game.enemies) {
           if (enemy.dead) {
             continue;
@@ -6793,11 +7498,7 @@
         spawnImpact(impactPosition, hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 16 : 8);
       }
 
-      function launchLightningBall() {
-        const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
-        const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
-        const velocity = direction.clone().multiplyScalar(12.8);
-
+      function createLightningProjectile(source, velocity, options = {}) {
         const group = new THREE.Group();
         group.position.copy(source);
         const shell = new THREE.Mesh(new THREE.SphereGeometry(0.21, 18, 12), materials.lightning.clone());
@@ -6809,8 +7510,8 @@
         const glow = new THREE.PointLight(0x7ae8ff, 2.4, 10, 1.7);
         group.add(shell, core, ringA, ringB, glow);
         scene.add(group);
-
-        game.playerProjectiles.push({
+        return {
+          netId: options.netId || nextNetworkId("projectile"),
           type: "lightning",
           group,
           shell,
@@ -6820,30 +7521,55 @@
           velocity,
           speed: 12.8,
           turnRate: 0.85,
-          life: 2.45,
-          damage: 31 + Math.floor(Math.random() * 6),
-          stun: 0.36,
-          radius: 0.56
-        });
+          life: options.life || 2.45,
+          damage: options.damage ?? (31 + Math.floor(Math.random() * 6)),
+          stun: options.stun ?? 0.36,
+          radius: 0.56,
+          visualOnly: !!options.visualOnly
+        };
+      }
+
+      function launchLightningBall() {
+        const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
+        const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+        const velocity = direction.clone().multiplyScalar(12.8);
+        game.playerProjectiles.push(createLightningProjectile(source, velocity, {
+          visualOnly: !canSimulateSharedWorld()
+        }));
+      }
+
+      function spawnRemoteLightningVisual(source, yaw) {
+        const start = source.clone();
+        const direction = forwardFromYaw(yaw, new THREE.Vector3());
+        start.y = 1.45;
+        start.addScaledVector(direction, 0.72);
+        game.playerProjectiles.push(createLightningProjectile(start, direction.multiplyScalar(12.8), {
+          visualOnly: true,
+          life: 1.35,
+          damage: 0,
+          stun: 0
+        }));
       }
 
       function performWizardBurst() {
         const radius = 3.35;
         let hitAny = false;
-        for (const enemy of game.enemies) {
-          if (enemy.dead) {
-            continue;
+        if (canSimulateSharedWorld()) {
+          for (const enemy of game.enemies) {
+            if (enemy.dead) {
+              continue;
+            }
+            const direction = tmpVec2.copy(enemy.position).sub(player.position);
+            const distance = Math.max(0.001, Math.hypot(direction.x, direction.z));
+            if (distance > radius + enemy.radius) {
+              continue;
+            }
+            direction.y = 0;
+            direction.multiplyScalar(1 / distance);
+            damageEnemy(enemy, 24 + Math.floor(Math.random() * 6), direction, 0.78);
+            enemy.velocity.addScaledVector(direction, 2.4);
+            hitAny = true;
           }
-          const direction = tmpVec2.copy(enemy.position).sub(player.position);
-          const distance = Math.max(0.001, Math.hypot(direction.x, direction.z));
-          if (distance > radius + enemy.radius) {
-            continue;
-          }
-          direction.y = 0;
-          direction.multiplyScalar(1 / distance);
-          damageEnemy(enemy, 24 + Math.floor(Math.random() * 6), direction, 0.78);
-          enemy.velocity.addScaledVector(direction, 2.4);
-          hitAny = true;
         }
         spawnImpact(player.position, hitAny ? 0x7ae8ff : 0xbff8ff, hitAny ? 26 : 16);
       }
@@ -6890,7 +7616,7 @@
           const projectile = game.playerProjectiles[i];
           projectile.life -= dt;
 
-          const target = findLightningTarget(projectile);
+          const target = projectile.visualOnly ? null : findLightningTarget(projectile);
           if (target) {
             const desired = target.sub(projectile.group.position);
             if (desired.lengthSq() > 0.0001) {
@@ -6911,27 +7637,29 @@
           projectile.shell.scale.setScalar(pulse);
 
           let consumed = false;
-          for (const enemy of game.enemies) {
-            if (enemy.dead) {
-              continue;
+          if (!projectile.visualOnly && canSimulateSharedWorld()) {
+            for (const enemy of game.enemies) {
+              if (enemy.dead) {
+                continue;
+              }
+              const targetPosition = getEnemyAimPosition(enemy, tmpVec);
+              if (projectile.group.position.distanceTo(targetPosition) > enemy.radius + projectile.radius) {
+                continue;
+              }
+              const hitDirection = projectile.velocity.clone();
+              hitDirection.y = 0;
+              if (hitDirection.lengthSq() > 0.0001) {
+                hitDirection.normalize();
+              } else {
+                hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
+              }
+              damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
+              spawnImpact(projectile.group.position, 0x7ae8ff, 16);
+              scene.remove(projectile.group);
+              game.playerProjectiles.splice(i, 1);
+              consumed = true;
+              break;
             }
-            const targetPosition = getEnemyAimPosition(enemy, tmpVec);
-            if (projectile.group.position.distanceTo(targetPosition) > enemy.radius + projectile.radius) {
-              continue;
-            }
-            const hitDirection = projectile.velocity.clone();
-            hitDirection.y = 0;
-            if (hitDirection.lengthSq() > 0.0001) {
-              hitDirection.normalize();
-            } else {
-              hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
-            }
-            damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
-            spawnImpact(projectile.group.position, 0x7ae8ff, 16);
-            scene.remove(projectile.group);
-            game.playerProjectiles.splice(i, 1);
-            consumed = true;
-            break;
           }
 
           if (consumed) {
@@ -6950,13 +7678,24 @@
         }
       }
 
-      function damageEnemy(enemy, damage, direction, stun) {
+      function damageEnemy(enemy, damage, direction, stun, sourceId = online.localId) {
+        if (!canSimulateSharedWorld()) {
+          return;
+        }
         enemy.health -= damage;
         enemy.stunned = Math.max(enemy.stunned, stun);
         enemy.velocity.addScaledVector(direction, 4.3);
         const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.position;
         const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : 0xffd19b;
         spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
+        broadcastOnlineEffect({
+          type: "impact",
+          x: impactPosition.x,
+          y: impactPosition.y || 0,
+          z: impactPosition.z,
+          color: impactColor,
+          count: enemy.type === "dragon" ? 14 : 10
+        });
         if (enemy.health <= 0) {
           enemy.dead = true;
           if (enemy.type === "dragon") {
@@ -6968,15 +7707,7 @@
           scene.remove(enemy.group);
           game.kills += 1;
           if (game.mode === "exploration" && enemy.exploration) {
-            awardExplorationXp(enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12);
-            updateQuestProgress("raiders", 1);
-            if (enemy.type === "spider") {
-              updateQuestProgress("spiders", 1);
-            } else if (enemy.type === "dragon") {
-              updateQuestProgress("dragons", 1);
-            } else if (enemy.type === "wisp") {
-              updateQuestProgress("wisps", 1);
-            }
+            applyExplorationEnemyReward(enemy, sourceId);
           }
         }
       }
@@ -7073,7 +7804,7 @@
           enemy.attackHitDone = true;
           if (playerDistance < 2.05) {
             const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
-            applyPlayerDamage(16, 22, hitDirection, 0.18);
+            applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), 16, 22, hitDirection, 0.18);
           }
         }
         if (enemy.attackTimer >= enemy.attackDuration) {
@@ -7160,7 +7891,7 @@
           enemy.attackHitDone = true;
           if (playerDistance < 2.65) {
             const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
-            applyPlayerDamage(15, 24, hitDirection, 0.16);
+            applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), 15, 24, hitDirection, 0.16);
             spawnImpact(tmpVec.set(enemy.position.x, 1.0, enemy.position.z), 0x8affd2, 16);
           }
         }
@@ -7313,7 +8044,9 @@
           enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
           enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
 
-          const toPlayer = tmpVec.copy(player.position).sub(enemy.position);
+          const target = nearestCombatTarget(enemy);
+          enemy.targetId = target.id;
+          const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
           const playerDistance = Math.max(0.001, toPlayer.length());
           const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
 
@@ -7413,7 +8146,9 @@
           enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
           enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
 
-          const toPlayer = tmpVec.copy(player.position).sub(enemy.position);
+          const target = nearestCombatTarget(enemy);
+          enemy.targetId = target.id;
+          const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
           const distance = Math.max(0.001, toPlayer.length());
           const direction = toPlayer.multiplyScalar(1 / distance);
           enemy.yaw = yawFromDirection(direction);
@@ -7562,31 +8297,28 @@
 
       function launchFireball(enemy) {
         const source = enemy.group.localToWorld(new THREE.Vector3(0, 0.28, -2.02));
-        const target = tmpVec.copy(player.position);
+        const targetInfo = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
+        const target = tmpVec.copy(targetInfo.position);
         target.y = 0.86;
         const speed = 5.1 + Math.min(game.wave * 0.12, 1.1);
         const velocity = target.sub(source).normalize().multiplyScalar(speed);
 
-        const group = new THREE.Group();
-        group.position.copy(source);
-        const shell = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), materials.fire.clone());
-        const core = new THREE.Mesh(new THREE.SphereGeometry(0.08, 14, 10), materials.fireCore.clone());
-        const glow = new THREE.PointLight(0xff7b2e, 2.6, 9, 1.7);
-        shell.castShadow = true;
-        group.add(shell, core, glow);
-        scene.add(group);
-
-        game.fireballs.push({
-          group,
-          shell,
-          core,
-          velocity,
+        const fireball = createFireballVisual({
+          x: source.x,
+          y: source.y,
+          z: source.z,
+          vx: velocity.x,
+          vy: velocity.y,
+          vz: velocity.z,
           speed,
           turnRate: 0.82,
           life: 4.2,
           damage: 24 + Math.min(game.wave * 2, 12),
-          guardDamage: 36 + Math.min(game.wave * 2, 14)
+          guardDamage: 36 + Math.min(game.wave * 2, 14),
+          targetId: targetInfo.id
         });
+        fireball.remoteControlled = false;
+        game.fireballs.push(fireball);
       }
 
       function beginEnemyAttack(enemy, type) {
@@ -7640,7 +8372,8 @@
       }
 
       function tryHitPlayer(enemy, damage, guardDamage, range, extraPush) {
-        const toPlayer = tmpVec.copy(player.position).sub(enemy.position);
+        const target = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
+        const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
         const distance = toPlayer.length();
         if (distance > range) {
           return;
@@ -7651,7 +8384,7 @@
         if (enemyForward.dot(toPlayer) < 0.2) {
           return;
         }
-        applyPlayerDamage(damage, guardDamage, enemyForward, extraPush);
+        applyCombatTargetDamage(target, damage, guardDamage, enemyForward, extraPush);
       }
 
       function applyPlayerDamage(damage, guardDamage, direction, extraPush) {
@@ -7709,7 +8442,8 @@
         for (let i = game.fireballs.length - 1; i >= 0; i -= 1) {
           const fireball = game.fireballs[i];
           fireball.life -= dt;
-          const homingTarget = tmpVec.copy(player.position);
+          const targetInfo = combatTargetById(fireball.targetId) || combatTargetById(online.localId);
+          const homingTarget = tmpVec.copy(targetInfo.position);
           homingTarget.y = 0.92;
           const desiredDirection = homingTarget.sub(fireball.group.position);
           if (desiredDirection.lengthSq() > 0.0001) {
@@ -7725,7 +8459,7 @@
           fireball.shell.scale.setScalar(pulse);
           fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24 + i) * 0.2);
 
-          const target = tmpVec.copy(player.position);
+          const target = tmpVec.copy(targetInfo.position);
           target.y = 0.92;
           if (fireball.group.position.distanceTo(target) < 0.78) {
             const hitDirection = tmpVec2.copy(fireball.velocity);
@@ -7735,8 +8469,9 @@
             } else {
               hitDirection.copy(forwardFromYaw(player.yaw, hitDirection)).multiplyScalar(-1);
             }
-            applyPlayerDamage(fireball.damage, fireball.guardDamage, hitDirection, 0.16);
+            applyCombatTargetDamage(targetInfo, fireball.damage, fireball.guardDamage, hitDirection, 0.16);
             spawnImpact(fireball.group.position, 0xff7b2e, 18);
+            broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff7b2e, count: 18 });
             scene.remove(fireball.group);
             game.fireballs.splice(i, 1);
             continue;
@@ -7744,6 +8479,7 @@
 
           if (fireball.life <= 0 || fireball.group.position.y < 0.16) {
             spawnImpact(fireball.group.position, 0xff9f42, 10);
+            broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff9f42, count: 10 });
             scene.remove(fireball.group);
             game.fireballs.splice(i, 1);
           }
@@ -7765,13 +8501,27 @@
 
           const distance = Math.hypot(player.position.x - potion.position.x, player.position.z - potion.position.z);
           if (distance < potion.pickupRadius) {
+            if (isJoinedClient()) {
+              if (!potion.pickupRequested) {
+                potion.pickupRequested = true;
+                sendOnlineMessage({
+                  kind: "potionPickup",
+                  potionId: potion.netId,
+                  state: serializePlayerState()
+                });
+              }
+              continue;
+            }
             const beforeHeal = player.health;
             player.health = potion.fullHeal ? player.maxHealth : Math.min(player.maxHealth, player.health + potion.healAmount);
             const healed = Math.ceil(player.health - beforeHeal);
             spawnImpact(player.position, 0xff7f96, 18);
+            broadcastOnlineEffect({ type: "impact", x: player.position.x, y: 0, z: player.position.z, color: 0xff7f96, count: 18 });
             showBanner(potion.fullHeal ? "Fully recovered" : "Recovered +" + healed);
             scene.remove(potion.group);
             game.potions.splice(i, 1);
+          } else if (isJoinedClient()) {
+            potion.pickupRequested = false;
           }
         }
       }
@@ -7862,10 +8612,20 @@
         const elapsed = clock.elapsedTime;
 
         if (game.state === "playing") {
+          const joinedWorld = isJoinedClient();
           updatePlayer(dt);
-          updateEnemies(dt);
+          if (joinedWorld) {
+            if (game.mode === "exploration") {
+              updateExplorationNpcs(dt);
+            }
+            updateRemoteWorldActors(dt);
+          } else {
+            updateEnemies(dt);
+          }
           updatePlayerProjectiles(dt);
-          updateFireballs(dt);
+          if (!joinedWorld) {
+            updateFireballs(dt);
+          }
           updatePotions(dt);
           if (game.mode === "exploration") {
             updateQuestItems(dt);
