@@ -8,6 +8,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Desktop-first gameplay with third-person movement, combat, quests, mounts, and online rooms.
 - Host-authoritative multiplayer today, with a path toward Firebase-backed identity and persistence.
 - Procedural geometry and lightweight deployment, with Firebase Hosting as the primary production target.
+- Sound should make combat, exploration, quests, and biomes easier to read while keeping the game lightweight.
 - A cohesive world called Ironhold, not just an arena mode.
 
 ## Now
@@ -39,6 +40,13 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Keep prompts sparse and state-aware.
 - Improve quest tracker and minimap/marker usefulness without removing exploration challenge.
 - Keep pause/session menus separate from start/join flows.
+
+### Audio Foundation
+
+- Add a small audio manager with mute, master volume, SFX volume, music volume, and browser autoplay recovery.
+- Start with procedural or very small generated sounds for combat hits, blocks, magic, fireballs, potions, level-ups, UI selection, and quest completion.
+- Add simple spatial audio rules for enemies, projectiles, mounts, villages, water, caves, and settlement ambience.
+- Establish volume hierarchy so enemy tells and player feedback cut through ambience and music.
 
 ## Next
 
@@ -90,6 +98,13 @@ Firestore should not handle:
 - projectile simulation
 - hit validation
 - enemy AI ticks
+
+### Audio Identity
+
+- Give each major biome an ambience palette and danger layer.
+- Add distinct enemy tells for barbarians, dragons, spiders, and future biome-specific mobs.
+- Add short musical stingers for discovery, quest completion, level-up, wave cleared, and boss arrival.
+- Add city, village, church, castle, wilderness, mountain, desert, and future biome sound beds.
 
 ## Later
 
@@ -165,6 +180,14 @@ Phase 3, Bounded Generated Dialogue:
 - Track draw calls, shadow cost, particles, enemy counts, and foliage density.
 - Stress-test max waves, mounted traversal, village NPCs, and online sessions.
 - Add internal FPS/memory overlay if needed.
+
+### Audio Gate
+
+- Mute and volume controls work before and during gameplay.
+- Browser autoplay restrictions recover gracefully after the first interaction.
+- Combat-critical cues remain audible over ambience.
+- Repeated attacks, footsteps, and UI sounds do not fatigue during a 30-minute playtest.
+- Audio pooling prevents unbounded sound instances during heavy waves and multiplayer sessions.
 
 ### Release Gate
 

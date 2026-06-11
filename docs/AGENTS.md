@@ -158,6 +158,26 @@ Definition of done:
 - Performance gains are measured or clearly observable.
 - Fallback quality knobs are documented when introduced.
 
+### Sound Design / Audio Agent
+
+Owns music direction, ambience, combat feedback, UI cues, NPC voice strategy, audio implementation shape, and accessibility around sound.
+
+Responsibilities:
+- Define the Ironhold sound palette: weapons, magic, dragons, spiders, mounts, villages, biomes, weather, UI, and quest moments.
+- Design procedural or lightweight audio that fits the deployment model and avoids heavy asset dependencies until the audio pipeline changes.
+- Make combat readable through sound: attack windups, blocks, hits, enemy tells, projectile travel, potion drops, level-ups, and danger states.
+- Give each biome a recognizable ambience layer and each major settlement a local sonic identity.
+- Coordinate with Creative/Narrative on NPC voice direction and future AI dialogue or voice experiments.
+- Coordinate with Rendering/Performance so audio pooling, spatialization, and concurrent sound counts stay cheap.
+- Add mute, volume, and accessibility expectations before sound becomes central to gameplay.
+
+Definition of done:
+- Sounds improve player understanding, not just atmosphere.
+- Repeated actions do not become annoying over a long session.
+- Audio has sensible volume hierarchy and spatial placement.
+- New audio has fallback behavior for muted, unsupported, or autoplay-restricted browsers.
+- Performance impact is tested during waves, villages, and exploration traversal.
+
 ### QA / Playtest Agent
 
 Owns regression testing, repro writing, visual QA, multiplayer smoke tests, and release gates.
