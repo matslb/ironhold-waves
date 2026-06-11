@@ -176,8 +176,8 @@ Implementation note:
 Owns menus, HUD, quest log, map, pause/session flow, desktop and touch controls, onboarding prompts, and interaction clarity.
 
 Responsibilities:
-- Keep desktop gameplay primary while preserving touch/handheld playability.
-- Require landscape mode for small touch devices and provide a clear orientation notice when needed.
+- Keep desktop gameplay primary.
+- Treat touch/handheld playability, landscape enforcement, and portrait notices as deferred work until the Game Director reopens small-screen support.
 - Make room states understandable: start, host, join, pause, leave, close, resume.
 - Prevent UI interactions from firing world actions underneath.
 - Keep quest information compact and actionable.
@@ -186,8 +186,7 @@ Responsibilities:
 Definition of done:
 - Controls are discoverable.
 - Text does not overlap or clip at common desktop sizes.
-- Touch controls are usable in landscape on handheld devices.
-- Portrait orientation communicates that landscape is required.
+- Touch/handheld behavior is unchanged unless a task explicitly reopens small-screen support.
 - Escape, pointer lock, dialogs, and menus behave predictably.
 - Current game state is obvious.
 
