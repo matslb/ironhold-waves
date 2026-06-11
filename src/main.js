@@ -4753,7 +4753,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function createQuestItem(group, questId, x, z, random, options = {}) {
     const itemGroup = new THREE.Group();
-    setExplorationLocalGroundPosition(itemGroup, x, z, 0.12);
+    setExplorationLocalGroundPosition(itemGroup, x, z, numberOrZero(options.groundOffset) || 0.12);
     const color = options.color || 0x9fffd1;
     const stemHeight = options.stemHeight || 0.35;
     const stem = makeCylinder(0.025, 0.035, stemHeight, 8, options.stemMaterial || materials.broadleaf, 0, stemHeight / 2, 0);
@@ -6261,7 +6261,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addCityPavement(group, x, z, width, depth, rotation = 0) {
-    const paving = makeBox(width, 0.055, depth, materials.darkStone, x, 0.032, z);
+    const paving = makeBox(width, 0.055, depth, materials.darkStone, x, explorationGroundLocalY(x, z, 0.032), z);
     paving.rotation.y = rotation;
     paving.receiveShadow = true;
     group.add(paving);
@@ -6351,24 +6351,28 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addWayfinderBeacon(group, x, z, random) {
-    const plaza = makeBox(24, 0.075, 24, materials.darkStone, x, 0.04, z);
-    const crossA = makeBox(34, 0.06, 5.2, materials.cityWall, x, 0.08, z);
-    const crossB = makeBox(5.2, 0.06, 34, materials.cityWall, x, 0.085, z);
+    // All plaza pieces conform to the terrain height instead of assuming
+    // ground level 0, so the cobble and carved stones sit on the rendered
+    // terrain at the (randomized, possibly elevated) city center.
+    const baseY = explorationGroundLocalY(x, z);
+    const plaza = makeBox(24, 0.075, 24, materials.darkStone, x, baseY + 0.04, z);
+    const crossA = makeBox(34, 0.06, 5.2, materials.cityWall, x, baseY + 0.08, z);
+    const crossB = makeBox(5.2, 0.06, 34, materials.cityWall, x, baseY + 0.085, z);
     group.add(plaza, crossA, crossB);
 
-    const dais = makeCylinder(4.8, 5.6, 0.62, 8, materials.cityWall, x, 0.34, z);
+    const dais = makeCylinder(4.8, 5.6, 0.62, 8, materials.cityWall, x, baseY + 0.34, z);
     dais.rotation.y = Math.PI / 8;
-    const upper = makeCylinder(2.25, 2.85, 0.45, 8, materials.darkStone, x, 0.88, z);
+    const upper = makeCylinder(2.25, 2.85, 0.45, 8, materials.darkStone, x, baseY + 0.88, z);
     upper.rotation.y = Math.PI / 8;
-    const shaft = makeCylinder(0.34, 0.68, 5.7, 6, materials.stone, x, 3.85, z);
+    const shaft = makeCylinder(0.34, 0.68, 5.7, 6, materials.stone, x, baseY + 3.85, z);
     shaft.rotation.y = Math.PI / 6;
-    const cap = makeCone(0.76, 1.35, 6, materials.cityRoof, x, 7.42, z);
+    const cap = makeCone(0.76, 1.35, 6, materials.cityRoof, x, baseY + 7.42, z);
     cap.rotation.y = Math.PI / 6;
     const glowMaterial = materials.questGlow.clone();
     glowMaterial.opacity = 0.68;
-    const beacon = makeSphere(0.48, glowMaterial, x, 6.95, z);
+    const beacon = makeSphere(0.48, glowMaterial, x, baseY + 6.95, z);
     const light = new THREE.PointLight(0x9fffd1, 1.45, 18, 1.8);
-    light.position.set(x, 6.95, z);
+    light.position.set(x, baseY + 6.95, z);
     group.add(dais, upper, shaft, cap, beacon, light);
     addExplorationCollider(x, z, 5.25, "structure");
 
@@ -6379,28 +6383,35 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       [-9.3, 0, -Math.PI / 2]
     ];
     for (const [dx, dz, rotation] of waystoneOffsets) {
-      const stone = makeCylinder(0.28, 0.46, 2.25, 5, materials.cityWall, x + dx, 1.18, z + dz);
+      const stoneY = explorationGroundLocalY(x + dx, z + dz);
+      const stone = makeCylinder(0.28, 0.46, 2.25, 5, materials.cityWall, x + dx, stoneY + 1.18, z + dz);
       stone.rotation.y = rotation + Math.PI / 5;
       const rune = makeBox(0.09, 0.82, 0.055, materials.stainedGlass.clone(), 0, 0.25, -0.35);
       rune.material.opacity = 0.86;
       stone.add(rune);
-      const foot = makeCylinder(0.74, 0.86, 0.25, 5, materials.darkStone, x + dx, 0.16, z + dz);
+      const foot = makeCylinder(0.74, 0.86, 0.25, 5, materials.darkStone, x + dx, stoneY + 0.16, z + dz);
       foot.rotation.y = rotation;
       group.add(stone, foot);
       addExplorationCollider(x + dx, z + dz, 0.92, "structure");
     }
 
-    const mapTable = makeBox(5.2, 0.24, 2.35, materials.paleWood, x, 1.08, z - 5.9);
-    const mapTop = makeBox(4.7, 0.035, 1.8, materials.stainedGlass.clone(), x, 1.23, z - 5.9);
+    // Map table lives on the east flank of the plaza: its old spot at
+    // (x, z - 5.9) with a fat collider blocked the path to the north
+    // waystone's quest pickup.
+    const tableX = x + 5.8;
+    const tableZ = z - 3.8;
+    const tableY = explorationGroundLocalY(tableX, tableZ);
+    const mapTable = makeBox(5.2, 0.24, 2.35, materials.paleWood, tableX, tableY + 1.08, tableZ);
+    const mapTop = makeBox(4.7, 0.035, 1.8, materials.stainedGlass.clone(), tableX, tableY + 1.23, tableZ);
     mapTop.material.opacity = 0.5;
     const tableLegs = [
       [-2.15, -0.82],
       [2.15, -0.82],
       [-2.15, 0.82],
       [2.15, 0.82]
-    ].map(([lx, lz]) => makeBox(0.18, 1.0, 0.18, materials.wood, x + lx, 0.57, z - 5.9 + lz));
+    ].map(([lx, lz]) => makeBox(0.18, 1.0, 0.18, materials.wood, tableX + lx, tableY + 0.57, tableZ + lz));
     group.add(mapTable, mapTop, ...tableLegs);
-    addExplorationCollider(x, z - 5.9, 2.8, "structure");
+    addExplorationCollider(tableX, tableZ, 1.35, "structure");
 
     for (let i = 0; i < 6; i += 1) {
       const angle = (i / 6) * TAU + random() * 0.18;
@@ -6419,7 +6430,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       createQuestItem(group, "cityWrits", x, z, random, {
         color: 0xf7df9a,
         stemMaterial: materials.stone,
-        radius: 0.105
+        radius: 0.105,
+        // Sit above the beacon plaza cobble (~ground + 0.0775) instead of
+        // inside it.
+        groundOffset: 0.22
       });
     }
     const lampPositions = [
@@ -6437,7 +6451,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addCrownfordCity(group, x, z, random) {
-    registerExplorationFlatZone(x, z, 50, 16, null, 1.0);
+    // No runtime flat zone here: the terrain mesh is baked before this runs,
+    // so registering one only desyncs ground queries from the rendered
+    // terrain (props float). The preset landmark zone at (12, 132) r53 in
+    // setupExplorationFlatZones already flattens the whole city footprint.
     const city = {
       id: "crownford",
       name: "Crownford",
@@ -6506,7 +6523,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addCrownringCity(group, x, z, random) {
-    registerExplorationFlatZone(x, z, 43, 15, null, 1.0);
+    // Same as Crownford: the preset landmark zone at (158, 48) r46 covers
+    // this city; a post-bake runtime zone would desync queries from the mesh.
     const city = {
       id: "crownring",
       name: "Crownring",
@@ -6547,18 +6565,22 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       addExplorationCollider(x + tx, z + tz, 1.28, "structure");
     }
 
-    const court = makeCylinder(8.6, 8.9, 0.14, 32, materials.darkStone, x, 0.11, z);
+    // Court pieces conform to terrain height like the pavement above, so
+    // they stay stacked on the cobble instead of sinking when the city sits
+    // on elevated ground.
+    const courtY = explorationGroundLocalY(x, z);
+    const court = makeCylinder(8.6, 8.9, 0.14, 32, materials.darkStone, x, courtY + 0.11, z);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(7.35, 0.24, 8, 56), materials.cityWall);
-    ring.position.set(x, 0.32, z);
+    ring.position.set(x, courtY + 0.32, z);
     ring.rotation.x = Math.PI / 2;
     addShadow(ring);
-    const sand = makeCylinder(6.85, 6.95, 0.055, 32, materials.sand, x, 0.2, z);
+    const sand = makeCylinder(6.85, 6.95, 0.055, 32, materials.sand, x, courtY + 0.2, z);
     group.add(court, ring, sand);
     for (let i = 0; i < 10; i += 1) {
       const angle = (i / 10) * TAU;
       const px = x + Math.cos(angle) * 9.8;
       const pz = z + Math.sin(angle) * 9.8;
-      const post = makeCylinder(0.07, 0.1, 1.15, 7, materials.wood, px, 0.68, pz);
+      const post = makeCylinder(0.07, 0.1, 1.15, 7, materials.wood, px, explorationGroundLocalY(px, pz, 0.68), pz);
       const pennant = makeBox(0.08, 0.72, 0.42, i % 2 ? materials.cityBannerRed : materials.blue, 0, 0.28, -0.22);
       pennant.rotation.y = angle;
       post.add(pennant);
@@ -6571,8 +6593,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       [13.2, 0, 2.6, 14]
     ];
     for (const [sx, sz, sw, sd] of stands) {
-      const bench = makeBox(sw, 0.74, sd, materials.wood, x + sx, 0.54, z + sz);
-      const base = makeBox(sw + 0.6, 0.22, sd + 0.5, materials.darkStone, x + sx, 0.18, z + sz);
+      const standY = explorationGroundLocalY(x + sx, z + sz);
+      const bench = makeBox(sw, 0.74, sd, materials.wood, x + sx, standY + 0.54, z + sz);
+      const base = makeBox(sw + 0.6, 0.22, sd + 0.5, materials.darkStone, x + sx, standY + 0.18, z + sz);
       group.add(base, bench);
       addExplorationLineColliders(x + sx, z + sz, sw, sd, "structure");
     }
