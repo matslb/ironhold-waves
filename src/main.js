@@ -1858,11 +1858,72 @@ import {
     return addShadow(mesh);
   }
 
+  function biomeTerrainInfluence(biome, localX, localZ) {
+    if (!biome) {
+      return 0;
+    }
+    const dx = localX - biome.x;
+    const dz = localZ - biome.z;
+    const rotation = -(biome.rotation || 0);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const rx = Math.max(1, biome.rx);
+    const rz = Math.max(1, biome.rz);
+    const bx = dx * cos - dz * sin;
+    const bz = dx * sin + dz * cos;
+    const normalized = (bx * bx) / (rx * rx) + (bz * bz) / (rz * rz);
+    return clamp(1 - normalized, 0, 1);
+  }
+
   function explorationTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
     const distance = Math.hypot(localX, localZ);
     const edgeRise = game.exploration.radius * 0.78;
-    const roll = Math.sin(localX * 0.13 + hashString(seed) * 0.0001) * 0.08 + Math.cos(localZ * 0.11) * 0.07;
-    return distance > edgeRise ? roll + (distance - edgeRise) * 0.012 : roll;
+    const seedPhase = hashString(seed) * 0.0001;
+    let height = Math.sin(localX * 0.13 + seedPhase) * 0.08 + Math.cos(localZ * 0.11) * 0.07;
+    height += Math.sin((localX + localZ) * 0.024 + seedPhase * 0.7) * 0.16;
+    height += Math.cos((localX - localZ) * 0.018 - seedPhase * 0.45) * 0.12;
+
+    const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
+    const desert = game.exploration.biomes.find(biome => biome.id === "desert");
+    const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
+    const mountainInfluence = biomeTerrainInfluence(mountain, localX, localZ);
+    if (mountainInfluence > 0) {
+      const ridge = Math.sin(localX * 0.052 + localZ * 0.018 + seedPhase) * 0.48
+        + Math.cos(localZ * 0.064 - seedPhase) * 0.32;
+      height += mountainInfluence * (0.55 + ridge) + Math.pow(mountainInfluence, 1.75) * 2.35;
+    }
+    const desertInfluence = biomeTerrainInfluence(desert, localX, localZ);
+    if (desertInfluence > 0) {
+      const dune = Math.sin(localX * 0.076 + localZ * 0.024 + seedPhase) * 0.24
+        + Math.cos(localZ * 0.088 - seedPhase) * 0.16;
+      height += desertInfluence * dune;
+    }
+    const swampInfluence = biomeTerrainInfluence(swamp, localX, localZ);
+    if (swampInfluence > 0) {
+      height -= swampInfluence * 0.22;
+      height += Math.sin(localX * 0.09 + localZ * 0.04) * swampInfluence * 0.06;
+    }
+
+    if (distance > edgeRise) {
+      height += (distance - edgeRise) * 0.012;
+    }
+    return height;
+  }
+
+  function explorationGroundWorldY(worldX, worldZ, offset = 0) {
+    if (game.mode !== "exploration" && !game.explorationGroup) {
+      return offset;
+    }
+    return explorationTerrainHeight(worldX - game.exploration.origin.x, worldZ - game.exploration.origin.z) + offset;
+  }
+
+  function explorationGroundLocalY(localX, localZ, offset = 0) {
+    return explorationTerrainHeight(localX, localZ) + offset;
+  }
+
+  function setExplorationLocalGroundPosition(object, localX, localZ, offset = 0) {
+    object.position.set(localX, explorationGroundLocalY(localX, localZ, offset), localZ);
+    return object;
   }
 
   function createRoadStripGeometry(fromX, fromZ, toX, toZ, width) {
@@ -2284,7 +2345,7 @@ import {
 
   function makeDecorGroup(group, x, z, rotation = 0, scale = 1) {
     const decor = new THREE.Group();
-    decor.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(decor, x, z);
     decor.rotation.y = rotation;
     decor.scale.setScalar(scale);
     group.add(decor);
@@ -2575,7 +2636,7 @@ import {
 
   function addStable(group, x, z) {
     const stable = new THREE.Group();
-    stable.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(stable, x, z);
     const postPositions = [
       [-1.8, 0, -1.2],
       [1.8, 0, -1.2],
@@ -2681,9 +2742,11 @@ import {
     const rotation = biome.rotation || 0;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    const points = [];
+    const positions = [0, explorationGroundLocalY(biome.x, biome.z, 0.026), 0];
+    const uvs = [0.5, 0.5];
+    const indices = [];
     const steps = 112;
-    for (let i = 0; i < steps; i += 1) {
+    for (let i = 0; i <= steps; i += 1) {
       const angle = (i / steps) * TAU;
       const wobble = 1
         + Math.sin(angle * 3 + phaseA) * 0.045
@@ -2691,9 +2754,22 @@ import {
         + (random() - 0.5) * 0.018;
       const x = Math.cos(angle) * biome.rx * wobble;
       const z = Math.sin(angle) * biome.rz * wobble;
-      points.push(new THREE.Vector2(x * cos - z * sin, x * sin + z * cos));
+      const localX = x * cos - z * sin;
+      const localZ = x * sin + z * cos;
+      const worldLocalX = biome.x + localX;
+      const worldLocalZ = biome.z + localZ;
+      positions.push(localX, explorationGroundLocalY(worldLocalX, worldLocalZ, 0.028), localZ);
+      uvs.push(0.5 + Math.cos(angle) * 0.5, 0.5 + Math.sin(angle) * 0.5);
+      if (i > 0) {
+        indices.push(0, i, i + 1);
+      }
     }
-    return new THREE.ShapeGeometry(new THREE.Shape(points));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
   }
 
   function addBiomePatch(group, biome, seed) {
@@ -2701,15 +2777,14 @@ import {
     const material = baseMaterial.clone();
     material.map = createBiomeTexture(seed, biome.id);
     const patch = new THREE.Mesh(createBiomePatchGeometry(biome, seed), material);
-    patch.rotation.x = -Math.PI / 2;
-    patch.position.set(biome.x, 0.019, biome.z);
+    patch.position.set(biome.x, 0, biome.z);
     patch.receiveShadow = true;
     group.add(patch);
   }
 
   function addDesertHouse(group, x, z, scale, variant) {
     const house = new THREE.Group();
-    house.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const walls = materials.adobe;
     const roofMat = materials.dryBrush;
@@ -2736,7 +2811,7 @@ import {
 
   function addMountainHouse(group, x, z, scale, variant) {
     const house = new THREE.Group();
-    house.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.mountainPlaster : materials.stone;
     const floor = makeBox(5.0, 0.16, 4.4, materials.darkStone, 0, 0.08, 0);
@@ -2764,7 +2839,7 @@ import {
 
   function addSwampHouse(group, x, z, scale, variant) {
     const house = new THREE.Group();
-    house.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const platform = makeBox(5.7, 0.18, 4.8, materials.swampPlank, 0, 0.62, 0);
     const posts = [
@@ -2808,7 +2883,7 @@ import {
       return addSwampHouse(group, x, z, scale, variant);
     }
     const house = new THREE.Group();
-    house.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const floor = makeBox(5.2, 0.12, 4.6, materials.paleWood, 0, 0.06, 0);
     const back = makeBox(5.2, 2.25, 0.24, materials.plaster, 0, 1.18, 2.18);
@@ -2839,7 +2914,7 @@ import {
 
   function addExplorationTree(group, x, z, random) {
     const tree = new THREE.Group();
-    tree.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(tree, x, z);
     const height = 2.3 + random() * 2.0;
     const trunk = makeCylinder(0.16, 0.22, height, 8, materials.wood, 0, height / 2, 0);
     tree.add(trunk);
@@ -2867,7 +2942,7 @@ import {
 
   function addMountainPine(group, x, z, random) {
     const tree = new THREE.Group();
-    tree.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(tree, x, z);
     const height = 2.9 + random() * 2.4;
     const trunk = makeCylinder(0.14, 0.22, height, 8, materials.wood, 0, height / 2, 0);
     const leafA = makeCone(1.08 + random() * 0.25, 1.95, 12, materials.pine, 0, height + 0.1, 0);
@@ -2888,7 +2963,7 @@ import {
 
   function addDesertCactus(group, x, z, random) {
     const cactus = new THREE.Group();
-    cactus.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(cactus, x, z);
     const height = 1.35 + random() * 1.35;
     const trunk = makeCylinder(0.16, 0.2, height, 9, materials.cactus, 0, height / 2, 0);
     cactus.add(trunk);
@@ -2907,7 +2982,7 @@ import {
 
   function addDryBush(group, x, z, random) {
     const bush = new THREE.Group();
-    bush.position.set(x, 0.08, z);
+    setExplorationLocalGroundPosition(bush, x, z, 0.08);
     const tuftCount = 3 + Math.floor(random() * 3);
     for (let i = 0; i < tuftCount; i += 1) {
       const tuft = makeCylinder(0.02, 0.08 + random() * 0.05, 0.42 + random() * 0.25, 6, materials.dryBrush, (random() - 0.5) * 0.42, 0.18, (random() - 0.5) * 0.42);
@@ -2922,7 +2997,7 @@ import {
 
   function addReeds(group, x, z, random, count = 5 + Math.floor(random() * 5)) {
     const reeds = new THREE.Group();
-    reeds.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(reeds, x, z);
     for (let i = 0; i < count; i += 1) {
       const height = 0.46 + random() * 0.62;
       const rx = (random() - 0.5) * 0.75;
@@ -2944,7 +3019,7 @@ import {
 
   function addSwampWillow(group, x, z, random) {
     const tree = new THREE.Group();
-    tree.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(tree, x, z);
     const height = 2.2 + random() * 1.4;
     const trunk = makeCylinder(0.18, 0.3, height, 8, materials.wood, 0, height / 2, 0);
     trunk.rotation.z = (random() - 0.5) * 0.18;
@@ -2978,7 +3053,7 @@ import {
 
   function addBogPool(group, x, z, rx, rz, random) {
     const pool = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 36), materials.bogWater.clone());
-    pool.position.set(x, 0.046, z);
+    setExplorationLocalGroundPosition(pool, x, z, 0.046);
     pool.scale.set(rx, 1, rz);
     pool.rotation.y = random() * TAU;
     pool.receiveShadow = true;
@@ -2994,7 +3069,7 @@ import {
     const radius = large ? 1.15 + random() * 1.6 : 0.35 + random() * 0.85;
     const geometry = new THREE.DodecahedronGeometry(radius, 0);
     const rock = new THREE.Mesh(geometry, materials.stone);
-    rock.position.set(x, large ? radius * 0.34 : 0.22, z);
+    setExplorationLocalGroundPosition(rock, x, z, large ? radius * 0.34 : 0.22);
     rock.scale.set(1.2 + random() * 1.4, 0.55 + random() * 0.55, 0.8 + random() * 1.2);
     rock.rotation.set(random() * 0.4, random() * TAU, random() * 0.28);
     addShadow(rock);
@@ -3018,7 +3093,7 @@ import {
       const point = randomExplorationPoint(random, 9, game.exploration.radius - 34, (x, z) => biomeAt(x, z) === "meadow");
       const size = 0.75 + random() * 0.55;
       scale.set(size, 0.82 + random() * 0.45, size);
-      matrix.compose(new THREE.Vector3(point.x, 0.16, point.z), quaternion, scale);
+      matrix.compose(new THREE.Vector3(point.x, explorationGroundLocalY(point.x, point.z, 0.16), point.z), quaternion, scale);
       flowers.setMatrixAt(i, matrix);
     }
     group.add(flowers);
@@ -3049,7 +3124,7 @@ import {
 
   function addExplorationLake(group, x, z, rx, rz, random) {
     const lake = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 48), materials.water.clone());
-    lake.position.set(x, 0.04, z);
+    setExplorationLocalGroundPosition(lake, x, z, 0.04);
     lake.scale.set(rx, 1, rz);
     lake.receiveShadow = true;
     group.add(lake);
@@ -3068,7 +3143,7 @@ import {
 
   function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null, biome = "meadow") {
     const group = new THREE.Group();
-    group.position.set(x, 0, z);
+    group.position.set(x, explorationGroundWorldY(x, z), z);
     group.scale.setScalar(modelScale.npc);
     const cloth = materials.npcCloth.clone();
     if (biome === "desert") {
@@ -3112,8 +3187,8 @@ import {
       rightLeg,
       leftArm,
       rightArm,
-      home: new THREE.Vector3(x, 0, z),
-      target: new THREE.Vector3(x, 0, z),
+      home: new THREE.Vector3(x, explorationGroundWorldY(x, z), z),
+      target: new THREE.Vector3(x, explorationGroundWorldY(x, z), z),
       homeRadius,
       walkTime: random() * 10,
       retarget: 0.5 + random() * 2,
@@ -3166,7 +3241,7 @@ import {
 
   function createQuestItem(group, questId, x, z, random, options = {}) {
     const itemGroup = new THREE.Group();
-    itemGroup.position.set(x, 0.12, z);
+    setExplorationLocalGroundPosition(itemGroup, x, z, 0.12);
     const color = options.color || 0x9fffd1;
     const stemHeight = options.stemHeight || 0.35;
     const stem = makeCylinder(0.025, 0.035, stemHeight, 8, options.stemMaterial || materials.broadleaf, 0, stemHeight / 2, 0);
@@ -3196,7 +3271,11 @@ import {
       pickupRadius: Math.max(0.4, numberOrZero(options.pickupRadius) || 1.25),
       respawnTimer: 0,
       visibleActive: false,
-      position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
+      position: new THREE.Vector3(
+        game.exploration.origin.x + x,
+        explorationGroundLocalY(x, z),
+        game.exploration.origin.z + z
+      ),
       bobSeed: random() * 10
     });
   }
@@ -3457,7 +3536,7 @@ import {
     horse.walkTime += dt * (1.4 + speed * 1.5);
     const moving = Math.min(1, speed / 7.5);
     const bob = Math.sin(horse.walkTime * 2.2) * 0.045 * moving;
-    horse.group.position.set(horse.position.x, bob, horse.position.z);
+    horse.group.position.set(horse.position.x, explorationGroundWorldY(horse.position.x, horse.position.z, bob), horse.position.z);
     horse.group.rotation.y = horse.yaw;
     for (let i = 0; i < horse.legs.length; i += 1) {
       const phase = Math.sin(horse.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
@@ -3616,7 +3695,7 @@ import {
         item.light.intensity = 0;
         continue;
       }
-      item.group.position.y = 0.12 + Math.sin(clock.elapsedTime * 2.8 + item.bobSeed) * 0.06;
+      item.group.position.y = item.position.y + 0.12 + Math.sin(clock.elapsedTime * 2.8 + item.bobSeed) * 0.06;
       item.bloom.scale.setScalar(0.9 + Math.sin(clock.elapsedTime * 5.5 + item.bobSeed) * 0.14);
       item.ring.rotation.z += dt * 1.5;
       item.light.intensity = 0.58 + Math.sin(clock.elapsedTime * 4.2 + item.bobSeed) * 0.18;
@@ -4445,7 +4524,7 @@ import {
 
   function addCityHouse(group, x, z, scale, variant, rotation = 0) {
     const house = new THREE.Group();
-    house.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(house, x, z);
     house.rotation.y = rotation;
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.cityWall : materials.stone;
@@ -4471,7 +4550,7 @@ import {
 
   function addCityCastle(group, x, z) {
     const castle = new THREE.Group();
-    castle.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(castle, x, z);
     const base = makeBox(14, 0.18, 10.5, materials.darkStone, 0, 0.09, 0);
     const keep = makeBox(7.2, 6.75, 6.2, materials.cityWall, 0, 3.48, 0.6);
     const gate = makeBox(1.55, 2.3, 0.12, materials.wood, 0, 1.18, -2.58);
@@ -4504,7 +4583,7 @@ import {
 
   function addCityChurch(group, x, z) {
     const church = new THREE.Group();
-    church.position.set(x, 0, z);
+    setExplorationLocalGroundPosition(church, x, z);
     const nave = makeBox(7.2, 3.25, 11.2, materials.cityWall, 0, 1.72, 0);
     const apse = makeCylinder(1.8, 2.0, 3.3, 18, materials.cityWall, 0, 1.7, 6.1);
     apse.rotation.x = Math.PI / 2;
@@ -4852,6 +4931,9 @@ import {
 
   function seedExplorationEnemy(enemy, world, random, awareness, homeRadius = 9) {
     enemy.exploration = true;
+    world.y = explorationGroundWorldY(world.x, world.z);
+    enemy.position.y = world.y;
+    enemy.group.position.y = enemy.type === "dragon" ? world.y + numberOrZero(enemy.hoverHeight) : world.y;
     enemy.home = world.clone();
     enemy.homeRadius = homeRadius;
     enemy.awareness = awareness;
@@ -4868,14 +4950,15 @@ import {
       const radius = 16 + random() * 34;
       const x = biome.x + Math.cos(angle) * radius;
       const z = biome.z + Math.sin(angle) * radius;
-      const spire = makeCone(1.4 + random() * 1.6, 4.8 + random() * 5.8, 7, materials.darkStone, x, 2.4 + random() * 1.8, z);
+      const height = 4.8 + random() * 5.8;
+      const spire = makeCone(1.4 + random() * 1.6, height, 7, materials.darkStone, x, explorationGroundLocalY(x, z, height / 2), z);
       spire.rotation.y = random() * TAU;
       spire.scale.x *= 0.7 + random() * 0.45;
       group.add(spire);
       addExplorationCollider(x, z, 1.15, "rock");
     }
     const nest = new THREE.Group();
-    nest.position.set(biome.x + 8, 0.24, biome.z - 6);
+    setExplorationLocalGroundPosition(nest, biome.x + 8, biome.z - 6, 0.24);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(3.8, 0.16, 8, 32), materials.darkStone);
     ring.rotation.x = Math.PI / 2;
     const ember = makeSphere(0.22, materials.fireCore.clone(), 0, 0.34, 0);
@@ -4895,7 +4978,7 @@ import {
       group.add(ribA, ribB);
     }
     const oasis = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 42), materials.water.clone());
-    oasis.position.set(biome.x - 22, 0.045, biome.z + 18);
+    setExplorationLocalGroundPosition(oasis, biome.x - 22, biome.z + 18, 0.045);
     oasis.scale.set(6.5, 1, 3.4);
     oasis.receiveShadow = true;
     group.add(oasis);
@@ -4912,6 +4995,7 @@ import {
       return;
     }
     const boardwalk = makeBox(19, 0.12, 1.15, materials.swampPlank, biome.x - 4, 0.18, biome.z + 3);
+    boardwalk.position.y = explorationGroundLocalY(biome.x - 4, biome.z + 3, 0.18);
     boardwalk.rotation.y = -0.34;
     group.add(boardwalk);
     for (let i = 0; i < 7; i += 1) {
@@ -4925,7 +5009,7 @@ import {
       addBogPool(group, point.x, point.z, 2.8 + random() * 3.0, 1.8 + random() * 2.0, random);
     }
     const shrine = new THREE.Group();
-    shrine.position.set(biome.x + 9, 0, biome.z - 10);
+    setExplorationLocalGroundPosition(shrine, biome.x + 9, biome.z - 10);
     const base = makeBox(2.4, 0.18, 1.8, materials.swampPlank, 0, 0.18, 0);
     const lintel = makeBox(2.0, 0.16, 0.16, materials.reed, 0, 1.72, -0.08);
     const leftPost = makeCylinder(0.07, 0.1, 1.72, 8, materials.wood, -0.78, 0.92, -0.08);
@@ -4949,28 +5033,25 @@ import {
     scene.add(group);
     game.explorationGroup = group;
 
+    setupExplorationBiomes(group, random, seed);
+    const mountainBiome = game.exploration.biomes.find(biome => biome.id === "mountain");
+    const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
+    const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
+
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
     const groundGeometry = new THREE.PlaneGeometry(760, 760, 112, 112);
     const pos = groundGeometry.attributes.position;
-    const edgeRise = game.exploration.radius * 0.78;
     for (let i = 0; i < pos.count; i += 1) {
       const x = pos.getX(i);
       const y = pos.getY(i);
-      const distance = Math.hypot(x, y);
-      const roll = Math.sin(x * 0.13 + hashString(seed) * 0.0001) * 0.08 + Math.cos(y * 0.11) * 0.07;
-      pos.setZ(i, distance > edgeRise ? roll + (distance - edgeRise) * 0.012 : roll);
+      pos.setZ(i, explorationTerrainHeight(x, -y, seed));
     }
     groundGeometry.computeVertexNormals();
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     group.add(ground);
-
-    setupExplorationBiomes(group, random, seed);
-    const mountainBiome = game.exploration.biomes.find(biome => biome.id === "mountain");
-    const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
-    const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
 
     setupExplorationQuests();
     applySavedExplorationProgress();
@@ -5005,12 +5086,15 @@ import {
     for (let i = 0; i < 64; i += 1) {
       const angle = (i / 64) * TAU + (random() - 0.5) * 0.16;
       const radius = game.exploration.radius - 26 + random() * 44;
-      const mountain = makeCone(4.2 + random() * 5.6, 7.5 + random() * 10, 7 + Math.floor(random() * 3), materials.darkStone, Math.cos(angle) * radius, 3.8 + random() * 3.6, Math.sin(angle) * radius);
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const height = 7.5 + random() * 10;
+      const mountain = makeCone(4.2 + random() * 5.6, height, 7 + Math.floor(random() * 3), materials.darkStone, x, explorationGroundLocalY(x, z, height / 2), z);
       mountain.rotation.y = random() * TAU;
       mountain.scale.x *= 0.82 + random() * 0.6;
       mountain.castShadow = false;
       group.add(mountain);
-      addExplorationCollider(Math.cos(angle) * radius, Math.sin(angle) * radius, 4.2, "rock");
+      addExplorationCollider(x, z, 4.2, "rock");
       if (i % 2 === 0) {
         addExplorationRock(group, Math.cos(angle) * (radius - 6), Math.sin(angle) * (radius - 6), random, true);
       }
@@ -6484,7 +6568,7 @@ import {
       potion.remoteControlled = true;
       game.potions.push(potion);
     }
-    potion.position.set(state.x || 0, 0, state.z || 0);
+    potion.position.set(state.x || 0, explorationGroundWorldY(state.x || 0, state.z || 0), state.z || 0);
     potion.group.position.x = potion.position.x;
     potion.group.position.z = potion.position.z;
     potion.healAmount = state.healAmount || potion.healAmount;
@@ -7182,9 +7266,19 @@ import {
       }
       remote = createRemotePlayerModel(nextCharacter, state.id);
       online.remotePlayers.set(state.id, remote);
-      remote.group.position.copy(previousPosition || new THREE.Vector3(state.x || 0, 0, state.z || 0));
+      remote.group.position.copy(previousPosition || new THREE.Vector3(
+        state.x || 0,
+        explorationGroundWorldY(state.x || 0, state.z || 0),
+        state.z || 0
+      ));
       remote.targetPosition.copy(remote.group.position);
-      remote.horse.group.position.copy(previousHorsePosition || new THREE.Vector3(state.horseX ?? state.x ?? 0, 0, state.horseZ ?? state.z ?? 0));
+      const horseX = state.horseX ?? state.x ?? 0;
+      const horseZ = state.horseZ ?? state.z ?? 0;
+      remote.horse.group.position.copy(previousHorsePosition || new THREE.Vector3(
+        horseX,
+        explorationGroundWorldY(horseX, horseZ),
+        horseZ
+      ));
       remote.horseTargetPosition = remote.horse.group.position.clone();
       if (previousTarget) {
         remote.targetPosition.copy(previousTarget);
@@ -7202,7 +7296,11 @@ import {
     }
     remote.weaponId = remote.combatProfile.weaponId;
     remote.perks = remote.combatProfile.perks.slice();
-    remote.targetPosition.set(state.x || 0, 0, state.z || 0);
+    remote.targetPosition.set(
+      state.x || 0,
+      explorationGroundWorldY(state.x || 0, state.z || 0),
+      state.z || 0
+    );
     remote.targetYaw = state.yaw || 0;
     remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
     remote.mountTackId = state.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
@@ -7211,7 +7309,13 @@ import {
     if (!remote.horseTargetPosition) {
       remote.horseTargetPosition = new THREE.Vector3();
     }
-    remote.horseTargetPosition.set(state.horseX ?? state.x ?? 0, 0, state.horseZ ?? state.z ?? 0);
+    const targetHorseX = state.horseX ?? state.x ?? 0;
+    const targetHorseZ = state.horseZ ?? state.z ?? 0;
+    remote.horseTargetPosition.set(
+      targetHorseX,
+      explorationGroundWorldY(targetHorseX, targetHorseZ),
+      targetHorseZ
+    );
     remote.horseTargetYaw = state.horseYaw ?? state.yaw ?? 0;
     remote.lastSeen = clock.elapsedTime;
     updateRoomRoster();
@@ -7221,6 +7325,7 @@ import {
     for (const [id, remote] of online.remotePlayers) {
       const before = remote.group.position.clone();
       remote.group.position.lerp(remote.targetPosition, 1 - Math.pow(0.0002, dt));
+      remote.group.position.y = explorationGroundWorldY(remote.group.position.x, remote.group.position.z);
       remote.group.rotation.y = lerp(remote.group.rotation.y, remote.targetYaw || 0, 1 - Math.pow(0.00005, dt));
       const moved = remote.group.position.distanceTo(before);
       remote.walkTime += moved * 2.8;
@@ -7248,7 +7353,11 @@ import {
           remote.horse.group.position.z = lerp(remote.horse.group.position.z, horseTarget.z, 1 - Math.pow(0.0002, dt));
           const horseMoved = Math.hypot(remote.horse.group.position.x - previousHorseX, remote.horse.group.position.z - previousHorseZ);
           const horseSpeed = horseMoved / Math.max(0.001, dt);
-          remote.horse.group.position.y = updateHorseModelLocalAnimation(remote.horse, horseSpeed, dt);
+          remote.horse.group.position.y = explorationGroundWorldY(
+            remote.horse.group.position.x,
+            remote.horse.group.position.z,
+            updateHorseModelLocalAnimation(remote.horse, horseSpeed, dt)
+          );
           remote.horse.group.rotation.y = lerp(remote.horse.group.rotation.y, remote.horseTargetYaw || 0, 1 - Math.pow(0.00005, dt));
         }
       }
@@ -8051,8 +8160,9 @@ import {
     const wizardPotion = options.kind === "wizard";
     const scale = fullHeal ? 1.55 : wizardPotion ? 0.9 : 0.82;
     const healAmount = fullHeal ? player.maxHealth : options.healAmount;
+    const groundY = explorationGroundWorldY(x, z);
     const group = new THREE.Group();
-    group.position.set(x, 0.1, z);
+    group.position.set(x, groundY + 0.1, z);
     group.scale.setScalar(scale);
 
     const bottle = makeCylinder(0.18, 0.24, 0.42, 14, materials.potionGlass.clone(), 0, 0.28, 0);
@@ -8080,7 +8190,7 @@ import {
       group,
       glow,
       marker,
-      position: new THREE.Vector3(x, 0, z),
+      position: new THREE.Vector3(x, groundY, z),
       kind: options.kind,
       healAmount,
       fullHeal,
@@ -8391,12 +8501,15 @@ import {
     }
 
     const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
+    const playerGroundY = game.mode === "exploration"
+      ? explorationGroundWorldY(player.position.x, player.position.z)
+      : 0;
     if (mounted) {
       const horse = game.exploration.horse;
       const rideBob = horse ? Math.sin(horse.walkTime * 2.2) * 0.04 : 0;
-      player.group.position.set(player.position.x, 1.2 + rideBob, player.position.z);
+      player.group.position.set(player.position.x, playerGroundY + 1.2 + rideBob, player.position.z);
     } else {
-      player.group.position.set(player.position.x, walkBob, player.position.z);
+      player.group.position.set(player.position.x, playerGroundY + walkBob, player.position.z);
     }
     player.group.rotation.y = player.yaw;
     if (mounted) {
@@ -8864,10 +8977,12 @@ import {
   function chooseExplorationPatrolTarget(enemy) {
     const angle = Math.random() * TAU;
     const radius = 2.5 + Math.random() * (enemy.homeRadius || 9.5);
+    const targetX = enemy.home.x + Math.cos(angle) * radius;
+    const targetZ = enemy.home.z + Math.sin(angle) * radius;
     enemy.patrolTarget.set(
-      enemy.home.x + Math.cos(angle) * radius,
-      0,
-      enemy.home.z + Math.sin(angle) * radius
+      targetX,
+      explorationGroundWorldY(targetX, targetZ),
+      targetZ
     );
     const local = explorationLocalPosition(enemy.patrolTarget, tmpVec);
     const maxRadius = game.exploration.radius - 4;
@@ -8877,6 +8992,7 @@ import {
       enemy.patrolTarget.x = game.exploration.origin.x + local.x;
       enemy.patrolTarget.z = game.exploration.origin.z + local.z;
     }
+    enemy.patrolTarget.y = explorationGroundWorldY(enemy.patrolTarget.x, enemy.patrolTarget.z);
   }
 
   function constrainExplorationEnemy(enemy) {
@@ -8897,7 +9013,11 @@ import {
       enemy.position.addScaledVector(enemy.velocity, dt);
       enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
       constrainExplorationEnemy(enemy);
-      enemy.group.position.set(enemy.position.x, enemy.hoverHeight, enemy.position.z);
+      enemy.group.position.set(
+        enemy.position.x,
+        explorationGroundWorldY(enemy.position.x, enemy.position.z, enemy.hoverHeight),
+        enemy.position.z
+      );
       enemy.group.rotation.y = enemy.yaw;
       updateDragonAnimation(enemy, dt);
       return;
@@ -8927,7 +9047,7 @@ import {
     enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
     constrainExplorationEnemy(enemy);
     const hover = enemy.hoverHeight + Math.sin(clock.elapsedTime * 3.4 + enemy.bobSeed) * 0.28;
-    enemy.group.position.set(enemy.position.x, hover, enemy.position.z);
+    enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z, hover), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateDragonAnimation(enemy, dt);
   }
@@ -9013,7 +9133,7 @@ import {
     enemy.position.addScaledVector(enemy.velocity, dt);
     enemy.velocity.multiplyScalar(Math.pow(0.22, dt));
     constrainExplorationEnemy(enemy);
-    enemy.group.position.copy(enemy.position);
+    enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateSpiderAnimation(enemy, dt);
   }
@@ -9041,7 +9161,7 @@ import {
       if (playerDistance < 2.65) {
         const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
         applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), 15, 24, hitDirection, 0.16);
-        spawnImpact(tmpVec.set(enemy.position.x, 1.0, enemy.position.z), 0x8affd2, 16);
+        spawnImpact(tmpVec.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z, 1.0), enemy.position.z), 0x8affd2, 16);
       }
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
@@ -9114,7 +9234,7 @@ import {
     enemy.position.addScaledVector(enemy.velocity, dt);
     enemy.velocity.multiplyScalar(Math.pow(0.25, dt));
     constrainExplorationEnemy(enemy);
-    enemy.group.position.copy(enemy.position);
+    enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateWispAnimation(enemy, dt);
   }
@@ -9135,7 +9255,9 @@ import {
       if (npc.retarget <= 0 || targetDx * targetDx + targetDz * targetDz < 0.45 * 0.45) {
         const angle = Math.random() * TAU;
         const radius = Math.random() * npc.homeRadius;
-        npc.target.set(npc.home.x + Math.cos(angle) * radius, 0, npc.home.z + Math.sin(angle) * radius);
+        const targetX = npc.home.x + Math.cos(angle) * radius;
+        const targetZ = npc.home.z + Math.sin(angle) * radius;
+        npc.target.set(targetX, explorationGroundWorldY(targetX, targetZ), targetZ);
         npc.retarget = 2 + Math.random() * 3.5;
       }
       const toTarget = tmpVec.copy(npc.target).sub(npc.group.position);
@@ -9143,6 +9265,7 @@ import {
       if (distance > 0.08) {
         toTarget.multiplyScalar(1 / Math.max(0.001, distance));
         npc.group.position.addScaledVector(toTarget, dt * 1.05);
+        npc.group.position.y = explorationGroundWorldY(npc.group.position.x, npc.group.position.z);
         npc.group.rotation.y = yawFromDirection(toTarget);
         npc.walkTime += dt * 2.8;
       }
@@ -9174,7 +9297,7 @@ import {
       const distance = Math.hypot(player.position.x - village.x, player.position.z - village.z);
       if (distance < village.radius) {
         game.exploration.discovered.add(village.id);
-        spawnImpact(new THREE.Vector3(village.x, 0, village.z), 0xffd889, 24);
+        spawnImpact(new THREE.Vector3(village.x, explorationGroundWorldY(village.x, village.z), village.z), 0xffd889, 24);
         showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
         awardExplorationXp(20);
         syncVillageQuestProgress({ silent: false });
@@ -9283,7 +9406,7 @@ import {
       enemy.position.addScaledVector(enemy.velocity, dt);
       enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
       constrainExplorationEnemy(enemy);
-      enemy.group.position.copy(enemy.position);
+      enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
       enemy.group.rotation.y = enemy.yaw;
       const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
       enemy.leftLeg.rotation.x = legSwing;
@@ -9677,7 +9800,8 @@ import {
     for (let i = game.potions.length - 1; i >= 0; i -= 1) {
       const potion = game.potions[i];
       const bob = Math.sin(clock.elapsedTime * 4.2 + potion.bobSeed) * 0.08;
-      potion.group.position.y = 0.1 + bob;
+      potion.position.y = explorationGroundWorldY(potion.position.x, potion.position.z);
+      potion.group.position.y = potion.position.y + 0.1 + bob;
       potion.group.rotation.y += dt * 1.4;
       potion.marker.material.opacity = 0.36 + Math.sin(clock.elapsedTime * 5.3 + potion.bobSeed) * 0.12;
       potion.glow.intensity = 0.85 + Math.sin(clock.elapsedTime * 6.1 + potion.bobSeed) * 0.18;
