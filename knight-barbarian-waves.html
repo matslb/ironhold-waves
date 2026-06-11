@@ -1097,6 +1097,9 @@
         mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, roughness: 0.9 }),
         spiderCarapace: new THREE.MeshStandardMaterial({ color: 0x2d221c, roughness: 0.78, metalness: 0.03 }),
         spiderMarking: new THREE.MeshBasicMaterial({ color: 0xd9a648 }),
+        cityWall: new THREE.MeshStandardMaterial({ color: 0xb8b7aa, roughness: 0.88 }),
+        cityRoof: new THREE.MeshStandardMaterial({ color: 0x435260, roughness: 0.86 }),
+        stainedGlass: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.72 }),
         horseCoat: new THREE.MeshStandardMaterial({ color: 0x7b4a2a, roughness: 0.86 }),
         horseMane: new THREE.MeshStandardMaterial({ color: 0x2f1b12, roughness: 0.9 }),
         saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, roughness: 0.88 }),
@@ -1160,6 +1163,7 @@
           lakes: [],
           villages: [],
           biomes: [],
+          city: null,
           horse: null,
           discovered: new Set(),
           completed: false,
@@ -1399,6 +1403,7 @@
         game.exploration.lakes.length = 0;
         game.exploration.villages.length = 0;
         game.exploration.biomes.length = 0;
+        game.exploration.city = null;
         game.exploration.discovered = new Set();
         game.exploration.completed = false;
         game.exploration.xp = 0;
@@ -1784,8 +1789,10 @@
           cloth.color.setHex(0xb8894f);
         } else if (biome === "mountain") {
           cloth.color.setHex(0x596b77);
+        } else if (biome === "city") {
+          cloth.color.setHex(0x3f5370);
         }
-        const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : materials.paleWood;
+        const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : materials.paleWood;
         const body = makeCylinder(0.22, 0.28, 0.78, 12, cloth, 0, 0.78, 0);
         const head = makeSphere(0.18, materials.skin, 0, 1.32, 0);
         const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.56, 0);
@@ -1796,6 +1803,9 @@
         if (biome === "desert") {
           const scarf = makeCylinder(0.19, 0.22, 0.12, 12, materials.dryBrush, 0, 1.18, 0);
           group.add(scarf);
+        } else if (biome === "city") {
+          const collar = makeCylinder(0.2, 0.24, 0.1, 12, materials.gold, 0, 1.18, 0);
+          group.add(collar);
         }
         const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 1.92, 0);
         questMarker.visible = !!questId;
@@ -2290,6 +2300,8 @@
             questDialogBody.textContent = "The dunes shift by the hour. Walk near the cactus shade and listen for legs under the sand.";
           } else if (npc.biome === "mountain") {
             questDialogBody.textContent = "Smoke over the ridges means dragons are awake. Keep low when the wind goes warm.";
+          } else if (npc.biome === "city") {
+            questDialogBody.textContent = "Keep to the paved streets near the ring. The castle bells make it easy to find your way back.";
           } else {
             questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
           }
@@ -2368,6 +2380,16 @@
           player.potionCooldownMax = Math.max(10, player.potionCooldownMax - 4);
           game.potions.push(createHealthPotion(player.position.x + 1.8, player.position.z + 1.2, { kind: "full" }));
           trimPotionDrops();
+        } else if (quest.id === "cityWrits") {
+          player.maxGuard += 10;
+          player.guard = player.maxGuard;
+          player.maxMana += 10;
+          player.mana = player.maxMana;
+        } else if (quest.id === "citySanctuary") {
+          player.maxHealth += 12;
+          player.health = player.maxHealth;
+          game.potions.push(createHealthPotion(player.position.x - 1.2, player.position.z + 1.4, { kind: "small", healAmount: 34 }));
+          trimPotionDrops();
         }
         awardExplorationXp(50);
         spawnImpact(player.position, 0xffd889, 24);
@@ -2399,7 +2421,9 @@
           raiders: { hex: "#ff9f5d", fill: "rgba(255, 159, 93, 0.16)", stroke: "rgba(255, 159, 93, 0.72)" },
           villages: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.72)" },
           spiders: { hex: "#d9a648", fill: "rgba(217, 166, 72, 0.17)", stroke: "rgba(217, 166, 72, 0.76)" },
-          dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" }
+          dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" },
+          cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
+          citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" }
         };
         return colors[id] || { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.76)" };
       }
@@ -2414,7 +2438,9 @@
           raiders: "open wilds",
           villages: "settlements",
           spiders: "desert",
-          dragons: "mountains"
+          dragons: "mountains",
+          cityWrits: "arena city",
+          citySanctuary: "church district"
         };
         return hints[quest.id] || "";
       }
@@ -2488,6 +2514,23 @@
               color
             }]
             : [];
+        }
+        if (quest.id === "cityWrits" || quest.id === "citySanctuary") {
+          if (quest.id === "cityWrits") {
+            const positions = game.questItems
+              .filter(item => item.questId === "cityWrits")
+              .map(item => item.position);
+            const area = aggregateQuestArea(positions, 18, 22, 48);
+            return area ? [{ ...area, color }] : [];
+          }
+          if (game.exploration.city) {
+            return [{
+              x: game.exploration.city.x + 25,
+              z: game.exploration.city.z - 3,
+              radius: 20,
+              color
+            }];
+          }
         }
         return [];
       }
@@ -2623,6 +2666,26 @@
             "A loyal horse mount",
             "collect",
             4
+          ),
+          createQuest(
+            "cityWrits",
+            "The Ring Writs",
+            "Marshal Orlan",
+            "The arena city keeps its old laws carved at the four lists. Read each writ, and I will mark you as a sworn defender of the ring.",
+            "Inspect arena writs",
+            "+10 max guard and +10 max magica",
+            "collect",
+            4
+          ),
+          createQuest(
+            "citySanctuary",
+            "Sanctuary Lamps",
+            "Sister Edda",
+            "The church lamps went dark when the last storm rolled over the walls. Relight the sanctuary lamps and the city will keep a bed ready for you.",
+            "Relight sanctuary lamps",
+            "+12 max health and a field potion",
+            "collect",
+            3
           )
         );
       }
@@ -2670,6 +2733,229 @@
             biome
           ));
         }
+      }
+
+      function addCityPavement(group, x, z, width, depth, rotation = 0) {
+        const paving = makeBox(width, 0.055, depth, materials.darkStone, x, 0.032, z);
+        paving.rotation.y = rotation;
+        paving.receiveShadow = true;
+        group.add(paving);
+        return paving;
+      }
+
+      function addCityHouse(group, x, z, scale, variant, rotation = 0) {
+        const house = new THREE.Group();
+        house.position.set(x, 0, z);
+        house.rotation.y = rotation;
+        house.scale.setScalar(scale);
+        const wall = variant % 2 ? materials.cityWall : materials.stone;
+        const floor = makeBox(4.6, 0.12, 4.0, materials.darkStone, 0, 0.06, 0);
+        const back = makeBox(4.6, 2.45, 0.24, wall, 0, 1.28, 1.88);
+        const left = makeBox(0.24, 2.45, 4.0, wall, -2.18, 1.28, 0);
+        const right = makeBox(0.24, 2.45, 4.0, wall, 2.18, 1.28, 0);
+        const frontLeft = makeBox(1.48, 2.45, 0.24, wall, -1.56, 1.28, -1.88);
+        const frontRight = makeBox(1.48, 2.45, 0.24, wall, 1.56, 1.28, -1.88);
+        const door = makeBox(0.82, 1.36, 0.08, materials.wood, 0, 0.74, -2.04);
+        const roofA = makeBox(5.2, 0.34, 2.55, materials.cityRoof, 0, 2.88, -0.8);
+        const roofB = makeBox(5.2, 0.34, 2.55, materials.cityRoof, 0, 2.88, 0.8);
+        roofA.rotation.x = -0.56;
+        roofB.rotation.x = 0.56;
+        const sign = makeBox(1.0, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, 0, 1.55, -2.07);
+        const windowA = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), -1.28, 1.58, -2.06);
+        const windowB = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), 1.28, 1.58, -2.06);
+        house.add(floor, back, left, right, frontLeft, frontRight, door, roofA, roofB, sign, windowA, windowB);
+        group.add(house);
+        return house;
+      }
+
+      function addCityCastle(group, x, z) {
+        const castle = new THREE.Group();
+        castle.position.set(x, 0, z);
+        const base = makeBox(14, 0.18, 10.5, materials.darkStone, 0, 0.09, 0);
+        const keep = makeBox(7.2, 6.2, 6.2, materials.cityWall, 0, 3.2, 0.6);
+        const gate = makeBox(1.55, 2.3, 0.12, materials.wood, 0, 1.18, -2.58);
+        const lintel = makeBox(2.1, 0.3, 0.18, materials.darkStone, 0, 2.42, -2.62);
+        castle.add(base, keep, gate, lintel);
+        const towerPositions = [
+          [-4.6, -3.4],
+          [4.6, -3.4],
+          [-4.6, 4.4],
+          [4.6, 4.4]
+        ];
+        for (const [tx, tz] of towerPositions) {
+          const tower = makeCylinder(0.92, 1.08, 6.9, 18, materials.cityWall, tx, 3.45, tz);
+          const cap = makeCone(1.24, 1.6, 18, materials.cityRoof, tx, 7.68, tz);
+          castle.add(tower, cap);
+        }
+        for (let i = 0; i < 5; i += 1) {
+          castle.add(makeBox(0.62, 0.54, 0.48, materials.darkStone, -2.7 + i * 1.35, 6.58, -2.55));
+        }
+        const banner = makeBox(0.1, 1.45, 0.86, materials.blue, -3.7, 4.6, -2.72);
+        castle.add(banner);
+        group.add(castle);
+        return castle;
+      }
+
+      function addCityChurch(group, x, z) {
+        const church = new THREE.Group();
+        church.position.set(x, 0, z);
+        const nave = makeBox(7.2, 3.25, 11.2, materials.cityWall, 0, 1.72, 0);
+        const apse = makeCylinder(1.8, 2.0, 3.3, 18, materials.cityWall, 0, 1.7, 6.1);
+        apse.rotation.x = Math.PI / 2;
+        const roofA = makeBox(7.9, 0.44, 6.8, materials.cityRoof, 0, 3.72, -1.7);
+        const roofB = makeBox(7.9, 0.44, 6.8, materials.cityRoof, 0, 3.72, 1.7);
+        roofA.rotation.x = -0.62;
+        roofB.rotation.x = 0.62;
+        const tower = makeBox(3.0, 6.1, 3.0, materials.cityWall, 0, 3.08, -5.55);
+        const spire = makeCone(1.85, 3.6, 24, materials.cityRoof, 0, 7.95, -5.55);
+        const door = makeBox(1.0, 1.7, 0.08, materials.wood, 0, 0.9, -7.1);
+        const glass = makeBox(0.74, 1.2, 0.08, materials.stainedGlass.clone(), 0, 3.72, -7.12);
+        const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, 9.72, -5.55);
+        const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, 9.88, -5.55);
+        church.add(nave, apse, roofA, roofB, tower, spire, door, glass, crossV, crossH);
+        group.add(church);
+        return church;
+      }
+
+      function addCleanCityArena(group, x, z, random) {
+        const plaza = new THREE.Mesh(new THREE.CircleGeometry(18, 64), materials.darkStone);
+        plaza.position.set(x, 0.025, z);
+        plaza.rotation.x = -Math.PI / 2;
+        plaza.receiveShadow = true;
+        group.add(plaza);
+
+        const sand = new THREE.Mesh(new THREE.CircleGeometry(10.5, 64), materials.dirt);
+        sand.position.set(x, 0.045, z);
+        sand.rotation.x = -Math.PI / 2;
+        sand.receiveShadow = true;
+        group.add(sand);
+
+        const inner = new THREE.Mesh(new THREE.RingGeometry(10.6, 11.5, 72), materials.cityWall);
+        inner.position.set(x, 0.07, z);
+        inner.rotation.x = -Math.PI / 2;
+        inner.receiveShadow = true;
+        group.add(inner);
+
+        const seatRadii = [13.2, 15.0];
+        for (let row = 0; row < seatRadii.length; row += 1) {
+          const radius = seatRadii[row];
+          for (let i = 0; i < 20; i += 1) {
+            const angle = (i / 20) * TAU;
+            const skipGate = Math.abs(Math.sin(angle * 2)) < 0.12;
+            if (skipGate && row === 1) {
+              continue;
+            }
+            const seat = makeBox(2.2, 0.28, 0.62, row ? materials.stone : materials.cityWall, x + Math.cos(angle) * radius, 0.45 + row * 0.34, z + Math.sin(angle) * radius);
+            seat.rotation.y = -angle + Math.PI / 2;
+            group.add(seat);
+          }
+        }
+
+        for (let i = 0; i < 4; i += 1) {
+          const angle = (i / 4) * TAU + Math.PI / 4;
+          const pole = makeCylinder(0.08, 0.1, 3.1, 8, materials.wood, x + Math.cos(angle) * 16.5, 1.55, z + Math.sin(angle) * 16.5);
+          const bannerMesh = makeBox(0.08, 1.0, 0.64, i % 2 ? materials.blue : materials.cloth, 0, 0.35, 0.34);
+          pole.add(bannerMesh);
+          pole.rotation.y = -angle;
+          group.add(pole);
+        }
+
+        for (let i = 0; i < 6; i += 1) {
+          const angle = (i / 6) * TAU + random() * 0.16;
+          addExplorationRock(group, x + Math.cos(angle) * (17.8 + random()), z + Math.sin(angle) * (17.8 + random()), random);
+        }
+      }
+
+      function addCityQuestItems(group, city, random) {
+        const sigilPositions = [
+          [city.localX, city.localZ - 13.2],
+          [city.localX + 13.2, city.localZ],
+          [city.localX, city.localZ + 13.2],
+          [city.localX - 13.2, city.localZ]
+        ];
+        for (const [x, z] of sigilPositions) {
+          createQuestItem(group, "cityWrits", x, z, random, {
+            color: 0xf7df9a,
+            stemMaterial: materials.stone,
+            radius: 0.105
+          });
+        }
+        const lampPositions = [
+          [city.localX + 24.5, city.localZ - 7.0],
+          [city.localX + 29.5, city.localZ - 1.0],
+          [city.localX + 22.5, city.localZ + 4.8]
+        ];
+        for (const [x, z] of lampPositions) {
+          createQuestItem(group, "citySanctuary", x, z, random, {
+            color: 0x7ae8ff,
+            stemMaterial: materials.gold,
+            radius: 0.095
+          });
+        }
+      }
+
+      function addArenaCity(group, x, z, random) {
+        const city = {
+          id: "arena-city",
+          x: game.exploration.origin.x + x,
+          z: game.exploration.origin.z + z,
+          localX: x,
+          localZ: z,
+          radius: 37,
+          biome: "city"
+        };
+        game.exploration.city = city;
+        game.exploration.villages.push(city);
+
+        addExplorationPath(group, 0, 0, x, z - 28, 3.2);
+        addCityPavement(group, x, z, 44, 44);
+        addCityPavement(group, x, z - 28, 5, 32);
+        addCityPavement(group, x - 28, z, 28, 4.2, Math.PI / 2);
+        addCityPavement(group, x + 28, z, 28, 4.2, Math.PI / 2);
+
+        const wallSegments = [
+          [-22, -37, 30, 0.7],
+          [22, -37, 30, 0.7],
+          [-22, 37, 30, 0.7],
+          [22, 37, 30, 0.7],
+          [-37, -22, 0.7, 30],
+          [-37, 22, 0.7, 30],
+          [37, -22, 0.7, 30],
+          [37, 22, 0.7, 30]
+        ];
+        for (const [wx, wz, ww, wd] of wallSegments) {
+          const wall = makeBox(ww, 2.2, wd, materials.cityWall, x + wx, 1.1, z + wz);
+          group.add(wall);
+        }
+        for (let i = 0; i < 4; i += 1) {
+          const sx = i % 2 ? 37 : -37;
+          const sz = i > 1 ? 37 : -37;
+          const tower = makeCylinder(1.05, 1.2, 3.4, 16, materials.cityWall, x + sx, 1.7, z + sz);
+          const roof = makeCone(1.45, 1.45, 16, materials.cityRoof, x + sx, 4.12, z + sz);
+          group.add(tower, roof);
+        }
+
+        addCleanCityArena(group, x, z, random);
+        addCityCastle(group, x - 25, z + 18);
+        addCityChurch(group, x + 25, z - 3);
+
+        const houseData = [
+          [-25, -20, 0.86, 0, 0.2],
+          [-13, -25, 0.8, 1, -0.16],
+          [13, -24, 0.82, 2, 0.12],
+          [25, 20, 0.84, 3, Math.PI],
+          [10, 26, 0.78, 4, Math.PI + 0.2],
+          [-9, 28, 0.82, 5, Math.PI - 0.18]
+        ];
+        for (const [hx, hz, scale, variant, rotation] of houseData) {
+          addCityHouse(group, x + hx, z + hz, scale, variant, rotation);
+        }
+
+        addCityQuestItems(group, city, random);
+
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Orlan", "cityWrits", "city"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 25, game.exploration.origin.z + z - 10, random, 8.5, "Sister Edda", "citySanctuary", "city"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 23, game.exploration.origin.z + z + 8, random, 9.5, "Mason Vale", null, "city"));
       }
 
       function isExplorationBlocked(localX, localZ) {
@@ -2836,7 +3122,7 @@
         addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1, "meadow");
         addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
         addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
-        addExplorationVillage(group, 10 + random() * 12, 150 + random() * 10, random, 4, "meadow");
+        addArenaCity(group, 12 + random() * 5, 132 + random() * 6, random);
 
         for (let i = 0; i < 54; i += 1) {
           const angle = (i / 54) * TAU + (random() - 0.5) * 0.16;
@@ -3146,8 +3432,8 @@
 
         setupArenaGates();
 
-        for (let i = 0; i < 28; i += 1) {
-          const angle = (i / 28) * TAU;
+        for (let i = 0; i < 20; i += 1) {
+          const angle = (i / 20) * TAU;
           const nearGate = game.gates.some(gate => Math.abs(Math.atan2(Math.sin(angle - gate.angle), Math.cos(angle - gate.angle))) < 0.18);
           if (nearGate) {
             continue;
@@ -3166,12 +3452,12 @@
           scene.add(stone);
         }
 
-        for (let i = 0; i < 16; i += 1) {
-          const angle = (i / 16) * TAU + 0.12;
-          const radius = 12 + Math.random() * 10;
+        for (let i = 0; i < 8; i += 1) {
+          const angle = (i / 8) * TAU + 0.18;
+          const radius = 18 + Math.random() * 4;
           const prop = i % 3 === 0
-            ? makeCylinder(0.25, 0.36, 1.2 + Math.random() * 0.8, 9, materials.wood)
-            : makeBox(0.8 + Math.random() * 0.5, 0.55 + Math.random() * 0.45, 0.8 + Math.random() * 0.5, i % 2 ? materials.wood : materials.stone);
+            ? makeCylinder(0.2, 0.3, 1.1 + Math.random() * 0.45, 9, materials.wood)
+            : makeBox(0.72 + Math.random() * 0.36, 0.42 + Math.random() * 0.26, 0.72 + Math.random() * 0.32, i % 2 ? materials.wood : materials.stone);
           prop.position.set(Math.cos(angle) * radius, prop.geometry.type === "CylinderGeometry" ? 0.7 : 0.35, Math.sin(angle) * radius);
           prop.rotation.y = Math.random() * TAU;
           scene.add(prop);
