@@ -63,6 +63,26 @@ Acceptance:
 - Marshal Rowan Vale can be found without relying on UI text walls.
 - The Crownring and yield interaction are visible from normal camera distance.
 
+## Phase 2B: Roads And World Decor
+
+Primary owner: World & Content Agent
+
+Support: Rendering / Performance Agent, QA / Playtest Agent
+
+Tasks:
+- Keep the Exploration road network continuous, aligned to settlement entrances, and clear of major lakes.
+- Keep later tree, rock, and clutter placement off the main roads.
+- Expand deterministic low-poly decor around villages, Crownford, and biome landmarks.
+- Add carts, buckets, brooms, barrels, crates, benches, lantern posts, market clutter, training props, and biome-specific props.
+- Use mostly static meshes and glow materials; reserve real lights for a small bounded list.
+- Add colliders only for large decor such as carts, stalls, lamp posts, racks, and piles.
+
+Acceptance:
+- Roads read as a connected travel network rather than disconnected patches.
+- Village and city road entries line up with gates, wells, streets, and doors.
+- Decor improves lived-in readability without blocking NPCs, quest items, or main travel routes.
+- Crownford decor feels civic and disciplined, while biome decor matches local architecture and threats.
+
 ## Phase 3: Arena Activity System
 
 Primary owner: Gameplay Systems Agent

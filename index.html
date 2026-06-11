@@ -1354,6 +1354,7 @@
           villages: [],
           biomes: [],
           colliders: [],
+          roads: [],
           city: null,
           horse: null,
           discovered: new Set(),
@@ -1994,6 +1995,7 @@
         game.exploration.villages.length = 0;
         game.exploration.biomes.length = 0;
         game.exploration.colliders.length = 0;
+        game.exploration.roads.length = 0;
         game.exploration.city = null;
         game.exploration.discovered = new Set();
         game.exploration.completed = false;
@@ -2030,15 +2032,230 @@
         return addShadow(mesh);
       }
 
-      function addExplorationPath(group, fromX, fromZ, toX, toZ, width) {
+      function explorationTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
+        const distance = Math.hypot(localX, localZ);
+        const edgeRise = game.exploration.radius * 0.78;
+        const roll = Math.sin(localX * 0.13 + hashString(seed) * 0.0001) * 0.08 + Math.cos(localZ * 0.11) * 0.07;
+        return distance > edgeRise ? roll + (distance - edgeRise) * 0.012 : roll;
+      }
+
+      function createRoadStripGeometry(fromX, fromZ, toX, toZ, width) {
         const dx = toX - fromX;
         const dz = toZ - fromZ;
         const length = Math.max(0.1, Math.hypot(dx, dz));
-        const path = new THREE.Mesh(new THREE.BoxGeometry(width, 0.035, length), materials.path);
-        path.position.set((fromX + toX) / 2, 0.035, (fromZ + toZ) / 2);
-        path.rotation.y = Math.atan2(dx, dz);
+        const ux = dx / length;
+        const uz = dz / length;
+        const nx = -uz;
+        const nz = ux;
+        const overlap = Math.min(width * 0.42, 1.6);
+        const startX = fromX - ux * overlap;
+        const startZ = fromZ - uz * overlap;
+        const endX = toX + ux * overlap;
+        const endZ = toZ + uz * overlap;
+        const totalLength = Math.max(0.1, Math.hypot(endX - startX, endZ - startZ));
+        const segments = Math.max(2, Math.ceil(totalLength / 7));
+        const positions = [];
+        const uvs = [];
+        const indices = [];
+        for (let i = 0; i <= segments; i += 1) {
+          const t = i / segments;
+          const cx = startX + (endX - startX) * t;
+          const cz = startZ + (endZ - startZ) * t;
+          const y = explorationTerrainHeight(cx, cz) + 0.06;
+          positions.push(
+            cx + nx * width * 0.5, y, cz + nz * width * 0.5,
+            cx - nx * width * 0.5, y, cz - nz * width * 0.5
+          );
+          uvs.push(0, t * totalLength / 5, 1, t * totalLength / 5);
+          if (i < segments) {
+            const a = i * 2;
+            indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+          }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        return geometry;
+      }
+
+      function createRoadJunctionGeometry(x, z, radius) {
+        const positions = [x, explorationTerrainHeight(x, z) + 0.062, z];
+        const uvs = [0.5, 0.5];
+        const indices = [];
+        const steps = 28;
+        for (let i = 0; i <= steps; i += 1) {
+          const angle = (i / steps) * TAU;
+          const px = x + Math.cos(angle) * radius;
+          const pz = z + Math.sin(angle) * radius;
+          positions.push(px, explorationTerrainHeight(px, pz) + 0.064, pz);
+          uvs.push(0.5 + Math.cos(angle) * 0.5, 0.5 + Math.sin(angle) * 0.5);
+          if (i > 0) {
+            indices.push(0, i + 1, i);
+          }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setIndex(indices);
+        geometry.computeVertexNormals();
+        return geometry;
+      }
+
+      function addExplorationPath(group, fromX, fromZ, toX, toZ, width) {
+        const path = new THREE.Mesh(createRoadStripGeometry(fromX, fromZ, toX, toZ, width), materials.path);
         path.receiveShadow = true;
         group.add(path);
+        game.exploration.roads.push({ fromX, fromZ, toX, toZ, width });
+        return path;
+      }
+
+      function addExplorationRoadJunction(group, x, z, width) {
+        const junction = new THREE.Mesh(createRoadJunctionGeometry(x, z, width * 0.62), materials.path);
+        junction.receiveShadow = true;
+        group.add(junction);
+        return junction;
+      }
+
+      function roadLakeLocal(lake) {
+        return {
+          x: lake.x - game.exploration.origin.x,
+          z: lake.z - game.exploration.origin.z,
+          rx: lake.rx,
+          rz: lake.rz
+        };
+      }
+
+      function distanceToRoadSegment(localX, localZ, road) {
+        const dx = road.toX - road.fromX;
+        const dz = road.toZ - road.fromZ;
+        const lengthSq = dx * dx + dz * dz;
+        if (lengthSq <= 0.0001) {
+          return Math.hypot(localX - road.fromX, localZ - road.fromZ);
+        }
+        const t = clamp(((localX - road.fromX) * dx + (localZ - road.fromZ) * dz) / lengthSq, 0, 1);
+        const closestX = road.fromX + dx * t;
+        const closestZ = road.fromZ + dz * t;
+        return Math.hypot(localX - closestX, localZ - closestZ);
+      }
+
+      function roadSegmentTouchesLake(a, b, lake, padding) {
+        const steps = Math.max(8, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 5));
+        const rx = lake.rx + padding;
+        const rz = lake.rz + padding;
+        for (let i = 0; i <= steps; i += 1) {
+          const t = i / steps;
+          const x = a.x + (b.x - a.x) * t - lake.x;
+          const z = a.z + (b.z - a.z) * t - lake.z;
+          if ((x * x) / (rx * rx) + (z * z) / (rz * rz) < 1) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function roadDetourPoint(a, b, lake, padding) {
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const length = Math.max(0.001, Math.hypot(dx, dz));
+        const nx = -dz / length;
+        const nz = dx / length;
+        const reach = Math.max(lake.rx, lake.rz) + padding;
+        const candidates = [
+          { x: lake.x + nx * reach, z: lake.z + nz * reach },
+          { x: lake.x - nx * reach, z: lake.z - nz * reach }
+        ];
+        candidates.sort((left, right) => {
+          const leftDistance = Math.hypot(left.x - a.x, left.z - a.z) + Math.hypot(b.x - left.x, b.z - left.z);
+          const rightDistance = Math.hypot(right.x - a.x, right.z - a.z) + Math.hypot(b.x - right.x, b.z - right.z);
+          return leftDistance - rightDistance;
+        });
+        return candidates[0];
+      }
+
+      function routeRoadAroundLakes(points, width) {
+        const routed = [points[0]];
+        for (let i = 1; i < points.length; i += 1) {
+          const from = routed[routed.length - 1];
+          const to = points[i];
+          const lake = game.exploration.lakes
+            .map(roadLakeLocal)
+            .find(candidate => roadSegmentTouchesLake(from, to, candidate, width + 2.2));
+          if (lake) {
+            routed.push(roadDetourPoint(from, to, lake, Math.max(width + 5.5, 9.5)));
+          }
+          routed.push(to);
+        }
+        return routed;
+      }
+
+      function addExplorationRoad(group, points, width = 2.8) {
+        const routed = routeRoadAroundLakes(points, width);
+        for (let i = 0; i < routed.length - 1; i += 1) {
+          addExplorationPath(group, routed[i].x, routed[i].z, routed[i + 1].x, routed[i + 1].z, width);
+        }
+        for (const point of routed) {
+          addExplorationRoadJunction(group, point.x, point.z, width);
+        }
+      }
+
+      function roadEntranceForVillage(village, approach) {
+        const localX = village.localX ?? (village.x - game.exploration.origin.x);
+        const localZ = village.localZ ?? (village.z - game.exploration.origin.z);
+        const dx = approach.x - localX;
+        const dz = approach.z - localZ;
+        const distance = Math.max(0.001, Math.hypot(dx, dz));
+        const inset = Math.max(5.5, village.radius * 0.46);
+        return {
+          x: localX + (dx / distance) * inset,
+          z: localZ + (dz / distance) * inset
+        };
+      }
+
+      function addExplorationRoadNetwork(group) {
+        const homeDoor = { x: 0, z: -2.4 };
+        const homeJunction = { x: 0, z: -17 };
+        const meadowEastFork = { x: 58, z: -48 };
+        const meadowWestFork = { x: -64, z: 42 };
+        const northFork = { x: 0, z: 86 };
+        const mountainFork = { x: 78, z: 112 };
+        const desertFork = { x: -58, z: -74 };
+        const swampFork = { x: -92, z: 128 };
+
+        addExplorationRoad(group, [homeDoor, homeJunction, { x: 0, z: 36 }, northFork], 3.15);
+
+        const city = game.exploration.city;
+        if (city) {
+          const cityGate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
+          addExplorationRoad(group, [northFork, { x: cityGate.x, z: northFork.z }, cityGate], 3.25);
+        }
+
+        for (const village of game.exploration.villages) {
+          if (village.id === "crownford") {
+            continue;
+          }
+          const localX = village.localX ?? (village.x - game.exploration.origin.x);
+          const localZ = village.localZ ?? (village.z - game.exploration.origin.z);
+          let entrance;
+          if (village.biome === "mountain") {
+            entrance = roadEntranceForVillage(village, mountainFork);
+            addExplorationRoad(group, [northFork, mountainFork, entrance], 2.85);
+          } else if (village.biome === "desert") {
+            entrance = roadEntranceForVillage(village, desertFork);
+            addExplorationRoad(group, [homeJunction, desertFork, entrance], 2.75);
+          } else if (village.biome === "swamp") {
+            entrance = roadEntranceForVillage(village, swampFork);
+            addExplorationRoad(group, [northFork, swampFork, entrance], 2.65);
+          } else if (localX >= 0) {
+            entrance = roadEntranceForVillage(village, meadowEastFork);
+            addExplorationRoad(group, [homeJunction, meadowEastFork, entrance], 2.75);
+          } else {
+            entrance = roadEntranceForVillage(village, meadowWestFork);
+            addExplorationRoad(group, [homeJunction, meadowWestFork, entrance], 2.75);
+          }
+          addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2);
+        }
       }
 
       function addStable(group, x, z) {
@@ -3533,9 +3750,16 @@
       }
 
       function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
-        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: biome === "desert" ? 17.5 : biome === "swamp" ? 18.5 : 15.5, biome };
+        const village = {
+          id: "village-" + index,
+          x: game.exploration.origin.x + x,
+          z: game.exploration.origin.z + z,
+          localX: x,
+          localZ: z,
+          radius: biome === "desert" ? 17.5 : biome === "swamp" ? 18.5 : 15.5,
+          biome
+        };
         game.exploration.villages.push(village);
-        addExplorationPath(group, 0, 0, x, z, 2.8);
         for (let i = 0; i < 5; i += 1) {
           const angle = (i / 5) * TAU + random() * 0.45;
           const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
@@ -3766,13 +3990,13 @@
           z: game.exploration.origin.z + z,
           localX: x,
           localZ: z,
+          roadAnchor: { x, z: z - 44 },
           radius: 37,
           biome: "city"
         };
         game.exploration.city = city;
         game.exploration.villages.push(city);
 
-        addExplorationPath(group, 0, 0, x, z - 28, 3.2);
         addCityPavement(group, x, z, 44, 44);
         addCityPavement(group, x, z - 28, 5, 32);
         addCityPavement(group, x - 28, z, 28, 4.2, Math.PI / 2);
@@ -3838,6 +4062,11 @@
         }
         for (const village of game.exploration.villages) {
           if (Math.hypot(game.exploration.origin.x + localX - village.x, game.exploration.origin.z + localZ - village.z) < village.radius + 4) {
+            return true;
+          }
+        }
+        for (const road of game.exploration.roads) {
+          if (distanceToRoadSegment(localX, localZ, road) < road.width * 0.55 + 1.4) {
             return true;
           }
         }
@@ -4026,7 +4255,6 @@
         game.exploration.xp = getCharacterProgress().xp;
         addExplorationHouse(group, 0, 0, 1.05, 0, "meadow");
         addStable(group, -7.1, -1.8);
-        addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 7.0, game.exploration.origin.z - 4.4, random, 4.5, "Sella", "villages", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders", "meadow"));
@@ -4066,6 +4294,7 @@
         addMountainRoost(group, mountainBiome, random);
         addDesertMarkers(group, desertBiome, random);
         addSwampMarkers(group, swampBiome, random);
+        addExplorationRoadNetwork(group);
 
         for (let i = 0; i < 240; i += 1) {
           const point = randomExplorationPoint(random, 16, game.exploration.radius - 28, (x, z) => biomeAt(x, z) === "meadow");
