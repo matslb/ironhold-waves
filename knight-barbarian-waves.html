@@ -5576,7 +5576,7 @@
           core,
           velocity,
           speed,
-          turnRate: 1.15,
+          turnRate: 0.82,
           life: 4.2,
           damage: 24 + Math.min(game.wave * 2, 12),
           guardDamage: 36 + Math.min(game.wave * 2, 14)
@@ -5706,7 +5706,7 @@
           if (desiredDirection.lengthSq() > 0.0001) {
             desiredDirection.normalize();
             const currentDirection = tmpVec2.copy(fireball.velocity).normalize();
-            currentDirection.lerp(desiredDirection, clamp(fireball.turnRate * dt, 0, 0.08)).normalize();
+            currentDirection.lerp(desiredDirection, clamp(fireball.turnRate * dt, 0, 0.055)).normalize();
             fireball.velocity.copy(currentDirection).multiplyScalar(fireball.speed);
           }
           fireball.group.position.addScaledVector(fireball.velocity, dt);
