@@ -13,6 +13,7 @@
       --line: rgba(255, 255, 255, 0.14);
       --health: #d9433f;
       --guard: #53a6d8;
+      --magica: #7ae8ff;
       --gold: #d5aa50;
       --dark: #0b0e0f;
     }
@@ -153,6 +154,16 @@
       background: linear-gradient(90deg, #286b9b, var(--guard), #a8e9ff);
     }
 
+    #hud.wizard-mode #guardFill {
+      background: linear-gradient(90deg, #2e6b9f, var(--magica), #f6fbff);
+    }
+
+    #hud.wizard-mode .crest {
+      background:
+        radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.7) 0 13%, transparent 14%),
+        linear-gradient(135deg, #7ae8ff 0 48%, #274a78 49% 100%);
+    }
+
     .rightbox {
       padding: 12px 14px;
       min-width: 170px;
@@ -264,6 +275,16 @@
       background: rgba(213, 170, 80, 0.18);
     }
 
+    .action.ready {
+      color: #7ae8ff;
+      border-color: rgba(122, 232, 255, 0.58);
+      background: rgba(57, 157, 194, 0.18);
+    }
+
+    .action[hidden] {
+      display: none;
+    }
+
     #overlay {
       position: fixed;
       inset: 0;
@@ -282,7 +303,7 @@
     }
 
     .start-card {
-      width: min(440px, 100%);
+      width: min(620px, 100%);
       padding: 22px;
       text-align: center;
     }
@@ -307,6 +328,70 @@
       justify-content: center;
       gap: 10px;
       flex-wrap: wrap;
+    }
+
+    .character-select {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0 0 18px;
+    }
+
+    .character-card {
+      min-height: 112px;
+      padding: 14px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 8px;
+      background: rgba(15, 18, 18, 0.72);
+      color: var(--ink);
+      border-color: var(--line);
+      box-shadow: none;
+      text-transform: none;
+    }
+
+    .character-card strong {
+      font-size: 18px;
+      text-transform: uppercase;
+    }
+
+    .character-card span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .class-glyph {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .class-glyph svg {
+      width: 25px;
+      height: 25px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .character-card.selected {
+      color: #f7df9a;
+      border-color: rgba(213, 170, 80, 0.66);
+      background: rgba(213, 170, 80, 0.14);
+    }
+
+    .character-card[data-character="wizard"].selected {
+      color: #7ae8ff;
+      border-color: rgba(122, 232, 255, 0.66);
+      background: rgba(57, 157, 194, 0.14);
     }
 
     button {
@@ -398,6 +483,10 @@
       #touchControls {
         display: flex;
       }
+
+      .character-select {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -406,9 +495,9 @@
 
   <div id="hud" aria-live="polite">
     <div class="topbar">
-      <section class="status panel" aria-label="Knight status">
+      <section class="status panel" id="statusPanel" aria-label="Knight status">
         <div class="title-row">
-          <div class="mark"><span class="crest"></span><span>Ironhold</span></div>
+          <div class="mark"><span class="crest"></span><span id="classLabel">Knight</span></div>
           <div class="wave-pill" id="waveLabel">Wave 1</div>
         </div>
         <div class="meter-group">
@@ -418,7 +507,7 @@
             <span id="healthText">100</span>
           </div>
           <div class="meter-row">
-            <span>Guard</span>
+            <span id="resourceLabel">Guard</span>
             <div class="meter"><span id="guardFill"></span></div>
             <span id="guardText">100</span>
           </div>
@@ -443,6 +532,9 @@
       <div class="action" id="blockIcon">
         <svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg>
       </div>
+      <div class="action" id="potionIcon" hidden>
+        <svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>
+      </div>
     </div>
 
     <div id="touchControls">
@@ -455,6 +547,7 @@
       <div class="touch-actions">
         <button data-touch-action="attack" aria-label="Attack">A</button>
         <button data-touch-action="block" aria-label="Block">B</button>
+        <button data-touch-action="potion" aria-label="Potion" hidden>P</button>
       </div>
     </div>
   </div>
@@ -463,8 +556,20 @@
     <section class="start-card panel">
       <h1>Ironhold Waves</h1>
       <p id="overlayCopy">The north gate has fallen. Hold the ring until the last raider drops.</p>
+      <div class="character-select" role="radiogroup" aria-label="Choose character">
+        <button class="character-card selected" type="button" data-character="knight" role="radio" aria-checked="true">
+          <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg></span>
+          <strong>Knight</strong>
+          <span>Blade and guard</span>
+        </button>
+        <button class="character-card" type="button" data-character="wizard" role="radio" aria-checked="false">
+          <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg></span>
+          <strong>Wizard</strong>
+          <span>Storm and potions</span>
+        </button>
+      </div>
       <div class="button-row">
-        <button id="startButton">Start</button>
+        <button id="startButton">Start as Knight</button>
         <button id="restartButton" class="secondary" hidden>Restart</button>
       </div>
     </section>
@@ -478,21 +583,29 @@
       try {
 
       const root = document.getElementById("game");
+      const hud = document.getElementById("hud");
       const overlay = document.getElementById("overlay");
       const overlayCopy = document.getElementById("overlayCopy");
       const startButton = document.getElementById("startButton");
       const restartButton = document.getElementById("restartButton");
+      const statusPanel = document.getElementById("statusPanel");
+      const classLabel = document.getElementById("classLabel");
       const waveLabel = document.getElementById("waveLabel");
       const healthFill = document.getElementById("healthFill");
       const guardFill = document.getElementById("guardFill");
       const healthText = document.getElementById("healthText");
+      const resourceLabel = document.getElementById("resourceLabel");
       const guardText = document.getElementById("guardText");
       const enemyText = document.getElementById("enemyText");
       const koText = document.getElementById("koText");
       const threatText = document.getElementById("threatText");
       const attackIcon = document.getElementById("attackIcon");
       const blockIcon = document.getElementById("blockIcon");
+      const potionIcon = document.getElementById("potionIcon");
       const banner = document.getElementById("banner");
+      const characterCards = Array.from(document.querySelectorAll("[data-character]"));
+      const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
+      const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
       if (!THREE) {
         overlayCopy.textContent = "The 3D renderer could not be loaded.";
@@ -537,6 +650,9 @@
         blue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, roughness: 0.68 }),
         royalBlue: new THREE.MeshStandardMaterial({ color: 0x173f5c, roughness: 0.72 }),
         cloth: new THREE.MeshStandardMaterial({ color: 0x8d3430, roughness: 0.82 }),
+        wizardRobe: new THREE.MeshStandardMaterial({ color: 0x273f78, roughness: 0.78 }),
+        wizardTrim: new THREE.MeshStandardMaterial({ color: 0x7ae8ff, roughness: 0.46, metalness: 0.14 }),
+        wizardHat: new THREE.MeshStandardMaterial({ color: 0x1f2f5f, roughness: 0.76 }),
         skin: new THREE.MeshStandardMaterial({ color: 0xb77a55, roughness: 0.72 }),
         leather: new THREE.MeshStandardMaterial({ color: 0x593822, roughness: 0.86 }),
         darkLeather: new THREE.MeshStandardMaterial({ color: 0x2f1c13, roughness: 0.9 }),
@@ -559,8 +675,12 @@
         heavyDanger: new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.42, depthWrite: false }),
         fire: new THREE.MeshBasicMaterial({ color: 0xff6a1e }),
         fireCore: new THREE.MeshBasicMaterial({ color: 0xfff1a6 }),
+        lightning: new THREE.MeshBasicMaterial({ color: 0x49d8ff, transparent: true, opacity: 0.88 }),
+        lightningCore: new THREE.MeshBasicMaterial({ color: 0xf4fdff, transparent: true, opacity: 0.96 }),
+        arcane: new THREE.MeshBasicMaterial({ color: 0x83f1ff, transparent: true, opacity: 0.0, depthWrite: false, side: THREE.DoubleSide }),
         potionGlass: new THREE.MeshStandardMaterial({ color: 0xbfefff, roughness: 0.12, metalness: 0.02, transparent: true, opacity: 0.36 }),
         potionLiquid: new THREE.MeshBasicMaterial({ color: 0xff4f6d, transparent: true, opacity: 0.9 }),
+        wizardPotionLiquid: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.9 }),
         fullPotionLiquid: new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.94 }),
         slash: new THREE.MeshBasicMaterial({ color: 0xbfefff, transparent: true, opacity: 0.0, depthWrite: false }),
         hit: new THREE.MeshBasicMaterial({ color: 0xffe1a6, transparent: true, opacity: 0.0, depthWrite: false })
@@ -572,6 +692,7 @@
         kills: 0,
         enemies: [],
         fireballs: [],
+        playerProjectiles: [],
         potions: [],
         particles: [],
         gates: [],
@@ -581,16 +702,25 @@
         cameraYaw: 0,
         cameraPitch: -0.22,
         pointerActive: false,
-        startedOnce: false
+        startedOnce: false,
+        selectedCharacter: "knight"
       };
 
       const player = {
+        character: "knight",
         group: null,
         body: null,
         swordPivot: null,
         shieldPivot: null,
+        staffPivot: null,
+        leftArm: null,
+        rightArm: null,
+        leftLeg: null,
+        rightLeg: null,
         swordBlade: null,
         slashArc: null,
+        burstRing: null,
+        castGlow: null,
         hitFlash: null,
         position: new THREE.Vector3(0, 0, 0),
         velocity: new THREE.Vector3(),
@@ -599,7 +729,14 @@
         maxHealth: 100,
         guard: 100,
         maxGuard: 100,
+        mana: 100,
+        maxMana: 100,
+        manaRegen: 18,
+        potionCooldown: 0,
+        potionCooldownMax: 18,
+        secondaryCooldown: 0,
         attacking: false,
+        attackKind: "slash",
         attackTimer: 0,
         attackDuration: 0.42,
         attackCooldown: 0,
@@ -1058,9 +1195,163 @@
         player.body = chest;
         player.swordPivot = swordPivot;
         player.shieldPivot = shieldPivot;
+        player.staffPivot = null;
+        player.leftArm = leftArm;
+        player.rightArm = rightArm;
+        player.leftLeg = leftLeg;
+        player.rightLeg = rightLeg;
         player.swordBlade = blade;
         player.slashArc = slashArc;
+        player.burstRing = null;
+        player.castGlow = null;
         player.hitFlash = hitFlash;
+      }
+
+      function createWizard() {
+        const group = new THREE.Group();
+        group.position.copy(player.position);
+
+        const robeLower = makeCylinder(0.68, 0.9, 1.0, 18, materials.wizardRobe.clone(), 0, 0.58, 0);
+        const robeUpper = makeCylinder(0.48, 0.62, 0.92, 18, materials.wizardRobe.clone(), 0, 1.33, 0);
+        const sash = makeCylinder(0.56, 0.57, 0.11, 18, materials.gold, 0, 0.96, 0);
+        const frontTrim = makeBox(0.12, 1.28, 0.05, materials.wizardTrim.clone(), 0, 0.98, -0.62);
+        const shoulderWrap = makeBox(1.16, 0.18, 0.5, materials.wizardTrim.clone(), 0, 1.75, -0.03);
+        const cape = makeBox(0.92, 1.24, 0.06, materials.royalBlue, 0, 1.12, 0.49);
+        cape.rotation.x = -0.12;
+
+        const head = makeSphere(0.26, materials.skin, 0, 2.02, 0);
+        const beard = makeBox(0.32, 0.36, 0.08, materials.bone, 0, 1.84, -0.23);
+        const leftEye = makeSphere(0.032, materials.lightningCore.clone(), -0.08, 2.06, -0.24);
+        const rightEye = makeSphere(0.032, materials.lightningCore.clone(), 0.08, 2.06, -0.24);
+        const hatBrim = makeCylinder(0.43, 0.43, 0.08, 24, materials.wizardHat.clone(), 0, 2.23, 0);
+        const hatCone = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.82, 24), materials.wizardHat.clone());
+        hatCone.position.set(0.02, 2.67, 0.02);
+        hatCone.rotation.z = -0.1;
+        addShadow(hatCone);
+        const hatBand = makeCylinder(0.27, 0.3, 0.08, 18, materials.gold, 0, 2.35, 0);
+
+        const leftLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, -0.22, 0.2, 0);
+        const rightLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, 0.22, 0.2, 0);
+        const leftBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.05);
+        const rightBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0.22, -0.04, -0.05);
+        const leftArm = makeBox(0.2, 0.72, 0.22, materials.wizardRobe.clone(), -0.58, 1.33, 0);
+        const rightArm = makeBox(0.2, 0.72, 0.22, materials.wizardRobe.clone(), 0.58, 1.33, 0);
+        const leftHand = makeSphere(0.105, materials.skin, -0.58, 0.94, -0.03);
+        const rightHand = makeSphere(0.105, materials.skin, 0.58, 0.94, -0.03);
+        const leftCuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), -0.58, 1.02, -0.02);
+        const rightCuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), 0.58, 1.02, -0.02);
+        leftCuff.rotation.z = Math.PI / 2;
+        rightCuff.rotation.z = Math.PI / 2;
+
+        const staffPivot = new THREE.Group();
+        staffPivot.position.set(0.64, 1.02, -0.08);
+        const staffShaft = makeCylinder(0.045, 0.055, 1.86, 10, materials.wood, 0, 0.24, 0);
+        const staffCap = makeCylinder(0.16, 0.1, 0.2, 12, materials.gold, 0, 1.2, 0);
+        const crystal = makeSphere(0.18, materials.lightningCore.clone(), 0, 1.38, 0);
+        const crystalRing = makeCylinder(0.22, 0.22, 0.035, 18, materials.wizardTrim.clone(), 0, 1.26, 0);
+        crystalRing.rotation.x = Math.PI / 2;
+        const staffGlow = new THREE.PointLight(0x7ae8ff, 1.35, 6, 1.8);
+        staffGlow.position.set(0, 1.38, 0);
+        staffPivot.add(staffShaft, staffCap, crystal, crystalRing, staffGlow);
+        staffPivot.rotation.set(0.08, 0, -0.16);
+
+        const castGlow = makeSphere(0.13, materials.lightningCore.clone(), -0.52, 1.05, -0.18);
+        castGlow.visible = false;
+        const burstRing = new THREE.Mesh(new THREE.RingGeometry(0.65, 0.82, 48), materials.arcane.clone());
+        burstRing.rotation.x = Math.PI / 2;
+        burstRing.position.y = 0.08;
+        burstRing.visible = false;
+
+        const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
+        hitFlash.position.set(0, 1.5, -0.62);
+        hitFlash.rotation.x = Math.PI / 2;
+        hitFlash.visible = false;
+
+        group.add(
+          robeLower, robeUpper, sash, frontTrim, shoulderWrap, cape,
+          head, beard, leftEye, rightEye, hatBrim, hatCone, hatBand,
+          leftLeg, rightLeg, leftBoot, rightBoot,
+          leftArm, rightArm, leftHand, rightHand, leftCuff, rightCuff,
+          staffPivot, castGlow, burstRing, hitFlash
+        );
+        scene.add(group);
+
+        player.group = group;
+        player.body = robeUpper;
+        player.swordPivot = null;
+        player.shieldPivot = null;
+        player.staffPivot = staffPivot;
+        player.leftArm = leftArm;
+        player.rightArm = rightArm;
+        player.leftLeg = leftLeg;
+        player.rightLeg = rightLeg;
+        player.swordBlade = null;
+        player.slashArc = null;
+        player.burstRing = burstRing;
+        player.castGlow = castGlow;
+        player.hitFlash = hitFlash;
+      }
+
+      function setPlayerCharacter(character, resetVitals = true) {
+        game.selectedCharacter = character;
+        player.character = character;
+        if (player.group) {
+          scene.remove(player.group);
+        }
+
+        if (character === "wizard") {
+          player.maxHealth = 88;
+          player.maxMana = 100;
+          player.manaRegen = 19;
+          player.potionCooldownMax = 18;
+          createWizard();
+        } else {
+          player.maxHealth = 100;
+          player.maxGuard = 100;
+          createKnight();
+        }
+
+        if (resetVitals) {
+          player.health = player.maxHealth;
+          player.guard = player.maxGuard;
+          player.mana = player.maxMana;
+          player.potionCooldown = 0;
+          player.secondaryCooldown = 0;
+          player.attackCooldown = 0;
+          player.attacking = false;
+          player.attackTimer = 0;
+          player.blocking = false;
+          player.blockHeld = false;
+        }
+
+        updateCharacterUi();
+      }
+
+      function updateCharacterUi() {
+        const wizard = player.character === "wizard";
+        hud.classList.toggle("wizard-mode", wizard);
+        classLabel.textContent = wizard ? "Wizard" : "Knight";
+        resourceLabel.textContent = wizard ? "Magica" : "Guard";
+        statusPanel.setAttribute("aria-label", wizard ? "Wizard status" : "Knight status");
+        startButton.textContent = wizard ? "Start as Wizard" : "Start as Knight";
+        blockIcon.innerHTML = wizard
+          ? '<svg viewBox="0 0 32 32"><path d="M16 4v5M16 23v5M4 16h5M23 16h5M8.5 8.5l3.5 3.5M20 20l3.5 3.5M23.5 8.5L20 12M12 20l-3.5 3.5"/><circle cx="16" cy="16" r="5"/></svg>'
+          : '<svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg>';
+        attackIcon.innerHTML = wizard
+          ? '<svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg>'
+          : '<svg viewBox="0 0 32 32"><path d="M22 4l6 6M18 8l6 6M4 28l6-2 15-15-4-4L6 22zM6 22l4 4"/></svg>';
+        potionIcon.hidden = !wizard;
+        if (secondaryTouchButton) {
+          secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : "Block");
+        }
+        if (potionTouchButton) {
+          potionTouchButton.hidden = !wizard;
+        }
+        characterCards.forEach(card => {
+          const selected = card.dataset.character === player.character;
+          card.classList.toggle("selected", selected);
+          card.setAttribute("aria-checked", selected ? "true" : "false");
+        });
       }
 
       function createBarbarianModel(scale) {
@@ -1394,6 +1685,9 @@
         for (const fireball of game.fireballs) {
           scene.remove(fireball.group);
         }
+        for (const projectile of game.playerProjectiles) {
+          scene.remove(projectile.group);
+        }
         for (const potion of game.potions) {
           scene.remove(potion.group);
         }
@@ -1402,6 +1696,7 @@
         }
         game.enemies.length = 0;
         game.fireballs.length = 0;
+        game.playerProjectiles.length = 0;
         game.potions.length = 0;
         game.particles.length = 0;
         game.wave = 0;
@@ -1413,13 +1708,7 @@
         player.position.set(0, 0, 0);
         player.velocity.set(0, 0, 0);
         player.yaw = 0;
-        player.health = player.maxHealth;
-        player.guard = player.maxGuard;
-        player.attacking = false;
-        player.attackTimer = 0;
-        player.attackCooldown = 0;
-        player.blocking = false;
-        player.blockHeld = false;
+        setPlayerCharacter(game.selectedCharacter, true);
         player.hurtTimer = 0;
         player.group.position.copy(player.position);
         player.group.rotation.y = 0;
@@ -1456,22 +1745,27 @@
 
       function createHealthPotion(x, z, options) {
         const fullHeal = options.kind === "full";
-        const scale = fullHeal ? 1.55 : 0.82;
+        const wizardPotion = options.kind === "wizard";
+        const scale = fullHeal ? 1.55 : wizardPotion ? 0.9 : 0.82;
         const healAmount = fullHeal ? player.maxHealth : options.healAmount;
         const group = new THREE.Group();
         group.position.set(x, 0.1, z);
         group.scale.setScalar(scale);
 
         const bottle = makeCylinder(0.18, 0.24, 0.42, 14, materials.potionGlass.clone(), 0, 0.28, 0);
-        const liquid = makeCylinder(0.15, 0.2, 0.25, 14, fullHeal ? materials.fullPotionLiquid.clone() : materials.potionLiquid.clone(), 0, 0.2, 0);
+        const liquidMaterial = fullHeal
+          ? materials.fullPotionLiquid.clone()
+          : wizardPotion ? materials.wizardPotionLiquid.clone() : materials.potionLiquid.clone();
+        const liquid = makeCylinder(0.15, 0.2, 0.25, 14, liquidMaterial, 0, 0.2, 0);
         const neck = makeCylinder(0.08, 0.1, 0.22, 12, materials.potionGlass.clone(), 0, 0.6, 0);
         const cork = makeCylinder(0.065, 0.075, 0.1, 10, materials.wood, 0, 0.77, 0);
-        const glow = new THREE.PointLight(fullHeal ? 0xffd56a : 0xff5d78, fullHeal ? 1.7 : 0.95, fullHeal ? 6.5 : 3.6, 1.8);
+        const potionColor = fullHeal ? 0xffd56a : wizardPotion ? 0x7ae8ff : 0xff5d78;
+        const glow = new THREE.PointLight(potionColor, fullHeal ? 1.7 : 0.95, fullHeal ? 6.5 : 3.6, 1.8);
         glow.position.set(0, 0.34, 0);
 
         const marker = new THREE.Mesh(
           new THREE.TorusGeometry(fullHeal ? 0.52 : 0.36, 0.018, 8, 28),
-          new THREE.MeshBasicMaterial({ color: fullHeal ? 0xffd56a : 0xff8ca0, transparent: true, opacity: 0.5, depthWrite: false })
+          new THREE.MeshBasicMaterial({ color: potionColor, transparent: true, opacity: 0.5, depthWrite: false })
         );
         marker.rotation.x = Math.PI / 2;
         marker.position.y = 0.025;
@@ -1513,6 +1807,24 @@
         trimPotionDrops();
       }
 
+      function dropWizardHealthPotion() {
+        if (game.state !== "playing" || player.character !== "wizard" || player.potionCooldown > 0) {
+          return false;
+        }
+        const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
+        const dropPosition = tmpVec2.copy(player.position).add(behind);
+        const dist = Math.hypot(dropPosition.x, dropPosition.z);
+        if (dist > arenaRadius - 2.2) {
+          dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+        }
+        game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "wizard", healAmount: 28 }));
+        trimPotionDrops();
+        player.potionCooldown = player.potionCooldownMax;
+        spawnImpact(dropPosition, 0x7ae8ff, 12);
+        showBanner("Potion dropped");
+        return true;
+      }
+
       function trimPotionDrops() {
         while (game.potions.length > 8) {
           const oldPotion = game.potions.shift();
@@ -1536,14 +1848,20 @@
 
       function updatePlayer(dt) {
         player.attackCooldown = Math.max(0, player.attackCooldown - dt);
+        player.secondaryCooldown = Math.max(0, player.secondaryCooldown - dt);
         player.hurtTimer = Math.max(0, player.hurtTimer - dt);
-
-        const wantsBlock = player.blockHeld || keys.has("KeyK");
-        player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
-        if (player.blocking) {
-          player.guard = Math.max(0, player.guard - dt * 8);
+        if (player.character === "wizard") {
+          player.mana = Math.min(player.maxMana, player.mana + dt * player.manaRegen);
+          player.potionCooldown = Math.max(0, player.potionCooldown - dt);
+          player.blocking = false;
         } else {
-          player.guard = Math.min(player.maxGuard, player.guard + dt * 22);
+          const wantsBlock = player.blockHeld || keys.has("KeyK");
+          player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
+          if (player.blocking) {
+            player.guard = Math.max(0, player.guard - dt * 8);
+          } else {
+            player.guard = Math.min(player.maxGuard, player.guard + dt * 22);
+          }
         }
 
         const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -1555,7 +1873,9 @@
           tmpVec.addScaledVector(f, -inputZ);
           tmpVec.addScaledVector(r, inputX);
           tmpVec.normalize();
-          const speed = player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8;
+          const speed = player.character === "wizard"
+            ? (player.attacking ? 4.45 : 6.65)
+            : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
           player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
           player.velocity.z = lerp(player.velocity.z, tmpVec.z * speed, 1 - Math.pow(0.001, dt));
           player.yaw = yawFromDirection(tmpVec);
@@ -1567,7 +1887,7 @@
 
         if (player.attacking) {
           const forward = forwardFromYaw(player.yaw, tmpVec2);
-          player.velocity.addScaledVector(forward, dt * 4.8);
+          player.velocity.addScaledVector(forward, dt * (player.character === "wizard" ? 2.0 : 4.8));
         }
 
         player.position.addScaledVector(player.velocity, dt);
@@ -1580,35 +1900,60 @@
           player.attackTimer += dt;
           const t = player.attackTimer / player.attackDuration;
           const swing = Math.sin(clamp(t, 0, 1) * Math.PI);
-          player.swordPivot.rotation.set(-0.48 + swing * 1.0, -0.95 + swing * 1.85, -0.85 + swing * 1.2);
-          player.slashArc.visible = true;
-          player.slashArc.material.opacity = Math.max(0, 0.72 * Math.sin(clamp((t - 0.1) / 0.6, 0, 1) * Math.PI));
-          player.slashArc.rotation.z = -1.3 + swing * 1.9;
 
-          if (!player.attackHitDone && t > 0.34 && t < 0.68) {
+          if (player.character === "wizard") {
+            updateWizardCastAnimation(t, swing);
+          } else {
+            player.swordPivot.rotation.set(-0.48 + swing * 1.0, -0.95 + swing * 1.85, -0.85 + swing * 1.2);
+            player.slashArc.visible = true;
+            player.slashArc.material.opacity = Math.max(0, 0.72 * Math.sin(clamp((t - 0.1) / 0.6, 0, 1) * Math.PI));
+            player.slashArc.rotation.z = -1.3 + swing * 1.9;
+          }
+
+          const hitFrame = player.attackKind === "lightning" ? t > 0.28 : player.attackKind === "burst" ? t > 0.36 : t > 0.34 && t < 0.68;
+          if (!player.attackHitDone && hitFrame) {
             player.attackHitDone = true;
-            performPlayerAttack();
+            if (player.attackKind === "lightning") {
+              launchLightningBall();
+            } else if (player.attackKind === "burst") {
+              performWizardBurst();
+            } else {
+              performPlayerAttack();
+            }
           }
 
           if (player.attackTimer >= player.attackDuration) {
             player.attacking = false;
-            player.slashArc.visible = false;
+            if (player.slashArc) {
+              player.slashArc.visible = false;
+            }
+            if (player.burstRing) {
+              player.burstRing.visible = false;
+            }
+            if (player.castGlow) {
+              player.castGlow.visible = false;
+            }
           }
+        } else if (player.character === "wizard") {
+          resetWizardCastPose(dt);
         } else {
           player.swordPivot.rotation.x = lerp(player.swordPivot.rotation.x, -0.22, 1 - Math.pow(0.00001, dt));
           player.swordPivot.rotation.y = lerp(player.swordPivot.rotation.y, -0.24, 1 - Math.pow(0.00001, dt));
           player.swordPivot.rotation.z = lerp(player.swordPivot.rotation.z, -0.42, 1 - Math.pow(0.00001, dt));
         }
 
-        const shieldTargetY = player.blocking ? -0.15 : 0.38;
-        const shieldTargetZ = player.blocking ? -0.42 : 0;
-        player.shieldPivot.rotation.y = lerp(player.shieldPivot.rotation.y, shieldTargetY, 1 - Math.pow(0.00001, dt));
-        player.shieldPivot.rotation.z = lerp(player.shieldPivot.rotation.z, shieldTargetZ, 1 - Math.pow(0.00001, dt));
-        player.shieldPivot.position.z = lerp(player.shieldPivot.position.z, player.blocking ? -0.42 : -0.08, 1 - Math.pow(0.00001, dt));
+        if (player.character === "knight") {
+          const shieldTargetY = player.blocking ? -0.15 : 0.38;
+          const shieldTargetZ = player.blocking ? -0.42 : 0;
+          player.shieldPivot.rotation.y = lerp(player.shieldPivot.rotation.y, shieldTargetY, 1 - Math.pow(0.00001, dt));
+          player.shieldPivot.rotation.z = lerp(player.shieldPivot.rotation.z, shieldTargetZ, 1 - Math.pow(0.00001, dt));
+          player.shieldPivot.position.z = lerp(player.shieldPivot.position.z, player.blocking ? -0.42 : -0.08, 1 - Math.pow(0.00001, dt));
+        }
 
         const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
         player.group.position.set(player.position.x, walkBob, player.position.z);
         player.group.rotation.y = player.yaw;
+        animatePlayerWalk(dt);
         const hurt = player.hurtTimer > 0 ? 1 : 0;
         player.body.material.emissive = player.body.material.emissive || new THREE.Color(0x000000);
         player.body.material.emissive.setRGB(0.4 * hurt, 0.02 * hurt, 0.02 * hurt);
@@ -1617,14 +1962,110 @@
         player.hitFlash.material.opacity = player.hurtTimer > 0 ? player.hurtTimer * 1.3 : 0;
       }
 
+      function updateWizardCastAnimation(t, swing) {
+        if (player.staffPivot) {
+          player.staffPivot.rotation.x = 0.08 - swing * 0.34;
+          player.staffPivot.rotation.y = swing * 0.2;
+          player.staffPivot.rotation.z = -0.16 - swing * 0.2;
+        }
+        if (player.leftArm) {
+          player.leftArm.rotation.x = -swing * 0.78;
+          player.leftArm.rotation.z = -swing * 0.36;
+        }
+        if (player.rightArm) {
+          player.rightArm.rotation.x = -swing * 0.42;
+          player.rightArm.rotation.z = swing * 0.28;
+        }
+        if (player.castGlow) {
+          player.castGlow.visible = true;
+          player.castGlow.scale.setScalar(0.7 + swing * (player.attackKind === "burst" ? 2.2 : 1.35));
+          player.castGlow.material.opacity = 0.28 + swing * 0.7;
+        }
+        if (player.burstRing) {
+          const burst = player.attackKind === "burst";
+          player.burstRing.visible = burst;
+          if (burst) {
+            const scale = 0.75 + smoothstep(0.12, 0.92, t) * 3.45;
+            player.burstRing.scale.set(scale, scale, scale);
+            player.burstRing.material.opacity = 0.72 * (1 - smoothstep(0.42, 1, t));
+          }
+        }
+      }
+
+      function resetWizardCastPose(dt) {
+        if (player.staffPivot) {
+          player.staffPivot.rotation.x = lerp(player.staffPivot.rotation.x, 0.08, 1 - Math.pow(0.00001, dt));
+          player.staffPivot.rotation.y = lerp(player.staffPivot.rotation.y, 0, 1 - Math.pow(0.00001, dt));
+          player.staffPivot.rotation.z = lerp(player.staffPivot.rotation.z, -0.16, 1 - Math.pow(0.00001, dt));
+        }
+        if (player.leftArm) {
+          player.leftArm.rotation.x = lerp(player.leftArm.rotation.x, 0, 1 - Math.pow(0.00001, dt));
+          player.leftArm.rotation.z = lerp(player.leftArm.rotation.z, 0, 1 - Math.pow(0.00001, dt));
+        }
+        if (player.rightArm) {
+          player.rightArm.rotation.x = lerp(player.rightArm.rotation.x, 0, 1 - Math.pow(0.00001, dt));
+          player.rightArm.rotation.z = lerp(player.rightArm.rotation.z, 0, 1 - Math.pow(0.00001, dt));
+        }
+        if (player.castGlow) {
+          player.castGlow.visible = false;
+        }
+        if (player.burstRing) {
+          player.burstRing.visible = false;
+        }
+      }
+
+      function animatePlayerWalk(dt) {
+        if (!player.leftLeg || !player.rightLeg) {
+          return;
+        }
+        const swing = Math.sin(player.walkTime * 7.2) * Math.min(0.32, player.velocity.length() * 0.055);
+        player.leftLeg.rotation.x = lerp(player.leftLeg.rotation.x, swing, 1 - Math.pow(0.0001, dt));
+        player.rightLeg.rotation.x = lerp(player.rightLeg.rotation.x, -swing, 1 - Math.pow(0.0001, dt));
+      }
+
       function startAttack() {
         if (game.state !== "playing" || player.attacking || player.attackCooldown > 0 || player.blocking) {
           return;
         }
+        if (player.character === "wizard") {
+          const cost = 18;
+          if (player.mana < cost) {
+            return;
+          }
+          player.mana -= cost;
+          player.attackKind = "lightning";
+          player.attackDuration = 0.46;
+          player.attackCooldown = 0.52;
+        } else {
+          player.attackKind = "slash";
+          player.attackDuration = 0.42;
+          player.attackCooldown = 0.54;
+        }
         player.attacking = true;
         player.attackTimer = 0;
-        player.attackCooldown = 0.54;
         player.attackHitDone = false;
+      }
+
+      function startSecondaryAbility() {
+        if (player.character === "knight") {
+          player.blockHeld = true;
+          return;
+        }
+        if (game.state !== "playing" || player.attacking || player.secondaryCooldown > 0) {
+          return;
+        }
+        const cost = 32;
+        if (player.mana < cost) {
+          return;
+        }
+        player.mana -= cost;
+        player.attacking = true;
+        player.attackKind = "burst";
+        player.attackTimer = 0;
+        player.attackDuration = 0.58;
+        player.attackHitDone = false;
+        player.attackCooldown = Math.max(player.attackCooldown, 0.25);
+        player.secondaryCooldown = 1.15;
       }
 
       function performPlayerAttack() {
@@ -1651,6 +2092,157 @@
         }
         if (hitAny) {
           player.guard = Math.min(player.maxGuard, player.guard + 6);
+        }
+      }
+
+      function launchLightningBall() {
+        const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
+        const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+        const velocity = direction.clone().multiplyScalar(12.8);
+
+        const group = new THREE.Group();
+        group.position.copy(source);
+        const shell = new THREE.Mesh(new THREE.SphereGeometry(0.21, 18, 12), materials.lightning.clone());
+        const core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 14, 10), materials.lightningCore.clone());
+        const ringA = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.015, 8, 22), materials.lightning.clone());
+        const ringB = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 8, 20), materials.lightningCore.clone());
+        ringA.rotation.x = Math.PI / 2;
+        ringB.rotation.y = Math.PI / 2;
+        const glow = new THREE.PointLight(0x7ae8ff, 2.4, 10, 1.7);
+        group.add(shell, core, ringA, ringB, glow);
+        scene.add(group);
+
+        game.playerProjectiles.push({
+          type: "lightning",
+          group,
+          shell,
+          core,
+          ringA,
+          ringB,
+          velocity,
+          speed: 12.8,
+          turnRate: 0.85,
+          life: 2.45,
+          damage: 34 + Math.floor(Math.random() * 7),
+          stun: 0.36,
+          radius: 0.56
+        });
+      }
+
+      function performWizardBurst() {
+        const radius = 3.35;
+        let hitAny = false;
+        for (const enemy of game.enemies) {
+          if (enemy.dead) {
+            continue;
+          }
+          const direction = tmpVec2.copy(enemy.position).sub(player.position);
+          const distance = Math.max(0.001, Math.hypot(direction.x, direction.z));
+          if (distance > radius + enemy.radius) {
+            continue;
+          }
+          direction.y = 0;
+          direction.multiplyScalar(1 / distance);
+          damageEnemy(enemy, 24 + Math.floor(Math.random() * 6), direction, 0.78);
+          enemy.velocity.addScaledVector(direction, 2.4);
+          hitAny = true;
+        }
+        spawnImpact(player.position, hitAny ? 0x7ae8ff : 0xbff8ff, hitAny ? 26 : 16);
+      }
+
+      function getEnemyAimPosition(enemy, out) {
+        if (enemy.type === "dragon") {
+          return out.copy(enemy.group.position);
+        }
+        return out.set(enemy.position.x, 1.08, enemy.position.z);
+      }
+
+      function findLightningTarget(projectile) {
+        let best = null;
+        let bestScore = Infinity;
+        const currentDirection = projectile.velocity.clone().normalize();
+        for (const enemy of game.enemies) {
+          if (enemy.dead) {
+            continue;
+          }
+          const targetPosition = getEnemyAimPosition(enemy, new THREE.Vector3());
+          const toTarget = targetPosition.clone().sub(projectile.group.position);
+          const distance = toTarget.length();
+          if (distance > 11.5 || distance < 0.001) {
+            continue;
+          }
+          const aim = currentDirection.dot(toTarget.clone().normalize());
+          if (aim < 0.24) {
+            continue;
+          }
+          const score = distance - aim * 3.0;
+          if (score < bestScore) {
+            bestScore = score;
+            best = targetPosition;
+          }
+        }
+        return best;
+      }
+
+      function updatePlayerProjectiles(dt) {
+        for (let i = game.playerProjectiles.length - 1; i >= 0; i -= 1) {
+          const projectile = game.playerProjectiles[i];
+          projectile.life -= dt;
+
+          const target = findLightningTarget(projectile);
+          if (target) {
+            const desired = target.sub(projectile.group.position);
+            if (desired.lengthSq() > 0.0001) {
+              desired.normalize();
+              const current = projectile.velocity.clone().normalize();
+              current.lerp(desired, clamp(projectile.turnRate * dt, 0, 0.035)).normalize();
+              projectile.velocity.copy(current).multiplyScalar(projectile.speed);
+            }
+          }
+
+          projectile.group.position.addScaledVector(projectile.velocity, dt);
+          projectile.shell.rotation.y += dt * 9.0;
+          projectile.shell.rotation.x += dt * 7.4;
+          projectile.ringA.rotation.z += dt * 8.5;
+          projectile.ringB.rotation.x -= dt * 7.2;
+          const pulse = 1 + Math.sin(clock.elapsedTime * 20 + i) * 0.12;
+          projectile.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 28 + i) * 0.18);
+          projectile.shell.scale.setScalar(pulse);
+
+          let consumed = false;
+          for (const enemy of game.enemies) {
+            if (enemy.dead) {
+              continue;
+            }
+            const targetPosition = getEnemyAimPosition(enemy, tmpVec);
+            if (projectile.group.position.distanceTo(targetPosition) > enemy.radius + projectile.radius) {
+              continue;
+            }
+            const hitDirection = projectile.velocity.clone();
+            hitDirection.y = 0;
+            if (hitDirection.lengthSq() > 0.0001) {
+              hitDirection.normalize();
+            } else {
+              hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
+            }
+            damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
+            spawnImpact(projectile.group.position, 0x7ae8ff, 16);
+            scene.remove(projectile.group);
+            game.playerProjectiles.splice(i, 1);
+            consumed = true;
+            break;
+          }
+
+          if (consumed) {
+            continue;
+          }
+
+          const dist = Math.hypot(projectile.group.position.x, projectile.group.position.z);
+          if (projectile.life <= 0 || dist > arenaRadius + 14) {
+            spawnImpact(projectile.group.position, 0x7ae8ff, 10);
+            scene.remove(projectile.group);
+            game.playerProjectiles.splice(i, 1);
+          }
         }
       }
 
@@ -2061,19 +2653,24 @@
 
       function updateHud() {
         const hpPct = clamp(player.health / player.maxHealth, 0, 1);
-        const guardPct = clamp(player.guard / player.maxGuard, 0, 1);
+        const wizard = player.character === "wizard";
+        const resourceValue = wizard ? player.mana : player.guard;
+        const resourceMax = wizard ? player.maxMana : player.maxGuard;
+        const guardPct = clamp(resourceValue / resourceMax, 0, 1);
         healthFill.style.transform = "scaleX(" + hpPct.toFixed(3) + ")";
         guardFill.style.transform = "scaleX(" + guardPct.toFixed(3) + ")";
         healthText.textContent = Math.ceil(player.health);
-        guardText.textContent = Math.ceil(player.guard);
+        guardText.textContent = Math.ceil(resourceValue);
         waveLabel.textContent = "Wave " + Math.max(1, game.wave);
         enemyText.textContent = game.enemies.length;
         koText.textContent = game.kills;
         const nearby = game.enemies.filter(enemy => enemy.position.distanceTo(player.position) < 4.2).length;
         game.threat = nearby > 3 ? "High" : nearby > 1 ? "Med" : "Low";
         threatText.textContent = game.threat;
-        attackIcon.classList.toggle("active", player.attacking);
-        blockIcon.classList.toggle("active", player.blocking);
+        attackIcon.classList.toggle("active", player.attacking && player.attackKind !== "burst");
+        blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : player.blocking);
+        blockIcon.classList.toggle("ready", wizard && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= 32);
+        potionIcon.classList.toggle("ready", wizard && player.potionCooldown <= 0);
       }
 
       function tick() {
@@ -2084,6 +2681,7 @@
         if (game.state === "playing") {
           updatePlayer(dt);
           updateEnemies(dt);
+          updatePlayerProjectiles(dt);
           updateFireballs(dt);
           updatePotions(dt);
           updateParticles(dt);
@@ -2131,7 +2729,12 @@
             startAttack();
           }
           if (event.code === "KeyK") {
-            player.blockHeld = true;
+            event.preventDefault();
+            startSecondaryAbility();
+          }
+          if (event.code === "KeyH" || event.code === "KeyL") {
+            event.preventDefault();
+            dropWizardHealthPotion();
           }
         });
 
@@ -2148,7 +2751,11 @@
             startAttack();
           }
           if (event.button === 2) {
-            player.blockHeld = true;
+            startSecondaryAbility();
+          }
+          if (event.button === 1) {
+            event.preventDefault();
+            dropWizardHealthPotion();
           }
         });
 
@@ -2198,14 +2805,22 @@
           button.addEventListener("pointerdown", event => {
             event.preventDefault();
             if (action === "attack") startAttack();
-            if (action === "block") player.blockHeld = true;
+            if (action === "block") startSecondaryAbility();
+            if (action === "potion") dropWizardHealthPotion();
           });
           button.addEventListener("pointerup", event => {
             event.preventDefault();
-            if (action === "block") player.blockHeld = false;
+            if (action === "block" && player.character === "knight") player.blockHeld = false;
           });
           button.addEventListener("pointercancel", () => {
-            if (action === "block") player.blockHeld = false;
+            if (action === "block" && player.character === "knight") player.blockHeld = false;
+          });
+        }
+
+        for (const card of characterCards) {
+          card.addEventListener("click", () => {
+            setPlayerCharacter(card.dataset.character, true);
+            updateHud();
           });
         }
 
@@ -2222,7 +2837,7 @@
 
       setupLighting();
       setupArena();
-      createKnight();
+      setPlayerCharacter("knight", true);
       setupInput();
       window.addEventListener("resize", onResize);
       updateHud();
