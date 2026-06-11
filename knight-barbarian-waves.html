@@ -3896,8 +3896,8 @@
             if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
               continue;
             }
-            damageEnemy(enemy, 18, forward, 0.78);
-            enemy.velocity.addScaledVector(forward, 3.4);
+            damageEnemy(enemy, 18, forward, 1.12);
+            enemy.velocity.addScaledVector(forward, 6.2);
           }
           return;
         }
@@ -4892,8 +4892,8 @@
           if (forward.dot(tmpVec2) < 0.26) {
             continue;
           }
-          damageEnemy(enemy, 18 + Math.floor(Math.random() * 5), forward, 0.82);
-          enemy.velocity.addScaledVector(forward, 2.8);
+          damageEnemy(enemy, 18 + Math.floor(Math.random() * 5), forward, 1.16);
+          enemy.velocity.addScaledVector(forward, 6.4);
           hitAny = true;
         }
         spawnImpact(impactPosition, hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 16 : 8);
