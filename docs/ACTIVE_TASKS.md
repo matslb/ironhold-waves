@@ -71,6 +71,8 @@ Support: Rendering / Performance Agent, QA / Playtest Agent
 
 Tasks:
 - Keep the Exploration road network continuous, aligned to settlement entrances, and clear of major lakes.
+- Avoid overly straight wilderness roads. Use mild bends, forks, landmark turns, terrain-aware detours, and worn edges so roads feel traveled, old, and part of the landscape.
+- Let formal places be formal: Crownford can have straighter civic streets, but village paths, biome trails, and wilderness roads should twist and settle around hills, water, trees, rocks, and POIs.
 - Keep later tree, rock, and clutter placement off the main roads.
 - Expand deterministic low-poly decor around villages, Crownford, and biome landmarks.
 - Add carts, buckets, brooms, barrels, crates, benches, lantern posts, market clutter, training props, and biome-specific props.
@@ -79,6 +81,7 @@ Tasks:
 
 Acceptance:
 - Roads read as a connected travel network rather than disconnected patches.
+- Wilderness roads and trails feel natural and thematic, not like ruler-straight debug geometry.
 - Village and city road entries line up with gates, wells, streets, and doors.
 - Decor improves lived-in readability without blocking NPCs, quest items, or main travel routes.
 - Crownford decor feels civic and disciplined, while biome decor matches local architecture and threats.

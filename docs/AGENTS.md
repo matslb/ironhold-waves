@@ -11,6 +11,7 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 - Multiplayer, saves, quests, and rewards should be treated as shared systems, not one-off feature patches.
 - Firebase Hosting is the only supported deployment target.
 - Performance is cross-cutting. Rendering / Performance is the specialist reviewer, but every feature owner is responsible for the cost of their own objects, loops, particles, network messages, and UI work.
+- Theme is cross-cutting too. Every agent should ask whether a feature feels like Ironhold: low-poly, grounded fantasy, civic old-world settlements, readable silhouettes, practical magic, wilderness danger, and authored details that look lived-in rather than generated from a grid.
 
 ## Core Agents
 
@@ -115,12 +116,14 @@ Responsibilities:
 - Keep villages and POIs readable from gameplay distance.
 - Maintain traversal goals for walking and mounts.
 - Connect arena, city, wilderness, and future dungeons into one world.
+- Shape roads, trails, rivers, districts, and biome edges so they feel natural and thematic. Prefer gentle curves, terrain-following bends, landmarks, forks, worn edges, and biome-specific path materials over long mathematical straight lines unless the location intentionally calls for formal city planning.
 
 Definition of done:
 - The new area has a clear identity.
 - It includes enemies, NPCs, architecture, rewards, and quest hooks.
 - It does not visually overlap awkwardly with neighboring biomes.
 - Navigation and collision are tested.
+- Layout choices support the fantasy of the place, not just navigation efficiency.
 
 ### Creative / Narrative Agent
 

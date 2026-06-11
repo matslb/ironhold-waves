@@ -58,7 +58,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 ### Content Expansion
 
 - Add Crownford, a civic city hub with the Crownring arena district, Marshal Rowan Vale, an infirmary, and non-arena city hooks.
-- Expand roads and world decor so settlements feel lived-in: carts, buckets, brooms, lanterns, market clutter, training props, and biome-specific clutter.
+- Expand roads and world decor so settlements feel lived-in: gently winding roads/trails, carts, buckets, brooms, lanterns, market clutter, training props, and biome-specific clutter.
 - Add one main quest beat per major biome.
 - Add three side quests per village: combat, discovery/delivery, and lore.
 - Add one repeatable hub task per major settlement later, once inventory/currency exists.
