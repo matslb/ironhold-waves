@@ -90,6 +90,9 @@ import {
 
   const TAU = Math.PI * 2;
   const arenaRadius = 25;
+  const ROADWARDEN_TACK_ID = "roadwarden_tack";
+  const ROADWARDEN_TACK_NAME = "Roadwarden Tack";
+  const ROADWARDEN_TACK_QUEST_ID = "roadwardenTack";
   const EXPLORATION_NPC_UPDATE_DISTANCE_SQ = 70 * 70;
   const EXPLORATION_NPC_VISIBLE_DISTANCE_SQ = 145 * 145;
   const EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ = 92 * 92;
@@ -676,6 +679,10 @@ import {
     return a + (b - a) * t;
   }
 
+  function lerpAngle(a, b, t) {
+    return a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+  }
+
   function smoothstep(edge0, edge1, x) {
     const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
     return t * t * (3 - 2 * t);
@@ -977,6 +984,24 @@ import {
     return (getCharacterProgress(character).perks || []).includes(id);
   }
 
+  function currentMountTackId() {
+    return progression && progression.exploration && progression.exploration.mountTackId === ROADWARDEN_TACK_ID
+      ? ROADWARDEN_TACK_ID
+      : "";
+  }
+
+  function hasRoadwardenTack() {
+    return currentMountTackId() === ROADWARDEN_TACK_ID;
+  }
+
+  function mountedMoveSpeed() {
+    return hasRoadwardenTack() ? 11.2 : 10.4;
+  }
+
+  function mountedCollisionRadius() {
+    return hasRoadwardenTack() ? 1.02 : 1.08;
+  }
+
   function sanitizedCombatProfile(character, weaponId, perks = []) {
     const key = character === "wizard" ? "wizard" : "knight";
     const fallbackWeapon = defaultWeaponByCharacter[key];
@@ -1060,7 +1085,8 @@ import {
     const weapon = equipmentDefs[equippedWeapon()];
     const perks = getCharacterProgress().perks || [];
     const perkName = perks.includes("crownford_drill") ? " + Drill" : "";
-    return (weapon ? weapon.name : "Starter Kit") + perkName;
+    const tackName = hasRoadwardenTack() ? " + Tack" : "";
+    return (weapon ? weapon.name : "Starter Kit") + perkName + tackName;
   }
 
   function defaultProgression() {
@@ -1076,6 +1102,7 @@ import {
         discovered: [],
         completed: false,
         horseUnlocked: false,
+        mountTackId: "",
         boons: { health: 0, guard: 0, mana: 0 },
         potionCooldownBonus: 0,
         position: null,
@@ -1113,6 +1140,7 @@ import {
       : [];
     base.exploration.completed = !!sourceExploration.completed;
     base.exploration.horseUnlocked = !!sourceExploration.horseUnlocked;
+    base.exploration.mountTackId = sourceExploration.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
     const sourceBoons = sourceExploration.boons && typeof sourceExploration.boons === "object" ? sourceExploration.boons : {};
     base.exploration.boons.health = Math.max(0, Math.floor(numberOrZero(sourceBoons.health)));
     base.exploration.boons.guard = Math.max(0, Math.floor(numberOrZero(sourceBoons.guard)));
@@ -3109,6 +3137,7 @@ import {
       state: "available",
       startMethod: "npc",
       rewardXp: Math.max(0, Math.floor(numberOrZero(options.rewardXp || 50))),
+      prerequisite: options.prerequisite || null,
       dialogue: options.dialogue && typeof options.dialogue === "object" ? options.dialogue : {},
       conversationTags: Array.isArray(options.conversationTags) ? options.conversationTags.slice(0, 8) : [type]
     };
@@ -3118,21 +3147,39 @@ import {
     return game.quests.find(quest => quest.id === id) || null;
   }
 
+  function questPrerequisiteMet(quest) {
+    if (!quest || quest.state !== "available") {
+      return true;
+    }
+    if (quest.prerequisite === "horseUnlocked") {
+      return !!(progression && progression.exploration && progression.exploration.horseUnlocked) || !!game.exploration.horse;
+    }
+    return true;
+  }
+
+  function questPrerequisiteStatus(quest) {
+    if (quest && quest.prerequisite === "horseUnlocked") {
+      return "Requires a loyal horse mount.";
+    }
+    return "";
+  }
+
   function createQuestItem(group, questId, x, z, random, options = {}) {
     const itemGroup = new THREE.Group();
     itemGroup.position.set(x, 0.12, z);
     const color = options.color || 0x9fffd1;
-    const stem = makeCylinder(0.025, 0.035, 0.35, 8, options.stemMaterial || materials.broadleaf, 0, 0.18, 0);
+    const stemHeight = options.stemHeight || 0.35;
+    const stem = makeCylinder(0.025, 0.035, stemHeight, 8, options.stemMaterial || materials.broadleaf, 0, stemHeight / 2, 0);
     const bloomMaterial = materials.questGlow.clone();
     bloomMaterial.color.setHex(color);
-    const bloom = makeSphere(options.radius || 0.12, bloomMaterial, 0, 0.42, 0);
+    const bloom = makeSphere(options.radius || 0.12, bloomMaterial, 0, stemHeight + 0.07, 0);
     const ringMaterial = materials.questGlow.clone();
     ringMaterial.color.setHex(color);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 8, 18), ringMaterial);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(options.ringRadius || 0.22, 0.012, 8, 18), ringMaterial);
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.08;
-    const light = new THREE.PointLight(color, 0.75, 3.6, 1.8);
-    light.position.y = 0.35;
+    const light = new THREE.PointLight(color, options.lightIntensity || 0.75, options.lightDistance || 3.6, 1.8);
+    light.position.y = stemHeight;
     itemGroup.add(stem, bloom, ring, light);
     itemGroup.visible = false;
     group.add(itemGroup);
@@ -3144,6 +3191,9 @@ import {
       questId,
       color,
       collected: false,
+      oneShot: !!options.oneShot,
+      requiresMounted: !!options.requiresMounted,
+      pickupRadius: Math.max(0.4, numberOrZero(options.pickupRadius) || 1.25),
       respawnTimer: 0,
       visibleActive: false,
       position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
@@ -3179,6 +3229,35 @@ import {
     }
   }
 
+  function roadwardenTackWaymarkPoints() {
+    const crownring = game.exploration.arenaCity;
+    const crownford = game.exploration.city;
+    const crownringGate = crownring && crownring.roadAnchor ? crownring.roadAnchor : { x: 124, z: 30 };
+    const crownfordRoad = crownford && crownford.roadAnchor ? crownford.roadAnchor : { x: 12, z: 88 };
+    return [
+      { x: crownringGate.x + 1.3, z: crownringGate.z + 2.2 },
+      { x: crownfordRoad.x - 2.2, z: crownfordRoad.z - 4.4 },
+      { x: 58.0, z: -48.0 },
+      { x: 82.0, z: 116.5 }
+    ];
+  }
+
+  function addRoadwardenTackWaymarks(group, random) {
+    for (const point of roadwardenTackWaymarkPoints()) {
+      createQuestItem(group, ROADWARDEN_TACK_QUEST_ID, point.x, point.z, random, {
+        color: 0xffd889,
+        stemMaterial: materials.cityRoof,
+        radius: 0.14,
+        ringRadius: 0.36,
+        stemHeight: 0.54,
+        lightDistance: 5.4,
+        pickupRadius: 2.25,
+        requiresMounted: true,
+        oneShot: true
+      });
+    }
+  }
+
   function addSwampQuestItems(group, biome, random) {
     if (!biome) {
       return;
@@ -3193,7 +3272,21 @@ import {
     }
   }
 
-  function createHorseModel() {
+  function setHorseTack(model, tackId = "") {
+    if (!model) {
+      return;
+    }
+    const activeTackId = tackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
+    model.tackId = activeTackId;
+    if (model.saddle && model.saddle.material && model.saddle.material.color) {
+      model.saddle.material.color.setHex(activeTackId ? 0x3b271c : 0x49301f);
+    }
+    for (const detail of model.tackDetails || []) {
+      detail.visible = !!activeTackId;
+    }
+  }
+
+  function createHorseModel(tackId = "") {
     const group = new THREE.Group();
     const body = makeBox(0.86, 0.62, 1.62, materials.horseCoat, 0, 1.02, 0);
     body.scale.set(1.05, 1, 1.08);
@@ -3209,8 +3302,16 @@ import {
     const rightEye = makeSphere(0.032, materials.emberEye.clone(), 0.16, 1.63, -1.52);
     const mane = makeBox(0.12, 0.46, 0.78, materials.horseMane, 0, 1.5, -0.78);
     mane.rotation.x = -0.36;
-    const saddle = makeBox(0.74, 0.18, 0.74, materials.saddle, 0, 1.38, 0.02);
+    const saddle = makeBox(0.74, 0.18, 0.74, materials.saddle.clone(), 0, 1.38, 0.02);
+    const saddleBlanket = makeBox(0.9, 0.055, 0.96, materials.cityBannerRed.clone(), 0, 1.31, 0.05);
     const saddleTrim = makeBox(0.82, 0.055, 0.82, materials.gold, 0, 1.5, 0.02);
+    const frontStrap = makeBox(0.08, 0.62, 0.12, materials.darkLeather, 0, 1.08, -0.55);
+    frontStrap.rotation.z = Math.PI / 2;
+    const rearStrap = makeBox(0.08, 0.58, 0.12, materials.darkLeather, 0, 1.06, 0.48);
+    rearStrap.rotation.z = Math.PI / 2;
+    const leftTrim = makeBox(0.045, 0.13, 0.92, materials.gold, -0.47, 1.37, 0.04);
+    const rightTrim = makeBox(0.045, 0.13, 0.92, materials.gold, 0.47, 1.37, 0.04);
+    const bridle = makeBox(0.5, 0.045, 0.08, materials.gold, 0, 1.58, -1.52);
     const tail = makeCylinder(0.06, 0.1, 0.78, 8, materials.horseMane, 0, 0.92, 0.95);
     tail.rotation.x = 0.92;
 
@@ -3231,12 +3332,16 @@ import {
       group.add(leg);
     }
 
-    group.add(body, chest, neck, head, muzzle, leftEar, rightEar, leftEye, rightEye, mane, saddle, saddleTrim, tail);
-    return { group, body, legs, tail };
+    const tackDetails = [saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle];
+    group.add(body, chest, neck, head, muzzle, leftEar, rightEar, leftEye, rightEye, mane, saddle, saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle, tail);
+    const model = { group, body, legs, tail, saddle, tackDetails, tackId: "" };
+    setHorseTack(model, tackId);
+    return model;
   }
 
   function createHorse(x, z) {
-    const model = createHorseModel();
+    const model = createHorseModel(currentMountTackId());
+    const hasTack = model.tackId === ROADWARDEN_TACK_ID;
     const horse = {
       ...model,
       position: new THREE.Vector3(x, 0, z),
@@ -3244,13 +3349,24 @@ import {
       yaw: 0,
       mounted: false,
       walkTime: Math.random() * 10,
-      followDistance: 5.8,
-      minFollowDistance: 3.6,
-      mountDistance: 2.8
+      followDistance: hasTack ? 5.2 : 5.8,
+      minFollowDistance: hasTack ? 3.2 : 3.6,
+      mountDistance: hasTack ? 3.0 : 2.8
     };
     horse.group.position.copy(horse.position);
     scene.add(horse.group);
     return horse;
+  }
+
+  function applyMountTackToHorse(horse = game.exploration.horse) {
+    if (!horse) {
+      return;
+    }
+    setHorseTack(horse, currentMountTackId());
+    const hasTack = horse.tackId === ROADWARDEN_TACK_ID;
+    horse.followDistance = hasTack ? 5.2 : 5.8;
+    horse.minFollowDistance = hasTack ? 3.2 : 3.6;
+    horse.mountDistance = hasTack ? 3.0 : 2.8;
   }
 
   function spawnHorseNearPlayer(showEffects = true) {
@@ -3367,18 +3483,24 @@ import {
     const distance = Math.max(0.001, Math.hypot(toPlayer.x, toPlayer.z));
     toPlayer.y = 0;
     toPlayer.multiplyScalar(1 / distance);
-    if (distance > 32) {
-      horse.position.copy(player.position).addScaledVector(toPlayer, -horse.followDistance);
+    const hasTack = horse.tackId === ROADWARDEN_TACK_ID;
+    const followDistance = hasTack ? 5.2 : horse.followDistance;
+    const minFollowDistance = hasTack ? 3.2 : horse.minFollowDistance;
+    const catchUpTeleportDistance = hasTack ? 38 : 32;
+    const yawEase = 1 - Math.pow(hasTack ? 0.0004 : 0.00008, dt);
+    if (distance > catchUpTeleportDistance) {
+      horse.position.copy(player.position).addScaledVector(toPlayer, -followDistance);
       horse.velocity.set(0, 0, 0);
-    } else if (distance > horse.followDistance) {
-      const desiredSpeed = distance > 11 ? 7.2 : 5.4;
-      horse.velocity.x = lerp(horse.velocity.x, toPlayer.x * desiredSpeed, 1 - Math.pow(0.012, dt));
-      horse.velocity.z = lerp(horse.velocity.z, toPlayer.z * desiredSpeed, 1 - Math.pow(0.012, dt));
-      horse.yaw = yawFromDirection(toPlayer);
-    } else if (distance < horse.minFollowDistance) {
-      horse.velocity.x = lerp(horse.velocity.x, -toPlayer.x * 1.8, 1 - Math.pow(0.02, dt));
-      horse.velocity.z = lerp(horse.velocity.z, -toPlayer.z * 1.8, 1 - Math.pow(0.02, dt));
-      horse.yaw = yawFromDirection(toPlayer);
+    } else if (distance > followDistance) {
+      const desiredSpeed = distance > 11 ? (hasTack ? 8.0 : 7.2) : (hasTack ? 5.9 : 5.4);
+      horse.velocity.x = lerp(horse.velocity.x, toPlayer.x * desiredSpeed, 1 - Math.pow(hasTack ? 0.01 : 0.012, dt));
+      horse.velocity.z = lerp(horse.velocity.z, toPlayer.z * desiredSpeed, 1 - Math.pow(hasTack ? 0.01 : 0.012, dt));
+      horse.yaw = lerpAngle(horse.yaw, yawFromDirection(toPlayer), yawEase);
+    } else if (distance < minFollowDistance) {
+      const backoffSpeed = hasTack ? 1.55 : 1.8;
+      horse.velocity.x = lerp(horse.velocity.x, -toPlayer.x * backoffSpeed, 1 - Math.pow(0.02, dt));
+      horse.velocity.z = lerp(horse.velocity.z, -toPlayer.z * backoffSpeed, 1 - Math.pow(0.02, dt));
+      horse.yaw = lerpAngle(horse.yaw, yawFromDirection(toPlayer), yawEase);
     } else {
       horse.velocity.x = lerp(horse.velocity.x, 0, 1 - Math.pow(0.0002, dt));
       horse.velocity.z = lerp(horse.velocity.z, 0, 1 - Math.pow(0.0002, dt));
@@ -3465,6 +3587,11 @@ import {
   function updateQuestItems(dt) {
     for (const item of game.questItems) {
       if (item.collected) {
+        if (item.oneShot) {
+          item.visibleActive = false;
+          item.group.visible = false;
+          continue;
+        }
         item.respawnTimer -= dt;
         if (item.respawnTimer <= 0) {
           item.collected = false;
@@ -3493,7 +3620,8 @@ import {
       item.bloom.scale.setScalar(0.9 + Math.sin(clock.elapsedTime * 5.5 + item.bobSeed) * 0.14);
       item.ring.rotation.z += dt * 1.5;
       item.light.intensity = 0.58 + Math.sin(clock.elapsedTime * 4.2 + item.bobSeed) * 0.18;
-      if (distanceSq < 1.25 * 1.25) {
+      const pickupRadius = item.pickupRadius || 1.25;
+      if (distanceSq < pickupRadius * pickupRadius && (!item.requiresMounted || isPlayerMounted())) {
         item.collected = true;
         item.respawnTimer = 22 + (item.bobSeed % 7);
         item.visibleActive = false;
@@ -3532,7 +3660,7 @@ import {
         continue;
       }
       const quest = getQuest(npc.questId);
-      npc.questMarker.visible = !!quest && quest.state !== "done";
+      npc.questMarker.visible = !!quest && quest.state !== "done" && questPrerequisiteMet(quest);
       if (quest) {
         npc.questMarker.scale.setScalar(quest.state === "ready" ? 1.45 : 1);
         npc.questMarker.material.color.setHex(quest.state === "ready" ? 0xffd889 : 0x9fffd1);
@@ -3672,6 +3800,9 @@ import {
 
   function questStatusLine(quest) {
     if (quest.state === "available") {
+      if (!questPrerequisiteMet(quest)) {
+        return questPrerequisiteStatus(quest);
+      }
       return quest.objective + ". Reward: " + quest.reward + ".";
     }
     if (quest.state === "active") {
@@ -3720,6 +3851,13 @@ import {
       return;
     }
 
+    if (!questPrerequisiteMet(quest)) {
+      questDialogBody.textContent = "Pell looks over the empty stable hook and shakes his head. \"Bring me a loyal horse first. I can fit tack to a mount, not to a promise.\"";
+      questDialogStatus.textContent = questPrerequisiteStatus(quest);
+      updateDialogSelection(0);
+      return;
+    }
+
     questDialogTitle.textContent = quest.giver + " - " + quest.title;
     questDialogBody.textContent = questDialogueLine(quest);
     questDialogStatus.textContent = questStatusLine(quest);
@@ -3739,6 +3877,11 @@ import {
     const npc = game.dialogNpc;
     const quest = npc && npc.questId ? getQuest(npc.questId) : null;
     if (!quest || quest.state !== "available") {
+      return;
+    }
+    if (!questPrerequisiteMet(quest)) {
+      showBanner(questPrerequisiteStatus(quest) || "Quest unavailable", 2.2);
+      refreshQuestDialog();
       return;
     }
     quest.state = "active";
@@ -3795,6 +3938,11 @@ import {
       trimPotionDrops();
     } else if (quest.id === "horse") {
       spawnHorseNearPlayer();
+    } else if (quest.id === ROADWARDEN_TACK_QUEST_ID) {
+      progression.exploration.mountTackId = ROADWARDEN_TACK_ID;
+      applyMountTackToHorse();
+      unlocks.push(ROADWARDEN_TACK_NAME);
+      sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     } else if (quest.id === "villages") {
       addProgressionBoon({ potionCooldown: 4 });
       player.health = player.maxHealth;
@@ -3853,6 +4001,7 @@ import {
       dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" },
       wisps: { hex: "#8affd2", fill: "rgba(138, 255, 210, 0.17)", stroke: "rgba(138, 255, 210, 0.78)" },
       bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
+      roadwardenTack: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" },
       cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
       citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" },
       crownringTrial: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" }
@@ -3873,6 +4022,7 @@ import {
       dragons: "mountains",
       wisps: "Mistfen",
       bogRelics: "Mistfen pools",
+      roadwardenTack: "road waymarks",
       cityWrits: "Crownford beacon",
       citySanctuary: "church district",
       crownringTrial: "Crownring"
@@ -3957,6 +4107,11 @@ import {
         .map(item => item.position);
       const area = aggregateQuestArea(positions, 22, 28, 58);
       return area ? [{ ...area, color }] : [];
+    }
+    if (quest.id === ROADWARDEN_TACK_QUEST_ID) {
+      return game.questItems
+        .filter(item => item.questId === ROADWARDEN_TACK_QUEST_ID && !item.collected)
+        .map(item => ({ x: item.position.x, z: item.position.z, radius: 14, color }));
     }
     if (quest.id === "cityWrits" || quest.id === "citySanctuary") {
       if (quest.id === "cityWrits") {
@@ -4150,6 +4305,29 @@ import {
         "A loyal horse mount",
         "collect",
         4
+      ),
+      createQuest(
+        ROADWARDEN_TACK_QUEST_ID,
+        "Shoes for the Long Road",
+        "Quartermaster Pell",
+        "A road horse needs more than a saddle and optimism. Ride the posted waymarks from the Crownring gate out across the old roads, and I will fit your tack for real distance.",
+        "Ride through road waymarks",
+        ROADWARDEN_TACK_NAME + ", faster mounted travel, and XP",
+        "collect",
+        4,
+        {
+          rewardXp: 65,
+          prerequisite: "horseUnlocked",
+          conversationTags: ["mount", "roads", "crownring", "waymarks"],
+          dialogue: {
+            available: "That horse has legs enough. Now let us find out whether the straps do. Take the Crownring gate, Crownford road, meadow fork, and a threshold marker before the dust settles.",
+            active: "Ride the road marks, not the short grass. I need to see how the saddle takes turns, stones, and gate dust.",
+            ready: "Good. No slipped cinch, no panicked reins, no dramatic story from a ditch. I can work with that.",
+            readyStatus: "Route proven",
+            done: "Your tack is roadwarden-fit now. The horse should carry smoother, and other travelers will know you have taken the long road properly.",
+            doneStatus: "Roadwarden Tack fitted."
+          }
+        }
       ),
       createQuest(
         "cityWrits",
@@ -4590,7 +4768,7 @@ import {
     steward.questMarker.material.color.setHex(0xffd889);
     game.npcs.push(steward);
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 19, game.exploration.origin.z + z + 8.5, random, 7.5, "Physicker Maud", null, "city"));
-    game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 18.5, game.exploration.origin.z + z + 8.0, random, 7.5, "Quartermaster Pell", null, "city"));
+    game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 16.4, game.exploration.origin.z + z - 7.2, random, 7.5, "Quartermaster Pell", ROADWARDEN_TACK_QUEST_ID, "city"));
   }
 
   function isExplorationBlocked(localX, localZ) {
@@ -4820,6 +4998,7 @@ import {
     addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
     addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
     addCrownringCity(group, 158 + random() * 7, 48 + random() * 6, random);
+    addRoadwardenTackWaymarks(group, random);
     syncVillageQuestProgress({ silent: true });
     addSwampQuestItems(group, swampBiome, random);
 
@@ -5987,6 +6166,7 @@ import {
       z: player.position.z,
       yaw: player.yaw,
       hasHorse: !!horse,
+      mountTackId: currentMountTackId(),
       mounted: !!horse && horse.mounted,
       horseX: horse ? horse.position.x : null,
       horseZ: horse ? horse.position.z : null,
@@ -6915,6 +7095,7 @@ import {
       lastPosition: new THREE.Vector3(),
       health: 100,
       maxHealth: 100,
+      mountTackId: "",
       walkTime: 0
     };
   }
@@ -7024,6 +7205,8 @@ import {
     remote.targetPosition.set(state.x || 0, 0, state.z || 0);
     remote.targetYaw = state.yaw || 0;
     remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
+    remote.mountTackId = state.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
+    setHorseTack(remote.horse, remote.mountTackId);
     remote.mounted = !!state.mounted && remote.hasHorse;
     if (!remote.horseTargetPosition) {
       remote.horseTargetPosition = new THREE.Vector3();
@@ -8038,7 +8221,7 @@ import {
   }
 
   function resolveExplorationColliders() {
-    resolveExplorationPosition(player.position, player.velocity, isPlayerMounted() ? 1.08 : 0.62);
+    resolveExplorationPosition(player.position, player.velocity, isPlayerMounted() ? mountedCollisionRadius() : 0.62);
   }
 
   function constrainExplorationPlayer() {
@@ -8116,7 +8299,7 @@ import {
       tmpVec.addScaledVector(r, inputX);
       tmpVec.normalize();
       const speed = mounted
-        ? 10.4
+        ? mountedMoveSpeed()
         : player.character === "wizard"
         ? (player.attacking ? 4.45 : 6.65)
         : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
