@@ -259,6 +259,7 @@ import {
       biomes: [],
       colliders: [],
       roads: [],
+      roadJunctions: [],
       city: null,
       arenaCity: null,
       horse: null,
@@ -1409,6 +1410,7 @@ import {
     game.exploration.biomes.length = 0;
     game.exploration.colliders.length = 0;
     game.exploration.roads.length = 0;
+    game.exploration.roadJunctions.length = 0;
     game.exploration.city = null;
     game.exploration.arenaCity = null;
     game.exploration.discovered = new Set();
@@ -1622,9 +1624,17 @@ import {
   }
 
   function addExplorationRoadJunction(group, x, z, width) {
-    const junction = new THREE.Mesh(createRoadJunctionGeometry(x, z, width * 0.62), materials.path);
+    const radius = width * 0.62;
+    const existing = game.exploration.roadJunctions.find(junction => (
+      Math.hypot(junction.x - x, junction.z - z) < Math.max(0.7, Math.min(junction.radius, radius) * 0.8)
+    ));
+    if (existing) {
+      return existing.mesh;
+    }
+    const junction = new THREE.Mesh(createRoadJunctionGeometry(x, z, radius), materials.path);
     junction.receiveShadow = true;
     group.add(junction);
+    game.exploration.roadJunctions.push({ x, z, radius, mesh: junction });
     return junction;
   }
 
@@ -1708,10 +1718,10 @@ import {
 
   function roadWindingSettings(style = "wild") {
     if (style === "formal") {
-      return { spacing: 42, maxOffset: 1.35, strength: 0.055 };
+      return { spacing: 36, maxOffset: 2.15, strength: 0.075 };
     }
     if (style === "lane") {
-      return { spacing: 24, maxOffset: 2.45, strength: 0.1 };
+      return { spacing: 20, maxOffset: 2.75, strength: 0.12 };
     }
     if (style === "mountain") {
       return { spacing: 24, maxOffset: 6.4, strength: 0.2 };
@@ -1722,7 +1732,7 @@ import {
     if (style === "swamp") {
       return { spacing: 20, maxOffset: 6.0, strength: 0.22 };
     }
-    return { spacing: 30, maxOffset: 4.8, strength: 0.15 };
+    return { spacing: 28, maxOffset: 5.35, strength: 0.16 };
   }
 
   function roadWindingKey(a, b, style, index) {
@@ -1772,12 +1782,31 @@ import {
     return result;
   }
 
-  function addExplorationRoad(group, points, width = 2.8, style = "wild") {
+  function addExplorationRoad(group, points, width = 2.8, style = "wild", options = {}) {
     const winding = addWindingRoadPoints(points, style);
     const routed = routeRoadAroundLakes(winding, width);
     addExplorationRoadRibbon(group, routed, width);
+    const junctions = [];
+    if (options.junctionMode === "all") {
+      junctions.push(...points);
+    } else if (options.junctionMode !== "none") {
+      junctions.push(points[0], points[points.length - 1]);
+    }
+    if (Array.isArray(options.junctions)) {
+      junctions.push(...options.junctions);
+    }
     for (const point of points) {
-      addExplorationRoadJunction(group, point.x, point.z, width * 0.82);
+      if (point.junction) {
+        junctions.push(point);
+      }
+    }
+    const seen = new Set();
+    for (const point of junctions) {
+      const key = Math.round(point.x * 4) + ":" + Math.round(point.z * 4);
+      if (!seen.has(key)) {
+        seen.add(key);
+        addExplorationRoadJunction(group, point.x, point.z, width * (point.major ? 1.08 : 0.82));
+      }
     }
   }
 
@@ -1804,17 +1833,24 @@ import {
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
 
-    addExplorationRoad(group, [homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 3.15, "wild");
+    addExplorationRoad(group, [
+      homeDoor,
+      { ...homeJunction, junction: true, major: true },
+      { x: -7, z: 18 },
+      { x: 4, z: 43 },
+      { x: -5, z: 66 },
+      { ...northFork, junction: true, major: true }
+    ], 3.15, "wild");
 
     const city = game.exploration.city;
     if (city) {
       const cityGate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
-      addExplorationRoad(group, [northFork, { x: -4, z: northFork.z + 18 }, { x: cityGate.x * 0.45, z: cityGate.z - 27 }, { x: cityGate.x - 4, z: cityGate.z - 12 }, cityGate], 3.25, "formal");
+      addExplorationRoad(group, [northFork, { x: -4, z: northFork.z + 18 }, { x: cityGate.x * 0.45, z: cityGate.z - 27 }, { x: cityGate.x - 4, z: cityGate.z - 12 }, { ...cityGate, junction: true, major: true }], 3.25, "formal");
     }
     const arenaCity = game.exploration.arenaCity;
     if (arenaCity) {
       const arenaGate = arenaCity.roadAnchor || { x: arenaCity.localX - 34, z: arenaCity.localZ - 18 };
-      addExplorationRoad(group, [northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: arenaGate.x - 18, z: arenaGate.z - 9 }, arenaGate], 3.05, "formal");
+      addExplorationRoad(group, [northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: arenaGate.x - 18, z: arenaGate.z - 9 }, { ...arenaGate, junction: true, major: true }], 3.05, "formal");
     }
 
     for (const village of game.exploration.villages) {
@@ -1826,21 +1862,21 @@ import {
       let entrance;
       if (village.biome === "mountain") {
         entrance = roadEntranceForVillage(village, mountainFork);
-        addExplorationRoad(group, [northFork, { x: 24, z: 99 }, { x: 56, z: 122 }, mountainFork, { x: mountainFork.x + 17, z: mountainFork.z + 8 }, entrance], 2.85, "mountain");
+        addExplorationRoad(group, [northFork, { x: 24, z: 99 }, { x: 56, z: 122 }, { ...mountainFork, junction: true, major: true }, { x: mountainFork.x + 17, z: mountainFork.z + 8 }, entrance], 2.85, "mountain");
       } else if (village.biome === "desert") {
         entrance = roadEntranceForVillage(village, desertFork);
-        addExplorationRoad(group, [homeJunction, { x: -18, z: -42 }, { x: -48, z: -58 }, desertFork, { x: desertFork.x - 28, z: desertFork.z - 15 }, entrance], 2.75, "desert");
+        addExplorationRoad(group, [homeJunction, { x: -18, z: -42 }, { x: -48, z: -58 }, { ...desertFork, junction: true, major: true }, { x: desertFork.x - 28, z: desertFork.z - 15 }, entrance], 2.75, "desert");
       } else if (village.biome === "swamp") {
         entrance = roadEntranceForVillage(village, swampFork);
-        addExplorationRoad(group, [northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, swampFork, { x: swampFork.x - 24, z: swampFork.z + 10 }, entrance], 2.65, "swamp");
+        addExplorationRoad(group, [northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, { ...swampFork, junction: true, major: true }, { x: swampFork.x - 24, z: swampFork.z + 10 }, entrance], 2.65, "swamp");
       } else if (localX >= 0) {
         entrance = roadEntranceForVillage(village, meadowEastFork);
-        addExplorationRoad(group, [homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, meadowEastFork, entrance], 2.75, "wild");
+        addExplorationRoad(group, [homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, { ...meadowEastFork, junction: true, major: true }, entrance], 2.75, "wild");
       } else {
         entrance = roadEntranceForVillage(village, meadowWestFork);
-        addExplorationRoad(group, [homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, meadowWestFork, entrance], 2.75, "wild");
+        addExplorationRoad(group, [homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, { ...meadowWestFork, junction: true, major: true }, entrance], 2.75, "wild");
       }
-      addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2, "lane");
+      addExplorationRoad(group, [{ ...entrance, junction: true }, { x: localX, z: localZ }], 2.2, "lane");
     }
     addRoadsideWayfindingDecor(group);
   }
@@ -1912,6 +1948,30 @@ import {
     brush.rotation.z = 0.16;
     broom.add(handle, brush);
     return broom;
+  }
+
+  function addWoodPile(group, x, z, rotation = 0, scale = 1) {
+    const pile = makeDecorGroup(group, x, z, rotation, scale);
+    for (let i = 0; i < 5; i += 1) {
+      const row = i > 2 ? 1 : 0;
+      const log = makeCylinder(0.08, 0.09, 0.86 + (i % 2) * 0.18, 8, materials.wood, -0.28 + (i % 3) * 0.28, 0.12 + row * 0.16, row * 0.18);
+      log.rotation.z = Math.PI / 2;
+      log.rotation.y = (i - 2) * 0.06;
+      pile.add(log);
+    }
+    addExplorationCollider(x, z, scale * 0.62, "decor");
+    return pile;
+  }
+
+  function addTrough(group, x, z, rotation = 0, scale = 1) {
+    const trough = makeDecorGroup(group, x, z, rotation, scale);
+    const base = makeBox(1.18, 0.2, 0.44, materials.wood, 0, 0.22, 0);
+    const sideA = makeBox(1.26, 0.32, 0.1, materials.wood, 0, 0.36, -0.28);
+    const sideB = makeBox(1.26, 0.32, 0.1, materials.wood, 0, 0.36, 0.28);
+    const water = makeBox(1.04, 0.035, 0.32, materials.water.clone(), 0, 0.54, 0);
+    trough.add(base, sideA, sideB, water);
+    addExplorationCollider(x, z, scale * 0.78, "decor");
+    return trough;
   }
 
   function addBarrel(group, x, z, rotation = 0, scale = 1) {
@@ -1990,19 +2050,53 @@ import {
     return sign;
   }
 
+  function addRoadsideSupplyStop(group, x, z, rotation = 0, scale = 1, style = "meadow") {
+    const side = offsetFromFacing(x, z, rotation, 0, 1.45 * scale);
+    if (style === "desert") {
+      addCrateStack(group, x, z, rotation + 0.2, scale * 0.84);
+      addBucket(group, side.x, side.z, rotation - 0.4, scale * 1.05);
+      addBucket(group, side.x + Math.cos(rotation) * 0.56, side.z - Math.sin(rotation) * 0.56, rotation + 0.18, scale * 0.88);
+      addDryBush(group, x - Math.cos(rotation) * 1.15, z + Math.sin(rotation) * 1.15, () => 0.44);
+      return;
+    }
+    if (style === "swamp") {
+      addBench(group, x, z, rotation + 0.12, scale * 0.96);
+      addBucket(group, side.x, side.z, rotation, scale * 0.95);
+      addReeds(group, x - Math.cos(rotation) * 1.2, z + Math.sin(rotation) * 1.2, () => 0.42);
+      return;
+    }
+    if (style === "mountain") {
+      addCrateStack(group, x, z, rotation - 0.25, scale * 0.88);
+      addBarrel(group, side.x, side.z, rotation + 0.18, scale * 0.9);
+      addWoodPile(group, x - Math.cos(rotation) * 1.35, z + Math.sin(rotation) * 1.35, rotation + 0.5, scale * 0.9);
+      return;
+    }
+    addCart(group, x, z, rotation, scale * 0.92);
+    addCrateStack(group, side.x, side.z, rotation - 0.18, scale * 0.82);
+    addTrough(group, x - Math.cos(rotation) * 1.35, z + Math.sin(rotation) * 1.35, rotation + 0.1, scale * 0.86);
+  }
+
   function addRoadsideWayfindingDecor(group) {
     addSignpost(group, 4.7, -18.0, -0.18, 0.95, materials.flower);
     addLanternPost(group, -4.6, -19.2, 0.24, 0.86);
+    addWoodPile(group, 5.9, -13.2, 0.42, 0.86);
+    addTrough(group, -5.8, -13.7, -0.24, 0.9);
     addSignpost(group, -5.2, 87.4, -0.5, 1.0, materials.cityRoof);
     addLanternPost(group, 5.0, 83.8, -0.15, 0.88);
+    addRoadsideSupplyStop(group, -8.6, 82.2, -0.52, 0.92);
     addSignpost(group, 53.5, -52.0, 0.68, 0.92, materials.broadleaf);
+    addRoadsideSupplyStop(group, 60.8, -49.8, 0.72, 0.82);
     addSignpost(group, -59.0, 47.0, -0.82, 0.92, materials.broadleaf);
+    addRoadsideSupplyStop(group, -67.4, 43.6, -0.78, 0.82);
     addSignpost(group, 75.0, 117.5, 0.9, 0.96, materials.darkStone);
     addLanternPost(group, 82.5, 107.8, 0.5, 0.82);
+    addRoadsideSupplyStop(group, 84.0, 119.8, 0.9, 0.9, "mountain");
     addSignpost(group, -64.5, -70.8, -0.95, 0.96, materials.dryBrush);
     addBucket(group, -61.4, -77.0, 0.2, 0.92);
+    addRoadsideSupplyStop(group, -68.8, -79.4, -0.85, 0.92, "desert");
     addSignpost(group, -98.5, 132.0, -0.5, 0.96, materials.reed);
     addLanternPost(group, -88.6, 123.4, -0.7, 0.78);
+    addRoadsideSupplyStop(group, -101.2, 124.2, -0.5, 0.88, "swamp");
 
     const city = game.exploration.city;
     if (city) {
@@ -2011,6 +2105,8 @@ import {
       addBannerPole(group, gate.x + 7.4, gate.z - 2.8, -0.12, 0.96);
       addCrateStack(group, gate.x - 10.2, gate.z + 4.4, 0.18, 0.84);
       addBarrel(group, gate.x + 10.2, gate.z + 4.6, -0.12, 0.84);
+      addBench(group, gate.x - 4.6, gate.z + 7.2, 0.12, 0.92);
+      addTrough(group, gate.x + 4.4, gate.z + 7.5, -0.1, 0.88);
     }
     const arenaCity = game.exploration.arenaCity;
     if (arenaCity) {
@@ -2018,6 +2114,8 @@ import {
       addBannerPole(group, gate.x - 5.8, gate.z - 2.1, 0.08, 0.88);
       addBannerPole(group, gate.x + 5.8, gate.z - 2.1, -0.08, 0.88);
       addLanternPost(group, gate.x - 8.2, gate.z + 1.7, 0.18, 0.78);
+      addTrainingDummy(group, gate.x + 8.4, gate.z + 2.4, -0.25, 0.82);
+      addBarrel(group, gate.x + 5.6, gate.z + 5.2, -0.2, 0.78);
     }
   }
 
