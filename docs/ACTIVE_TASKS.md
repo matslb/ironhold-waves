@@ -293,7 +293,7 @@ Primary owner: UI / UX Agent
 
 Support: Sound Design / Audio Agent, QA / Playtest Agent
 
-Status: Desktop-first pass active. Touch/handheld support is deferred for now. A first procedural Web Audio SFX pass now covers player attacks, blocks, hits, potions, quest moments, and level-ups with autoplay-safe fallback behavior.
+Status: Desktop-first pass active. Touch/handheld support is deferred for now. A first procedural Web Audio SFX pass now covers player attacks, blocks, hits, potions, quest moments, and level-ups with autoplay-safe fallback behavior. The master mix has been raised and routed through light compression so combat feedback reads more clearly.
 
 Tasks:
 - Keep desktop controls first-class.

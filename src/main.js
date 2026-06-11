@@ -99,6 +99,7 @@ import {
   const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
   const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
   const QUEST_MAP_UPDATE_INTERVAL = 0.16;
+  const AUDIO_MASTER_VOLUME = 0.52;
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
@@ -119,6 +120,7 @@ import {
   const audio = {
     context: null,
     master: null,
+    compressor: null,
     noise: null,
     muted: localStorage.getItem("ironhold-audio-muted") === "true",
     lastPlayed: new Map()
@@ -135,8 +137,15 @@ import {
     if (!audio.context) {
       audio.context = new AudioContextClass();
       audio.master = audio.context.createGain();
-      audio.master.gain.value = 0.18;
-      audio.master.connect(audio.context.destination);
+      audio.compressor = audio.context.createDynamicsCompressor();
+      audio.compressor.threshold.value = -10;
+      audio.compressor.knee.value = 14;
+      audio.compressor.ratio.value = 5;
+      audio.compressor.attack.value = 0.004;
+      audio.compressor.release.value = 0.18;
+      audio.master.gain.value = AUDIO_MASTER_VOLUME;
+      audio.master.connect(audio.compressor);
+      audio.compressor.connect(audio.context.destination);
     }
     if (audio.context.state === "suspended") {
       audio.context.resume().catch(() => {});
@@ -152,7 +161,7 @@ import {
     audio.muted = muted;
     localStorage.setItem("ironhold-audio-muted", muted ? "true" : "false");
     if (audio.master) {
-      audio.master.gain.setTargetAtTime(muted ? 0 : 0.18, audio.context.currentTime, 0.02);
+      audio.master.gain.setTargetAtTime(muted ? 0 : AUDIO_MASTER_VOLUME, audio.context.currentTime, 0.02);
     }
     showBanner(muted ? "Sound muted" : "Sound on", 1.5);
   }
