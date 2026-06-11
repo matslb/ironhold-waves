@@ -992,6 +992,7 @@
         <div class="readout"><span>KOs</span><strong id="koText">0</strong></div>
         <div class="readout" id="levelReadout"><span>LV</span><strong id="levelText">1</strong></div>
         <div class="readout" id="xpReadout" hidden><span>XP</span><strong id="xpText">0</strong></div>
+        <div class="readout" id="kitReadout" hidden><span>Kit</span><strong id="kitText">Arming Sword</strong></div>
         <div class="save-hint" id="saveHint">Local save</div>
         <section class="quest-log" id="questLog" hidden aria-label="Active quests">
           <strong>Quests</strong>
@@ -1145,6 +1146,8 @@
       const levelText = document.getElementById("levelText");
       const xpReadout = document.getElementById("xpReadout");
       const xpText = document.getElementById("xpText");
+      const kitReadout = document.getElementById("kitReadout");
+      const kitText = document.getElementById("kitText");
       const saveHint = document.getElementById("saveHint");
       const attackIcon = document.getElementById("attackIcon");
       const blockIcon = document.getElementById("blockIcon");
@@ -1610,13 +1613,221 @@
         }
       }
 
+      const defaultWeaponByCharacter = {
+        knight: "knight_arming_sword",
+        wizard: "wizard_oak_staff"
+      };
+
+      const equipmentDefs = {
+        knight_arming_sword: {
+          character: "knight",
+          name: "Arming Sword",
+          tuning: {}
+        },
+        knight_roadwarden_blade: {
+          character: "knight",
+          name: "Roadwarden Blade",
+          tuning: {
+            slashRange: 2.75,
+            slashDamageBonus: 2,
+            guardOnSlashHit: 8
+          }
+        },
+        wizard_oak_staff: {
+          character: "wizard",
+          name: "Oak Staff",
+          tuning: {}
+        },
+        wizard_wayfinder_focus: {
+          character: "wizard",
+          name: "Wayfinder Focus",
+          tuning: {
+            lightningDamageBonus: 2
+          }
+        }
+      };
+
+      const perkDefs = {
+        crownford_drill: {
+          name: "Crownford Drill",
+          tuning: {
+            bashGuardCost: 25,
+            burstManaCost: 28
+          }
+        }
+      };
+
+      const defaultCombatTuning = {
+        slashRange: 2.55,
+        slashDamageMin: 32,
+        slashDamageSpread: 8,
+        slashDamageBonus: 0,
+        slashKnockback: 0.42,
+        guardOnSlashHit: 6,
+        bashGuardCost: knightBashGuardCost,
+        bashDamageMin: 18,
+        bashDamageSpread: 5,
+        bashKnockback: 1.16,
+        bashVelocity: 6.4,
+        lightningManaCost: wizardLightningManaCost,
+        lightningDamageMin: 31,
+        lightningDamageSpread: 6,
+        lightningDamageBonus: 0,
+        lightningTurnRate: 0.85,
+        lightningLife: 2.45,
+        remoteLightningRange: 14.5,
+        burstManaCost: wizardBurstManaCost,
+        burstDamageMin: 24,
+        burstDamageSpread: 6
+      };
+
+      function defaultCharacterProgress(character) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        const weapon = defaultWeaponByCharacter[key];
+        return {
+          xp: 0,
+          equipment: { weapon },
+          unlockedEquipment: [weapon],
+          perks: []
+        };
+      }
+
+      function validEquipmentForCharacter(character, equipmentId) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        const definition = equipmentDefs[equipmentId];
+        return !!definition && definition.character === key;
+      }
+
+      function normalizeCharacterProgress(source, character) {
+        const normalized = defaultCharacterProgress(character);
+        const entry = source && typeof source === "object" ? source : {};
+        normalized.xp = Math.max(0, Math.floor(numberOrZero(entry.xp)));
+        const unlocked = Array.isArray(entry.unlockedEquipment)
+          ? entry.unlockedEquipment.filter(id => validEquipmentForCharacter(character, id))
+          : [];
+        for (const id of unlocked) {
+          if (!normalized.unlockedEquipment.includes(id)) {
+            normalized.unlockedEquipment.push(id);
+          }
+        }
+        const weapon = entry.equipment && validEquipmentForCharacter(character, entry.equipment.weapon)
+          ? entry.equipment.weapon
+          : normalized.equipment.weapon;
+        normalized.equipment.weapon = normalized.unlockedEquipment.includes(weapon) ? weapon : normalized.equipment.weapon;
+        normalized.perks = Array.isArray(entry.perks)
+          ? entry.perks.filter(id => !!perkDefs[id]).filter((id, index, values) => values.indexOf(id) === index)
+          : [];
+        return normalized;
+      }
+
+      function characterProgressNeedsMigration(entry, character) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        if (!entry || typeof entry !== "object") {
+          return true;
+        }
+        if (!entry.equipment || !validEquipmentForCharacter(key, entry.equipment.weapon)) {
+          return true;
+        }
+        if (!Array.isArray(entry.unlockedEquipment) || !entry.unlockedEquipment.includes(defaultWeaponByCharacter[key])) {
+          return true;
+        }
+        if (!Array.isArray(entry.perks)) {
+          return true;
+        }
+        return false;
+      }
+
+      function equippedWeapon(character = player.character) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        const progress = getCharacterProgress(key);
+        const weapon = progress.equipment && progress.equipment.weapon;
+        return validEquipmentForCharacter(key, weapon) ? weapon : defaultWeaponByCharacter[key];
+      }
+
+      function hasPerk(id, character = player.character) {
+        return (getCharacterProgress(character).perks || []).includes(id);
+      }
+
+      function combatTuningFor(character = player.character, options = {}) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        const weapon = validEquipmentForCharacter(key, options.weaponId) ? options.weaponId : equippedWeapon(key);
+        const perkIds = Array.isArray(options.perks) ? options.perks.filter(id => !!perkDefs[id]) : getCharacterProgress(key).perks || [];
+        const tuning = { ...defaultCombatTuning };
+        Object.assign(tuning, equipmentDefs[weapon].tuning || {});
+        for (const perkId of perkIds) {
+          Object.assign(tuning, perkDefs[perkId].tuning || {});
+        }
+        return tuning;
+      }
+
+      function grantEquipmentToCharacter(character, equipmentId, autoEquip = true) {
+        const key = character === "wizard" ? "wizard" : "knight";
+        if (!validEquipmentForCharacter(key, equipmentId)) {
+          return null;
+        }
+        const progress = getCharacterProgress(key);
+        let changed = false;
+        if (!progress.unlockedEquipment.includes(equipmentId)) {
+          progress.unlockedEquipment.push(equipmentId);
+          changed = true;
+        }
+        if (autoEquip && progress.equipment.weapon !== equipmentId) {
+          progress.equipment.weapon = equipmentId;
+          changed = true;
+        }
+        return changed ? equipmentDefs[equipmentId].name : null;
+      }
+
+      function grantPerkToCharacter(character, perkId) {
+        if (!perkDefs[perkId]) {
+          return null;
+        }
+        const progress = getCharacterProgress(character);
+        if (progress.perks.includes(perkId)) {
+          return null;
+        }
+        progress.perks.push(perkId);
+        return perkDefs[perkId].name;
+      }
+
+      function grantRpgRewardForQuest(questId) {
+        const unlocked = [];
+        if (questId === "raiders") {
+          for (const message of [
+            grantEquipmentToCharacter("knight", "knight_roadwarden_blade"),
+            grantEquipmentToCharacter("wizard", "wizard_wayfinder_focus")
+          ]) {
+            if (message) {
+              unlocked.push(message);
+            }
+          }
+        } else if (questId === "cityWrits") {
+          for (const message of [
+            grantPerkToCharacter("knight", "crownford_drill"),
+            grantPerkToCharacter("wizard", "crownford_drill")
+          ]) {
+            if (message) {
+              unlocked.push(message);
+            }
+          }
+        }
+        return unlocked;
+      }
+
+      function currentKitText() {
+        const weapon = equipmentDefs[equippedWeapon()];
+        const perks = getCharacterProgress().perks || [];
+        const perkName = perks.includes("crownford_drill") ? " + Drill" : "";
+        return (weapon ? weapon.name : "Starter Kit") + perkName;
+      }
+
       function defaultProgression() {
         return {
-          version: 2,
+          version: 3,
           activeGame: null,
           characters: {
-            knight: { xp: 0 },
-            wizard: { xp: 0 }
+            knight: defaultCharacterProgress("knight"),
+            wizard: defaultCharacterProgress("wizard")
           },
           exploration: {
             quests: {},
@@ -1642,7 +1853,7 @@
         const source = raw && typeof raw === "object" ? raw : {};
         const sourceCharacters = source.characters && typeof source.characters === "object" ? source.characters : {};
         for (const character of ["knight", "wizard"]) {
-          base.characters[character].xp = Math.max(0, Math.floor(numberOrZero(sourceCharacters[character] && sourceCharacters[character].xp)));
+          base.characters[character] = normalizeCharacterProgress(sourceCharacters[character], character);
         }
 
         const sourceExploration = source.exploration && typeof source.exploration === "object" ? source.exploration : {};
@@ -1744,8 +1955,8 @@
 
       function getCharacterProgress(character = player.character) {
         const key = character === "wizard" ? "wizard" : "knight";
-        if (!progression.characters[key]) {
-          progression.characters[key] = { xp: 0 };
+        if (characterProgressNeedsMigration(progression.characters[key], key)) {
+          progression.characters[key] = normalizeCharacterProgress(progression.characters[key], key);
         }
         return progression.characters[key];
       }
@@ -3630,6 +3841,7 @@
       }
 
       function grantQuestReward(quest) {
+        const unlocks = grantRpgRewardForQuest(quest.id);
         if (quest.id === "herbs") {
           addProgressionBoon({ health: 12 });
           player.health = player.maxHealth;
@@ -3677,7 +3889,7 @@
         }
         awardExplorationXp(50);
         spawnImpact(player.position, 0xffd889, 24);
-        showBanner("Reward claimed");
+        showBanner(unlocks.length ? "Unlocked " + unlocks.join(" and ") : "Reward claimed");
         updateHud();
       }
 
@@ -3919,7 +4131,7 @@
             "Torren",
             "The tracks are full of raiders and worse things now. Thin them out and the villages can trade again without carrying axes in both hands.",
             "Defeat roaming threats",
-            "Guard and magica boons plus XP",
+            "Roadwarden kit, guard and magica boons plus XP",
             "hunt",
             8
           ),
@@ -3989,7 +4201,7 @@
             "Marshal Rowan Vale",
             "Crownford's Wayfinder Beacon keeps the old roads honest. Read the four carved waystones and I will mark you as a sworn guide of the high city.",
             "Inspect beacon waystones",
-            "Guard and magica boons plus XP",
+            "Crownford Drill perk, guard and magica boons plus XP",
             "collect",
             4
           ),
@@ -5682,6 +5894,8 @@
           mode: game.mode,
           character: player.character,
           name: player.name,
+          weaponId: equippedWeapon(),
+          perks: getCharacterProgress().perks.slice(0, 8),
           health: player.health,
           maxHealth: player.maxHealth,
           x: player.position.x,
@@ -6645,6 +6859,8 @@
         }
         remote.health = state.health ?? remote.health;
         remote.maxHealth = state.maxHealth ?? remote.maxHealth;
+        remote.weaponId = validEquipmentForCharacter(nextCharacter, state.weaponId) ? state.weaponId : defaultWeaponByCharacter[nextCharacter === "wizard" ? "wizard" : "knight"];
+        remote.perks = Array.isArray(state.perks) ? state.perks.filter(id => !!perkDefs[id]).slice(0, 8) : [];
         remote.targetPosition.set(state.x || 0, 0, state.z || 0);
         remote.targetYaw = state.yaw || 0;
         remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
@@ -6746,16 +6962,22 @@
         }
 
         if (options.damageEnemies && game.mode === "exploration") {
-          applyRemoteActionToEnemies(action, source, state.yaw || 0, forward, state.id || online.localId);
+          applyRemoteActionToEnemies(action, source, state.yaw || 0, forward, state);
         }
       }
 
-      function applyRemoteActionToEnemies(action, source, yaw, forward, sourceId = online.localId) {
+      function applyRemoteActionToEnemies(action, source, yaw, forward, state = {}) {
+        const character = state.character === "wizard" ? "wizard" : "knight";
+        const tuning = combatTuningFor(character, {
+          weaponId: state.weaponId,
+          perks: state.perks
+        });
+        const sourceId = state.id || online.localId;
         if (action === "burst") {
           for (const enemy of game.enemies) {
             if (!enemy.dead && enemy.position.distanceTo(source) < 3.45 + enemy.radius) {
               const direction = enemy.position.clone().sub(source).normalize();
-              damageEnemy(enemy, 20, direction, 0.55, sourceId);
+              damageEnemy(enemy, Math.max(16, tuning.burstDamageMin - 4), direction, 0.55, sourceId);
             }
           }
           return;
@@ -6766,15 +6988,15 @@
             if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
               continue;
             }
-            damageEnemy(enemy, 18, forward, 1.12, sourceId);
-            enemy.velocity.addScaledVector(forward, 6.2);
+            damageEnemy(enemy, tuning.bashDamageMin, forward, tuning.bashKnockback, sourceId);
+            enemy.velocity.addScaledVector(forward, tuning.bashVelocity);
           }
           return;
         }
 
         let best = null;
         let bestDistance = Infinity;
-        const range = action === "lightning" ? 14.5 : 2.7;
+        const range = action === "lightning" ? tuning.remoteLightningRange : tuning.slashRange + 0.15;
         const minDot = action === "lightning" ? 0.34 : 0.18;
         for (const enemy of game.enemies) {
           if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
@@ -6787,7 +7009,10 @@
           }
         }
         if (best) {
-          damageEnemy(best, action === "lightning" ? 30 : 28, forward, action === "lightning" ? 0.35 : 0.42, sourceId);
+          const damage = action === "lightning"
+            ? tuning.lightningDamageMin + tuning.lightningDamageBonus - 1
+            : tuning.slashDamageMin + tuning.slashDamageBonus - 4;
+          damageEnemy(best, damage, forward, action === "lightning" ? 0.35 : tuning.slashKnockback, sourceId);
         }
       }
 
@@ -7882,7 +8107,7 @@
             showAbilityLocked("lightning");
             return;
           }
-          const cost = wizardLightningManaCost;
+          const cost = combatTuningFor().lightningManaCost;
           if (player.mana < cost) {
             showBanner("Not enough magica");
             return;
@@ -7917,7 +8142,7 @@
           showAbilityLocked("burst");
           return;
         }
-        const cost = wizardBurstManaCost;
+        const cost = combatTuningFor().burstManaCost;
         if (player.mana < cost) {
           showBanner("Not enough magica");
           return;
@@ -7941,11 +8166,12 @@
           showAbilityLocked("bash");
           return false;
         }
-        if (player.guard < knightBashGuardCost) {
+        const cost = combatTuningFor().bashGuardCost;
+        if (player.guard < cost) {
           showBanner("Not enough guard");
           return false;
         }
-        player.guard -= knightBashGuardCost;
+        player.guard -= cost;
         player.blockHeld = false;
         player.blocking = false;
         player.attacking = true;
@@ -7960,6 +8186,7 @@
 
       function performPlayerAttack() {
         const forward = forwardFromYaw(player.yaw, tmpVec);
+        const tuning = combatTuningFor("knight");
         let hitAny = false;
         if (!canSimulateSharedWorld()) {
           return;
@@ -7970,7 +8197,7 @@
           }
           tmpVec2.copy(enemy.position).sub(player.position);
           const distance = tmpVec2.length();
-          if (distance > 2.55) {
+          if (distance > tuning.slashRange) {
             continue;
           }
           tmpVec2.y = 0;
@@ -7979,17 +8206,18 @@
           if (dot < 0.18) {
             continue;
           }
-          const damage = 32 + Math.floor(Math.random() * 8);
-          damageEnemy(enemy, damage, forward, 0.42);
+          const damage = tuning.slashDamageMin + tuning.slashDamageBonus + Math.floor(Math.random() * tuning.slashDamageSpread);
+          damageEnemy(enemy, damage, forward, tuning.slashKnockback);
           hitAny = true;
         }
         if (hitAny) {
-          player.guard = Math.min(player.maxGuard, player.guard + 6);
+          player.guard = Math.min(player.maxGuard, player.guard + tuning.guardOnSlashHit);
         }
       }
 
       function performShieldBash() {
         const forward = forwardFromYaw(player.yaw, tmpVec);
+        const tuning = combatTuningFor("knight");
         const impactPosition = player.position.clone().addScaledVector(forward, 1.25);
         let hitAny = false;
         if (!canSimulateSharedWorld()) {
@@ -8010,8 +8238,8 @@
           if (forward.dot(tmpVec2) < 0.26) {
             continue;
           }
-          damageEnemy(enemy, 18 + Math.floor(Math.random() * 5), forward, 1.16);
-          enemy.velocity.addScaledVector(forward, 6.4);
+          damageEnemy(enemy, tuning.bashDamageMin + Math.floor(Math.random() * tuning.bashDamageSpread), forward, tuning.bashKnockback);
+          enemy.velocity.addScaledVector(forward, tuning.bashVelocity);
           hitAny = true;
         }
         spawnImpact(impactPosition, hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 16 : 8);
@@ -8039,7 +8267,7 @@
           ringB,
           velocity,
           speed: 12.8,
-          turnRate: 0.85,
+          turnRate: options.turnRate ?? 0.85,
           life: options.life || 2.45,
           damage: options.damage ?? (31 + Math.floor(Math.random() * 6)),
           stun: options.stun ?? 0.36,
@@ -8052,7 +8280,11 @@
         const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
         const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
         const velocity = direction.clone().multiplyScalar(12.8);
+        const tuning = combatTuningFor("wizard");
         game.playerProjectiles.push(createLightningProjectile(source, velocity, {
+          damage: tuning.lightningDamageMin + tuning.lightningDamageBonus + Math.floor(Math.random() * tuning.lightningDamageSpread),
+          turnRate: tuning.lightningTurnRate,
+          life: tuning.lightningLife,
           visualOnly: !canSimulateSharedWorld()
         }));
       }
@@ -8072,6 +8304,7 @@
 
       function performWizardBurst() {
         const radius = 3.35;
+        const tuning = combatTuningFor("wizard");
         let hitAny = false;
         if (canSimulateSharedWorld()) {
           for (const enemy of game.enemies) {
@@ -8085,7 +8318,7 @@
             }
             direction.y = 0;
             direction.multiplyScalar(1 / distance);
-            damageEnemy(enemy, 24 + Math.floor(Math.random() * 6), direction, 0.78);
+            damageEnemy(enemy, tuning.burstDamageMin + Math.floor(Math.random() * tuning.burstDamageSpread), direction, 0.78);
             enemy.velocity.addScaledVector(direction, 2.4);
             hitAny = true;
           }
@@ -9106,6 +9339,7 @@
         const level = getCharacterLevel();
         levelText.textContent = level;
         xpReadout.hidden = game.mode !== "exploration";
+        kitReadout.hidden = game.mode !== "exploration";
         if (saveHint) {
           saveHint.hidden = game.mode !== "exploration";
         }
@@ -9114,15 +9348,18 @@
           const levelBaseXp = xpForLevel(level);
           const nextLevelXp = xpForLevel(level + 1);
           xpText.textContent = Math.max(0, xp - levelBaseXp) + "/" + Math.max(1, nextLevelXp - levelBaseXp);
+          kitText.textContent = currentKitText();
         } else {
           xpText.textContent = "0";
+          kitText.textContent = "";
         }
+        const tuning = combatTuningFor();
         updateAbilityLocks();
         attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning"));
         blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : player.blocking);
-        blockIcon.classList.toggle("ready", wizard && hasAbility("burst") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= wizardBurstManaCost);
+        blockIcon.classList.toggle("ready", wizard && hasAbility("burst") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= tuning.burstManaCost);
         potionIcon.classList.toggle("active", !wizard && player.attacking && player.attackKind === "bash");
-        potionIcon.classList.toggle("ready", wizard ? hasAbility("potion") && player.potionCooldown <= 0 : hasAbility("bash") && !player.attacking && player.attackCooldown <= 0 && player.guard >= knightBashGuardCost);
+        potionIcon.classList.toggle("ready", wizard ? hasAbility("potion") && player.potionCooldown <= 0 : hasAbility("bash") && !player.attacking && player.attackCooldown <= 0 && player.guard >= tuning.bashGuardCost);
       }
 
       function tick() {
