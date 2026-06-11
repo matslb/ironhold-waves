@@ -166,7 +166,7 @@
 
     .rightbox {
       padding: 12px 14px;
-      min-width: 170px;
+      min-width: 230px;
       display: grid;
       gap: 8px;
       text-align: right;
@@ -249,6 +249,10 @@
       display: flex;
       gap: 10px;
       transform: translateX(-50%);
+    }
+
+    .action-dock[hidden] {
+      display: none;
     }
 
     .action {
@@ -680,16 +684,16 @@
     }
 
     .quest-log {
-      position: absolute;
-      left: 18px;
-      bottom: 24px;
-      width: min(300px, calc(100vw - 36px));
       display: grid;
-      gap: 5px;
+      gap: 6px;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.13);
       color: var(--ink);
       font-size: 12px;
       font-weight: 800;
       pointer-events: none;
+      text-align: left;
     }
 
     .quest-log strong {
@@ -710,8 +714,12 @@
       }
 
       .rightbox {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, 1fr);
         min-width: 0;
+      }
+
+      .quest-log {
+        grid-column: 1 / -1;
       }
 
       .readout {
@@ -763,11 +771,13 @@
 
       <div id="banner" class="panel"></div>
 
-      <section class="rightbox panel" aria-label="Battle status">
-        <div class="readout"><span>Enemies</span><strong id="enemyText">0</strong></div>
+      <section class="rightbox panel" aria-label="Expedition status">
         <div class="readout"><span>KOs</span><strong id="koText">0</strong></div>
         <div class="readout" id="xpReadout" hidden><span>XP</span><strong id="xpText">0</strong></div>
-        <div class="readout"><span>Threat</span><strong id="threatText">Low</strong></div>
+        <section class="quest-log" id="questLog" hidden aria-label="Active quests">
+          <strong>Quests</strong>
+          <div id="questLogItems"></div>
+        </section>
       </section>
     </div>
 
@@ -788,11 +798,6 @@
         <button id="questClaimButton" type="button">Claim Reward</button>
         <button id="questCloseButton" class="secondary" type="button">Close</button>
       </div>
-    </section>
-
-    <section class="quest-log panel" id="questLog" hidden aria-label="Active quests">
-      <strong>Quests</strong>
-      <div id="questLogItems"></div>
     </section>
 
     <div class="action-dock" aria-hidden="true">
@@ -902,14 +907,13 @@
       const healthText = document.getElementById("healthText");
       const resourceLabel = document.getElementById("resourceLabel");
       const guardText = document.getElementById("guardText");
-      const enemyText = document.getElementById("enemyText");
       const koText = document.getElementById("koText");
       const xpReadout = document.getElementById("xpReadout");
       const xpText = document.getElementById("xpText");
-      const threatText = document.getElementById("threatText");
       const attackIcon = document.getElementById("attackIcon");
       const blockIcon = document.getElementById("blockIcon");
       const potionIcon = document.getElementById("potionIcon");
+      const actionDock = document.querySelector(".action-dock");
       const banner = document.getElementById("banner");
       const characterCards = Array.from(document.querySelectorAll("[data-character]"));
       const modeCards = Array.from(document.querySelectorAll("[data-mode]"));
@@ -1279,7 +1283,9 @@
           scene.remove(npc.group);
         }
         for (const item of game.questItems) {
-          scene.remove(item.group);
+          if (item.group.parent) {
+            item.group.parent.remove(item.group);
+          }
         }
         game.npcs.length = 0;
         game.questItems.length = 0;
@@ -1465,6 +1471,7 @@
           light,
           questId,
           collected: false,
+          respawnTimer: 0,
           position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
           bobSeed: random() * 10
         });
@@ -1510,20 +1517,25 @@
       function updateQuestItems(dt) {
         for (const item of game.questItems) {
           if (item.collected) {
+            item.respawnTimer -= dt;
+            if (item.respawnTimer <= 0) {
+              item.collected = false;
+              item.respawnTimer = 0;
+            }
+          }
+          const quest = getQuest(item.questId);
+          item.group.visible = !item.collected && !!quest && quest.state === "active";
+          if (!item.group.visible) {
             continue;
           }
           item.group.position.y = 0.12 + Math.sin(clock.elapsedTime * 2.8 + item.bobSeed) * 0.06;
           item.bloom.scale.setScalar(0.9 + Math.sin(clock.elapsedTime * 5.5 + item.bobSeed) * 0.14);
           item.ring.rotation.z += dt * 1.5;
           item.light.intensity = 0.58 + Math.sin(clock.elapsedTime * 4.2 + item.bobSeed) * 0.18;
-          const quest = getQuest(item.questId);
-          item.group.visible = !!quest && quest.state === "active";
-          if (!item.group.visible) {
-            continue;
-          }
           if (player.position.distanceTo(item.position) < 1.25) {
             item.collected = true;
-            scene.remove(item.group);
+            item.respawnTimer = 22 + (item.bobSeed % 7);
+            item.group.visible = false;
             spawnImpact(item.position, 0x9fffd1, 12);
             awardExplorationXp(5);
             updateQuestProgress(item.questId, 1);
@@ -1584,11 +1596,13 @@
         }
         refreshQuestDialog();
         questDialog.hidden = false;
+        actionDock.hidden = true;
         talkPrompt.hidden = true;
       }
 
       function closeQuestDialog() {
         questDialog.hidden = true;
+        actionDock.hidden = false;
         game.dialogNpc = null;
       }
 
@@ -4476,15 +4490,9 @@
         healthText.textContent = Math.ceil(player.health);
         guardText.textContent = Math.ceil(resourceValue);
         waveLabel.textContent = game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
-        enemyText.textContent = game.mode === "ffa" ? online.remotePlayers.size : game.enemies.length;
         koText.textContent = game.kills;
         xpReadout.hidden = game.mode !== "exploration";
         xpText.textContent = game.exploration.xp;
-        const nearby = game.mode === "ffa"
-          ? Array.from(online.remotePlayers.values()).filter(remote => remote.group.position.distanceTo(player.position) < 4.2).length
-          : game.enemies.filter(enemy => enemy.position.distanceTo(player.position) < 4.2).length;
-        game.threat = nearby > 3 ? "High" : nearby > 1 ? "Med" : "Low";
-        threatText.textContent = game.threat;
         attackIcon.classList.toggle("active", player.attacking && player.attackKind !== "burst");
         blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : player.blocking);
         blockIcon.classList.toggle("ready", wizard && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= 32);
