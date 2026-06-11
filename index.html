@@ -1256,6 +1256,11 @@
         dragonEye: new THREE.MeshBasicMaterial({ color: 0xffd15f }),
         wood: new THREE.MeshStandardMaterial({ color: 0x6b4326, roughness: 0.9 }),
         paleWood: new THREE.MeshStandardMaterial({ color: 0x9b7650, roughness: 0.84 }),
+        clay: new THREE.MeshStandardMaterial({ color: 0xa66f48, roughness: 0.94 }),
+        rope: new THREE.MeshStandardMaterial({ color: 0xb8965c, roughness: 0.96 }),
+        basket: new THREE.MeshStandardMaterial({ color: 0x8a6339, roughness: 0.95 }),
+        lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd889, transparent: true, opacity: 0.86 }),
+        cityBannerRed: new THREE.MeshStandardMaterial({ color: 0x7f2d2d, roughness: 0.86 }),
         crowdRed: new THREE.MeshStandardMaterial({ color: 0x8d3430, roughness: 0.8 }),
         crowdBlue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, roughness: 0.8 }),
         crowdGreen: new THREE.MeshStandardMaterial({ color: 0x4f6f4a, roughness: 0.8 }),
@@ -2323,6 +2328,191 @@
           }
           addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2, "lane");
         }
+      }
+
+      function makeDecorGroup(group, x, z, rotation = 0, scale = 1) {
+        const decor = new THREE.Group();
+        decor.position.set(x, 0, z);
+        decor.rotation.y = rotation;
+        decor.scale.setScalar(scale);
+        group.add(decor);
+        return decor;
+      }
+
+      function offsetFromFacing(x, z, rotation, forward, side = 0) {
+        const fx = -Math.sin(rotation);
+        const fz = -Math.cos(rotation);
+        const sx = Math.cos(rotation);
+        const sz = -Math.sin(rotation);
+        return {
+          x: x + fx * forward + sx * side,
+          z: z + fz * forward + sz * side
+        };
+      }
+
+      function addCart(group, x, z, rotation, scale = 1) {
+        const cart = makeDecorGroup(group, x, z, rotation, scale);
+        const bed = makeBox(1.55, 0.28, 0.95, materials.paleWood, 0, 0.42, 0);
+        const sideA = makeBox(0.12, 0.38, 1.08, materials.wood, -0.82, 0.62, 0);
+        const sideB = makeBox(0.12, 0.38, 1.08, materials.wood, 0.82, 0.62, 0);
+        const front = makeBox(1.65, 0.35, 0.1, materials.wood, 0, 0.6, -0.54);
+        const handleA = makeBox(0.08, 0.08, 1.05, materials.wood, -0.42, 0.48, -1.0);
+        const handleB = makeBox(0.08, 0.08, 1.05, materials.wood, 0.42, 0.48, -1.0);
+        handleA.rotation.x = 0.18;
+        handleB.rotation.x = 0.18;
+        const hay = makeBox(0.9, 0.22, 0.56, materials.dryBrush, 0.08, 0.78, 0.1);
+        hay.rotation.y = -0.16;
+        const wheelPositions = [
+          [-0.86, -0.34],
+          [0.86, -0.34],
+          [-0.86, 0.36],
+          [0.86, 0.36]
+        ];
+        const wheels = wheelPositions.map(([wx, wz]) => {
+          const wheel = makeCylinder(0.22, 0.22, 0.12, 12, materials.darkLeather, wx, 0.26, wz);
+          wheel.rotation.z = Math.PI / 2;
+          return wheel;
+        });
+        cart.add(bed, sideA, sideB, front, handleA, handleB, hay, ...wheels);
+        addExplorationCollider(x, z, scale * 1.25, "decor");
+        return cart;
+      }
+
+      function addBucket(group, x, z, rotation = 0, scale = 1) {
+        const bucket = makeDecorGroup(group, x, z, rotation, scale);
+        const body = makeCylinder(0.2, 0.24, 0.34, 10, materials.clay, 0, 0.18, 0);
+        const rim = makeCylinder(0.23, 0.23, 0.035, 10, materials.rope, 0, 0.36, 0);
+        const handle = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.015, 6, 16, Math.PI), materials.iron);
+        handle.position.set(0, 0.4, 0);
+        handle.rotation.x = Math.PI / 2;
+        bucket.add(body, rim, handle);
+        return bucket;
+      }
+
+      function addBroom(group, x, z, rotation = 0, scale = 1) {
+        const broom = makeDecorGroup(group, x, z, rotation, scale);
+        const handle = makeCylinder(0.025, 0.035, 1.15, 7, materials.rope, 0, 0.58, 0);
+        handle.rotation.z = 0.34;
+        const brush = makeBox(0.28, 0.34, 0.18, materials.dryBrush, -0.18, 0.12, 0);
+        brush.rotation.z = 0.16;
+        broom.add(handle, brush);
+        return broom;
+      }
+
+      function addBarrel(group, x, z, rotation = 0, scale = 1) {
+        const barrel = makeDecorGroup(group, x, z, rotation, scale);
+        const body = makeCylinder(0.34, 0.34, 0.74, 12, materials.wood, 0, 0.38, 0);
+        const bandA = makeCylinder(0.355, 0.355, 0.045, 12, materials.iron, 0, 0.22, 0);
+        const bandB = makeCylinder(0.355, 0.355, 0.045, 12, materials.iron, 0, 0.55, 0);
+        barrel.add(body, bandA, bandB);
+        addExplorationCollider(x, z, scale * 0.52, "decor");
+        return barrel;
+      }
+
+      function addCrateStack(group, x, z, rotation = 0, scale = 1) {
+        const stack = makeDecorGroup(group, x, z, rotation, scale);
+        const crateA = makeBox(0.72, 0.52, 0.62, materials.paleWood, -0.22, 0.26, 0);
+        const crateB = makeBox(0.62, 0.42, 0.56, materials.wood, 0.34, 0.21, 0.14);
+        const crateC = makeBox(0.5, 0.36, 0.46, materials.basket, -0.02, 0.72, -0.1);
+        crateC.rotation.y = 0.25;
+        stack.add(crateA, crateB, crateC);
+        addExplorationCollider(x, z, scale * 0.8, "decor");
+        return stack;
+      }
+
+      function addLanternPost(group, x, z, rotation = 0, scale = 1) {
+        const post = makeDecorGroup(group, x, z, rotation, scale);
+        const pole = makeCylinder(0.055, 0.075, 1.7, 8, materials.wood, 0, 0.85, 0);
+        const arm = makeBox(0.78, 0.07, 0.07, materials.wood, 0.36, 1.52, 0);
+        const hook = makeCylinder(0.018, 0.018, 0.28, 6, materials.iron, 0.72, 1.39, 0);
+        const lamp = makeSphere(0.13, materials.lampGlow.clone(), 0.72, 1.22, 0);
+        post.add(pole, arm, hook, lamp);
+        addExplorationCollider(x, z, scale * 0.45, "decor");
+        return post;
+      }
+
+      function addBench(group, x, z, rotation = 0, scale = 1) {
+        const bench = makeDecorGroup(group, x, z, rotation, scale);
+        const seat = makeBox(1.35, 0.16, 0.38, materials.paleWood, 0, 0.42, 0);
+        const legA = makeBox(0.12, 0.48, 0.12, materials.wood, -0.48, 0.24, -0.08);
+        const legB = makeBox(0.12, 0.48, 0.12, materials.wood, 0.48, 0.24, -0.08);
+        bench.add(seat, legA, legB);
+        return bench;
+      }
+
+      function addBannerPole(group, x, z, rotation = 0, scale = 1) {
+        const banner = makeDecorGroup(group, x, z, rotation, scale);
+        const pole = makeCylinder(0.05, 0.07, 2.1, 8, materials.wood, 0, 1.05, 0);
+        const crossbar = makeBox(0.92, 0.06, 0.06, materials.wood, 0.36, 1.8, 0);
+        const cloth = makeBox(0.62, 0.74, 0.035, materials.cityBannerRed, 0.46, 1.38, 0);
+        cloth.rotation.z = -0.08;
+        banner.add(pole, crossbar, cloth);
+        addExplorationCollider(x, z, scale * 0.45, "decor");
+        return banner;
+      }
+
+      function addTrainingDummy(group, x, z, rotation = 0, scale = 1) {
+        const dummy = makeDecorGroup(group, x, z, rotation, scale);
+        const pole = makeCylinder(0.055, 0.08, 1.55, 8, materials.wood, 0, 0.78, 0);
+        const body = makeBox(0.52, 0.72, 0.24, materials.basket, 0, 1.02, 0);
+        const arms = makeBox(1.18, 0.08, 0.08, materials.wood, 0, 1.22, 0);
+        const helm = makeCylinder(0.24, 0.28, 0.18, 10, materials.iron, 0, 1.48, 0);
+        dummy.add(pole, body, arms, helm);
+        addExplorationCollider(x, z, scale * 0.72, "decor");
+        return dummy;
+      }
+
+      function addBiomeVillageProp(group, village, random) {
+        const x = village.localX;
+        const z = village.localZ;
+        if (village.biome === "desert") {
+          addBucket(group, x - 1.6, z + 1.2, random() * TAU, 1.25);
+          addBucket(group, x - 2.1, z + 1.55, random() * TAU, 1.05);
+          addCrateStack(group, x + 3.3, z - 2.4, 0.35, 0.9);
+        } else if (village.biome === "mountain") {
+          addCrateStack(group, x + 2.8, z + 2.6, -0.4, 1.0);
+          addBarrel(group, x + 3.8, z + 1.7, 0.2, 0.9);
+          addLanternPost(group, x - 3.2, z - 2.6, -0.7, 0.92);
+        } else if (village.biome === "swamp") {
+          addBench(group, x - 2.8, z + 2.4, 0.38, 0.95);
+          addBucket(group, x + 1.8, z - 2.6, 0.2, 1.05);
+          addLanternPost(group, x + 3.2, z + 0.4, 0.4, 0.88);
+        } else {
+          addCart(group, x + 3.7, z - 2.8, -0.65, 0.95);
+          addBench(group, x - 3.5, z + 1.7, 0.5, 0.95);
+          addLanternPost(group, x + 1.2, z + 3.5, -0.15, 0.95);
+        }
+      }
+
+      function addVillageDecor(group, village, houses, random) {
+        const x = village.localX;
+        const z = village.localZ;
+        addBucket(group, x + 1.05, z + 0.72, 0.2, 1.05);
+        addBucket(group, x + 1.5, z + 0.98, -0.15, 0.9);
+        addCrateStack(group, x - 2.6, z - 2.2, random() * TAU, 0.92);
+        addBiomeVillageProp(group, village, random);
+        for (let i = 0; i < Math.min(2, houses.length); i += 1) {
+          const house = houses[i];
+          const broomSpot = offsetFromFacing(house.x, house.z, house.rotation, 2.9 * house.scale, (i === 0 ? -1 : 1) * 1.35 * house.scale);
+          addBroom(group, broomSpot.x, broomSpot.z, house.rotation + (i === 0 ? -0.2 : 0.24), 0.95);
+        }
+      }
+
+      function addCrownfordDecor(group, city, random) {
+        const x = city.localX;
+        const z = city.localZ;
+        addCart(group, x - 17.5, z - 27.5, 1.28, 1.05);
+        addCrateStack(group, x - 20.5, z - 24.5, -0.24, 1.05);
+        addBarrel(group, x - 18.5, z - 22.6, 0.1, 1.0);
+        addLanternPost(group, x - 13.5, z - 17.5, -0.2, 1.05);
+        addLanternPost(group, x + 13.5, z - 16.5, 0.2, 1.05);
+        addLanternPost(group, x + 28.5, z - 8.5, Math.PI / 2, 1.0);
+        addBannerPole(group, x - 32.5, z + 15.5, 0.15, 1.05);
+        addBannerPole(group, x - 19.0, z + 26.0, -0.18, 1.05);
+        addTrainingDummy(group, x - 12.0, z - 15.0, -0.25, 1.05);
+        addTrainingDummy(group, x - 15.5, z - 12.6, 0.18, 0.95);
+        addBucket(group, x + 27.8, z - 5.5, 0.2, 1.0);
+        addBench(group, x + 22.4, z + 6.8, -0.4, 1.0);
       }
 
       function addStable(group, x, z) {
@@ -3827,12 +4017,15 @@
           biome
         };
         game.exploration.villages.push(village);
+        const houses = [];
         for (let i = 0; i < 5; i += 1) {
           const angle = (i / 5) * TAU + random() * 0.45;
           const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
           const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
-          const house = addExplorationHouse(group, hx, hz, 0.94 + random() * 0.18, i, biome);
+          const houseScale = 0.94 + random() * 0.18;
+          const house = addExplorationHouse(group, hx, hz, houseScale, i, biome);
           house.rotation.y += angle + Math.PI;
+          houses.push({ x: hx, z: hz, rotation: house.rotation.y, scale: houseScale });
         }
         const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.stone;
         const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, 0.31, z);
@@ -3871,6 +4064,7 @@
             biome
           ));
         }
+        addVillageDecor(group, village, houses, random);
       }
 
       function addCityPavement(group, x, z, width, depth, rotation = 0) {
@@ -4110,6 +4304,7 @@
         }
 
         addCityQuestItems(group, city, random);
+        addCrownfordDecor(group, city, random);
 
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Rowan Vale", "cityWrits", "city"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 25, game.exploration.origin.z + z - 10, random, 8.5, "Sister Edda", "citySanctuary", "city"));
@@ -4140,7 +4335,7 @@
         const worldX = game.exploration.origin.x + localX;
         const worldZ = game.exploration.origin.z + localZ;
         for (const collider of game.exploration.colliders) {
-          const spacing = collider.kind === "tree" ? 1.15 : collider.kind === "rock" ? 1.25 : 2.1;
+          const spacing = collider.kind === "tree" ? 1.15 : collider.kind === "rock" ? 1.25 : collider.kind === "decor" ? 0.85 : 2.1;
           if (Math.hypot(worldX - collider.x, worldZ - collider.z) < collider.radius + spacing) {
             return true;
           }
