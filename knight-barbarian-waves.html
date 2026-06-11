@@ -1095,8 +1095,16 @@
         dryBrush: new THREE.MeshStandardMaterial({ color: 0x8d7140, roughness: 0.96 }),
         adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, roughness: 0.92 }),
         mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, roughness: 0.9 }),
+        swampGround: new THREE.MeshStandardMaterial({ color: 0x314f3a, roughness: 0.98 }),
+        bogWater: new THREE.MeshStandardMaterial({ color: 0x254f49, roughness: 0.34, metalness: 0.02, transparent: true, opacity: 0.68 }),
+        reed: new THREE.MeshStandardMaterial({ color: 0x607747, roughness: 0.94 }),
+        willowLeaf: new THREE.MeshStandardMaterial({ color: 0x2d5d3f, roughness: 0.9 }),
+        swampPlank: new THREE.MeshStandardMaterial({ color: 0x5b4932, roughness: 0.95 }),
+        thatch: new THREE.MeshStandardMaterial({ color: 0x77623f, roughness: 0.96 }),
         spiderCarapace: new THREE.MeshStandardMaterial({ color: 0x2d221c, roughness: 0.78, metalness: 0.03 }),
         spiderMarking: new THREE.MeshBasicMaterial({ color: 0xd9a648 }),
+        wisp: new THREE.MeshBasicMaterial({ color: 0x5effbd, transparent: true, opacity: 0.48, depthWrite: false }),
+        wispCore: new THREE.MeshBasicMaterial({ color: 0xd8fff1, transparent: true, opacity: 0.94 }),
         cityWall: new THREE.MeshStandardMaterial({ color: 0xb8b7aa, roughness: 0.88 }),
         cityRoof: new THREE.MeshStandardMaterial({ color: 0x435260, roughness: 0.86 }),
         stainedGlass: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.72 }),
@@ -1490,15 +1498,18 @@
         const ctx = canvas.getContext("2d");
         const desert = biomeId === "desert";
         const mountain = biomeId === "mountain";
-        ctx.fillStyle = desert ? "#b99258" : mountain ? "#5d635f" : "#45683b";
+        const swamp = biomeId === "swamp";
+        ctx.fillStyle = desert ? "#b99258" : mountain ? "#5d635f" : swamp ? "#31513a" : "#45683b";
         ctx.fillRect(0, 0, 256, 256);
         for (let i = 0; i < 850; i += 1) {
           const x = random() * 256;
           const y = random() * 256;
-          const r = 0.8 + random() * (desert ? 3.2 : 4.8);
+          const r = 0.8 + random() * (desert ? 3.2 : swamp ? 5.4 : 4.8);
           ctx.fillStyle = desert
             ? (random() > 0.52 ? "rgba(236, 196, 122, 0.2)" : "rgba(111, 79, 42, 0.14)")
-            : (random() > 0.48 ? "rgba(190, 198, 191, 0.17)" : "rgba(31, 38, 36, 0.18)");
+            : swamp
+              ? (random() > 0.48 ? "rgba(108, 132, 75, 0.2)" : "rgba(13, 35, 31, 0.22)")
+              : (random() > 0.48 ? "rgba(190, 198, 191, 0.17)" : "rgba(31, 38, 36, 0.18)");
           ctx.beginPath();
           ctx.arc(x, y, r, 0, TAU);
           ctx.fill();
@@ -1513,17 +1524,28 @@
             ctx.bezierCurveTo(70, y - 20 + random() * 40, 170, y - 20 + random() * 40, 256, y + random() * 28);
             ctx.stroke();
           }
+        } else if (swamp) {
+          for (let i = 0; i < 28; i += 1) {
+            ctx.strokeStyle = random() > 0.45 ? "rgba(35, 78, 69, 0.28)" : "rgba(112, 131, 74, 0.2)";
+            ctx.lineWidth = 2 + random() * 4;
+            ctx.beginPath();
+            const y = random() * 256;
+            ctx.moveTo(-12, y);
+            ctx.bezierCurveTo(62, y - 28 + random() * 56, 160, y - 26 + random() * 52, 268, y + random() * 30 - 15);
+            ctx.stroke();
+          }
         }
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(desert ? 6 : 5, desert ? 6 : 5);
+        texture.repeat.set(desert ? 6 : swamp ? 4 : 5, desert ? 6 : swamp ? 4 : 5);
         return texture;
       }
 
       function addBiomePatch(group, biome, seed) {
-        const material = (biome.id === "desert" ? materials.desert : materials.mountainGround).clone();
+        const baseMaterial = biome.id === "desert" ? materials.desert : biome.id === "swamp" ? materials.swampGround : materials.mountainGround;
+        const material = baseMaterial.clone();
         material.map = createBiomeTexture(seed, biome.id);
         const offsets = [
           [0, 0, 1],
@@ -1595,12 +1617,49 @@
         return house;
       }
 
+      function addSwampHouse(group, x, z, scale, variant) {
+        const house = new THREE.Group();
+        house.position.set(x, 0, z);
+        house.scale.setScalar(scale);
+        const platform = makeBox(5.7, 0.18, 4.8, materials.swampPlank, 0, 0.62, 0);
+        const posts = [
+          [-2.35, -1.95],
+          [2.35, -1.95],
+          [-2.35, 1.95],
+          [2.35, 1.95]
+        ].map(([px, pz]) => makeCylinder(0.08, 0.12, 1.2, 8, materials.wood, px, 0.6, pz));
+        const back = makeBox(4.5, 1.72, 0.24, materials.swampPlank, 0, 1.58, 1.72);
+        const left = makeBox(0.24, 1.72, 3.7, materials.swampPlank, -2.13, 1.58, 0);
+        const right = makeBox(0.24, 1.72, 3.7, materials.swampPlank, 2.13, 1.58, 0);
+        const frontLeft = makeBox(1.45, 1.72, 0.24, materials.swampPlank, -1.35, 1.58, -1.72);
+        const frontRight = makeBox(1.45, 1.72, 0.24, materials.swampPlank, 1.35, 1.58, -1.72);
+        const door = makeBox(0.74, 1.16, 0.08, materials.darkLeather, 0, 1.18, -1.86);
+        const roof = makeCone(3.6, 1.12, 4, materials.thatch, 0, 2.88, 0);
+        roof.rotation.y = Math.PI / 4;
+        roof.scale.set(1.22, 0.72, 1.0);
+        const eave = makeBox(5.3, 0.12, 4.5, materials.thatch, 0, 2.38, 0);
+        const lanternMat = materials.wispCore.clone();
+        lanternMat.opacity = 0.78;
+        const lantern = makeSphere(0.095, lanternMat, -1.72, 1.84, -1.9);
+        const railA = makeBox(2.3, 0.1, 0.08, materials.wood, -1.62, 0.98, -2.32);
+        const railB = makeBox(2.3, 0.1, 0.08, materials.wood, 1.62, 0.98, -2.32);
+        house.add(platform, back, left, right, frontLeft, frontRight, door, roof, eave, lantern, railA, railB, ...posts);
+        if (variant % 2 === 1) {
+          house.rotation.y = Math.PI / 2;
+        }
+        group.add(house);
+        return house;
+      }
+
       function addExplorationHouse(group, x, z, scale, variant, biome = "meadow") {
         if (biome === "desert") {
           return addDesertHouse(group, x, z, scale, variant);
         }
         if (biome === "mountain") {
           return addMountainHouse(group, x, z, scale, variant);
+        }
+        if (biome === "swamp") {
+          return addSwampHouse(group, x, z, scale, variant);
         }
         const house = new THREE.Group();
         house.position.set(x, 0, z);
@@ -1711,6 +1770,75 @@
         group.add(bush);
       }
 
+      function addReeds(group, x, z, random, count = 5 + Math.floor(random() * 5)) {
+        const reeds = new THREE.Group();
+        reeds.position.set(x, 0, z);
+        for (let i = 0; i < count; i += 1) {
+          const height = 0.46 + random() * 0.62;
+          const rx = (random() - 0.5) * 0.75;
+          const rz = (random() - 0.5) * 0.75;
+          const reed = makeCylinder(0.012, 0.026, height, 6, materials.reed, rx, height / 2, rz);
+          reed.rotation.x = (random() - 0.5) * 0.42;
+          reed.rotation.z = (random() - 0.5) * 0.42;
+          reed.castShadow = false;
+          reeds.add(reed);
+          if (random() > 0.58) {
+            const seedHead = makeCylinder(0.016, 0.024, 0.16, 6, materials.dryBrush, rx, height + 0.04, rz);
+            seedHead.castShadow = false;
+            reeds.add(seedHead);
+          }
+        }
+        reeds.rotation.y = random() * TAU;
+        group.add(reeds);
+      }
+
+      function addSwampWillow(group, x, z, random) {
+        const tree = new THREE.Group();
+        tree.position.set(x, 0, z);
+        const height = 2.2 + random() * 1.4;
+        const trunk = makeCylinder(0.18, 0.3, height, 8, materials.wood, 0, height / 2, 0);
+        trunk.rotation.z = (random() - 0.5) * 0.18;
+        tree.add(trunk);
+        for (let i = 0; i < 4; i += 1) {
+          const angle = (i / 4) * TAU + random() * 0.4;
+          const crown = makeSphere(0.82 + random() * 0.28, materials.willowLeaf, Math.cos(angle) * 0.42, height + 0.34 + random() * 0.24, Math.sin(angle) * 0.42);
+          crown.scale.set(1.0, 0.62 + random() * 0.16, 1.08);
+          tree.add(crown);
+        }
+        for (let i = 0; i < 7; i += 1) {
+          const angle = (i / 7) * TAU + random() * 0.35;
+          const length = 0.82 + random() * 0.72;
+          const vine = makeCylinder(0.012, 0.018, length, 5, materials.reed, Math.cos(angle) * (0.55 + random() * 0.32), height + 0.1 - length / 2, Math.sin(angle) * (0.55 + random() * 0.32));
+          vine.rotation.x = (random() - 0.5) * 0.35;
+          vine.rotation.z = (random() - 0.5) * 0.35;
+          vine.castShadow = false;
+          tree.add(vine);
+        }
+        tree.rotation.y = random() * TAU;
+        if (Math.hypot(x, z) > 92) {
+          tree.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = false;
+            }
+          });
+        }
+        group.add(tree);
+      }
+
+      function addBogPool(group, x, z, rx, rz, random) {
+        const pool = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 36), materials.bogWater.clone());
+        pool.position.set(x, 0.046, z);
+        pool.scale.set(rx, 1, rz);
+        pool.rotation.y = random() * TAU;
+        pool.receiveShadow = true;
+        group.add(pool);
+        for (let i = 0; i < 7; i += 1) {
+          const angle = random() * TAU;
+          const radius = 0.92 + random() * 0.2;
+          addReeds(group, x + Math.cos(angle) * rx * radius, z + Math.sin(angle) * rz * radius, random, 3 + Math.floor(random() * 4));
+        }
+      }
+
       function addExplorationRock(group, x, z, random, large = false) {
         const radius = large ? 1.15 + random() * 1.6 : 0.35 + random() * 0.85;
         const geometry = new THREE.DodecahedronGeometry(radius, 0);
@@ -1754,7 +1882,7 @@
           const radius = Math.sqrt(random());
           const x = biome.x + Math.cos(angle) * biome.rx * radius;
           const z = biome.z + Math.sin(angle) * biome.rz * radius;
-          if (Math.hypot(x, z) < 16 || !biomeContains(biome, x, z, padding) || isExplorationBlocked(x, z)) {
+          if (Math.hypot(x, z) < 16 || Math.hypot(x, z) > game.exploration.radius - padding || !biomeContains(biome, x, z, padding) || isExplorationBlocked(x, z)) {
             continue;
           }
           return { x, z };
@@ -1791,8 +1919,10 @@
           cloth.color.setHex(0x596b77);
         } else if (biome === "city") {
           cloth.color.setHex(0x3f5370);
+        } else if (biome === "swamp") {
+          cloth.color.setHex(0x365f4a);
         }
-        const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : materials.paleWood;
+        const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : materials.paleWood;
         const body = makeCylinder(0.22, 0.28, 0.78, 12, cloth, 0, 0.78, 0);
         const head = makeSphere(0.18, materials.skin, 0, 1.32, 0);
         const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.56, 0);
@@ -1806,6 +1936,10 @@
         } else if (biome === "city") {
           const collar = makeCylinder(0.2, 0.24, 0.1, 12, materials.gold, 0, 1.18, 0);
           group.add(collar);
+        } else if (biome === "swamp") {
+          const reedWrap = makeCylinder(0.19, 0.22, 0.1, 12, materials.reed, 0, 1.18, 0);
+          const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
+          group.add(reedWrap, satchel);
         }
         const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 1.92, 0);
         questMarker.visible = !!questId;
@@ -1895,6 +2029,20 @@
             color: 0xffd889,
             stemMaterial: materials.dryBrush,
             radius: 0.1
+          });
+        }
+      }
+
+      function addSwampQuestItems(group, biome, random) {
+        if (!biome) {
+          return;
+        }
+        for (let i = 0; i < 5; i += 1) {
+          const point = randomPointInBiome(random, "swamp", 10);
+          createQuestItem(group, "bogRelics", point.x, point.z, random, {
+            color: 0xb9ffd5,
+            stemMaterial: materials.swampPlank,
+            radius: 0.105
           });
         }
       }
@@ -2302,6 +2450,8 @@
             questDialogBody.textContent = "Smoke over the ridges means dragons are awake. Keep low when the wind goes warm.";
           } else if (npc.biome === "city") {
             questDialogBody.textContent = "Keep to the paved streets near the ring. The castle bells make it easy to find your way back.";
+          } else if (npc.biome === "swamp") {
+            questDialogBody.textContent = "Mistfen paths are safest on the planks. If a pale light drifts against the wind, keep your weapon ready.";
           } else {
             questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
           }
@@ -2371,6 +2521,17 @@
           player.mana = player.maxMana;
           player.maxGuard += 10;
           player.guard = player.maxGuard;
+        } else if (quest.id === "wisps") {
+          player.maxMana += 15;
+          player.mana = player.maxMana;
+          player.maxHealth += 8;
+          player.health = player.maxHealth;
+        } else if (quest.id === "bogRelics") {
+          player.health = player.maxHealth;
+          player.guard = player.maxGuard;
+          player.mana = player.maxMana;
+          game.potions.push(createHealthPotion(player.position.x - 1.4, player.position.z - 1.2, { kind: "full" }));
+          trimPotionDrops();
         } else if (quest.id === "horse") {
           spawnHorseNearPlayer();
         } else if (quest.id === "villages") {
@@ -2422,6 +2583,8 @@
           villages: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.72)" },
           spiders: { hex: "#d9a648", fill: "rgba(217, 166, 72, 0.17)", stroke: "rgba(217, 166, 72, 0.76)" },
           dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" },
+          wisps: { hex: "#8affd2", fill: "rgba(138, 255, 210, 0.17)", stroke: "rgba(138, 255, 210, 0.78)" },
+          bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
           cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
           citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" }
         };
@@ -2439,6 +2602,8 @@
           villages: "settlements",
           spiders: "desert",
           dragons: "mountains",
+          wisps: "Mistfen",
+          bogRelics: "Mistfen pools",
           cityWrits: "arena city",
           citySanctuary: "church district"
         };
@@ -2503,8 +2668,9 @@
             .filter(village => !game.exploration.discovered.has(village.id))
             .map(village => ({ x: village.x, z: village.z, radius: village.radius + 24, color }));
         }
-        if (quest.id === "spiders" || quest.id === "dragons") {
-          const biome = game.exploration.biomes.find(candidate => candidate.id === (quest.id === "spiders" ? "desert" : "mountain"));
+        if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "wisps") {
+          const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" ? "mountain" : "swamp";
+          const biome = game.exploration.biomes.find(candidate => candidate.id === biomeId);
           return biome
             ? [{
               x: game.exploration.origin.x + biome.x,
@@ -2514,6 +2680,13 @@
               color
             }]
             : [];
+        }
+        if (quest.id === "bogRelics") {
+          const positions = game.questItems
+            .filter(item => item.questId === "bogRelics")
+            .map(item => item.position);
+          const area = aggregateQuestArea(positions, 22, 28, 58);
+          return area ? [{ ...area, color }] : [];
         }
         if (quest.id === "cityWrits" || quest.id === "citySanctuary") {
           if (quest.id === "cityWrits") {
@@ -2658,6 +2831,26 @@
             2
           ),
           createQuest(
+            "wisps",
+            "Lights in the Mist",
+            "Mirel",
+            "The fen lights have started circling the plank roads. Banish enough of them and travelers can cross Mistfen after dusk again.",
+            "Banish fen wisps",
+            "+15 max magica and +8 max health",
+            "hunt",
+            4
+          ),
+          createQuest(
+            "bogRelics",
+            "Relics Under Reed",
+            "Noll",
+            "Old shrine bells sank into the black pools years ago. Find the ones still glowing and I will trade you our best field medicine.",
+            "Recover sunken relics",
+            "A full recovery potion and full restore",
+            "collect",
+            3
+          ),
+          createQuest(
             "horse",
             "Hooves for the Long Road",
             "Rowan",
@@ -2691,7 +2884,7 @@
       }
 
       function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
-        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: biome === "desert" ? 17.5 : 15.5, biome };
+        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: biome === "desert" ? 17.5 : biome === "swamp" ? 18.5 : 15.5, biome };
         game.exploration.villages.push(village);
         addExplorationPath(group, 0, 0, x, z, 2.8);
         for (let i = 0; i < 5; i += 1) {
@@ -2701,9 +2894,9 @@
           const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i, biome);
           house.rotation.y += angle + Math.PI;
         }
-        const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : materials.stone;
+        const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.stone;
         const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, 0.31, z);
-        const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : materials.wood, x, 1.1, z);
+        const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.wood, x, 1.1, z);
         const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, 0.75, z);
         const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, 0.75, z);
         group.add(well, beam, postA, postB);
@@ -2711,7 +2904,9 @@
           ? ["Amara", "Sahir", "Nima", "Tarek", "Zala", "Omid"]
           : biome === "mountain"
             ? ["Kael", "Brunna", "Sten", "Yrsa", "Hald", "Runa"]
-            : ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
+            : biome === "swamp"
+              ? ["Mirel", "Noll", "Vessa", "Orrin", "Sable", "Fen"]
+              : ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
         for (let i = 0; i < 3; i += 1) {
           const angle = random() * TAU;
           let questId = null;
@@ -2721,8 +2916,12 @@
             questId = "spiders";
           } else if (biome === "mountain" && i === 0) {
             questId = "dragons";
+          } else if (biome === "swamp" && i === 0) {
+            questId = "wisps";
+          } else if (biome === "swamp" && i === 1) {
+            questId = "bogRelics";
           }
-          const name = questId === "villages" ? "Sella" : questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : names[(index * 3 + i) % names.length];
+          const name = questId === "villages" ? "Sella" : questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : names[(index * 3 + i) % names.length];
           game.npcs.push(createFriendlyNpc(
             game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
             game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
@@ -3009,9 +3208,19 @@
           rz: 68,
           rotation: 0.28
         };
-        game.exploration.biomes.push(mountain, desert);
+        const swamp = {
+          id: "swamp",
+          name: "Mistfen",
+          x: -82 - random() * 8,
+          z: 138 + random() * 8,
+          rx: 48,
+          rz: 38,
+          rotation: -0.36
+        };
+        game.exploration.biomes.push(mountain, desert, swamp);
         addBiomePatch(group, desert, seed);
         addBiomePatch(group, mountain, seed);
+        addBiomePatch(group, swamp, seed);
       }
 
       function seedExplorationEnemy(enemy, world, random, awareness, homeRadius = 9) {
@@ -3069,6 +3278,35 @@
         });
       }
 
+      function addSwampMarkers(group, biome, random) {
+        if (!biome) {
+          return;
+        }
+        const boardwalk = makeBox(19, 0.12, 1.15, materials.swampPlank, biome.x - 4, 0.18, biome.z + 3);
+        boardwalk.rotation.y = -0.34;
+        group.add(boardwalk);
+        for (let i = 0; i < 7; i += 1) {
+          const offset = -8.4 + i * 2.8;
+          const postA = makeCylinder(0.055, 0.08, 0.86, 6, materials.wood, biome.x - 4 + Math.cos(boardwalk.rotation.y) * offset - Math.sin(boardwalk.rotation.y) * 0.62, 0.43, biome.z + 3 + Math.sin(boardwalk.rotation.y) * offset + Math.cos(boardwalk.rotation.y) * 0.62);
+          const postB = makeCylinder(0.055, 0.08, 0.86, 6, materials.wood, biome.x - 4 + Math.cos(boardwalk.rotation.y) * offset + Math.sin(boardwalk.rotation.y) * 0.62, 0.43, biome.z + 3 + Math.sin(boardwalk.rotation.y) * offset - Math.cos(boardwalk.rotation.y) * 0.62);
+          group.add(postA, postB);
+        }
+        for (let i = 0; i < 5; i += 1) {
+          const point = randomPointInBiome(random, "swamp", 10);
+          addBogPool(group, point.x, point.z, 2.8 + random() * 3.0, 1.8 + random() * 2.0, random);
+        }
+        const shrine = new THREE.Group();
+        shrine.position.set(biome.x + 9, 0, biome.z - 10);
+        const base = makeBox(2.4, 0.18, 1.8, materials.swampPlank, 0, 0.18, 0);
+        const lintel = makeBox(2.0, 0.16, 0.16, materials.reed, 0, 1.72, -0.08);
+        const leftPost = makeCylinder(0.07, 0.1, 1.72, 8, materials.wood, -0.78, 0.92, -0.08);
+        const rightPost = makeCylinder(0.07, 0.1, 1.72, 8, materials.wood, 0.78, 0.92, -0.08);
+        const glow = makeSphere(0.16, materials.wispCore.clone(), 0, 1.1, -0.12);
+        shrine.add(base, lintel, leftPost, rightPost, glow);
+        shrine.rotation.y = 0.35;
+        group.add(shrine);
+      }
+
       function setupExplorationWorld() {
         clearExplorationWorld();
         const seed = explorationSeed();
@@ -3101,6 +3339,7 @@
         setupExplorationBiomes(group, random, seed);
         const mountainBiome = game.exploration.biomes.find(biome => biome.id === "mountain");
         const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
+        const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
 
         setupExplorationQuests();
         addExplorationHouse(group, 0, 0, 1.05, 0, "meadow");
@@ -3122,7 +3361,9 @@
         addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1, "meadow");
         addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
         addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
+        addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
         addArenaCity(group, 12 + random() * 5, 132 + random() * 6, random);
+        addSwampQuestItems(group, swampBiome, random);
 
         for (let i = 0; i < 54; i += 1) {
           const angle = (i / 54) * TAU + (random() - 0.5) * 0.16;
@@ -3138,6 +3379,7 @@
         }
         addMountainRoost(group, mountainBiome, random);
         addDesertMarkers(group, desertBiome, random);
+        addSwampMarkers(group, swampBiome, random);
 
         for (let i = 0; i < 170; i += 1) {
           const point = randomExplorationPoint(random, 16, 174, (x, z) => biomeAt(x, z) === "meadow");
@@ -3159,8 +3401,21 @@
             addDryBush(group, point.x, point.z, random);
           }
         }
+        for (let i = 0; i < 66; i += 1) {
+          const point = randomPointInBiome(random, "swamp", 6);
+          if (random() > 0.62) {
+            addSwampWillow(group, point.x, point.z, random);
+          } else if (random() > 0.22) {
+            addReeds(group, point.x, point.z, random);
+          } else {
+            addBogPool(group, point.x, point.z, 1.3 + random() * 1.6, 0.8 + random() * 1.1, random);
+          }
+        }
         for (let i = 0; i < 112; i += 1) {
-          const point = randomExplorationPoint(random, 13, 178, (x, z) => biomeAt(x, z) !== "desert");
+          const point = randomExplorationPoint(random, 13, 178, (x, z) => {
+            const biome = biomeAt(x, z);
+            return biome !== "desert" && biome !== "swamp";
+          });
           addExplorationRock(group, point.x, point.z, random, random() > 0.82);
         }
         addExplorationFlowers(group, random, 120);
@@ -3188,6 +3443,12 @@
           dragon.hoverHeight = 2.05 + random() * 0.45;
           dragon.desiredRange = 8.2 + random() * 1.8;
           seedExplorationEnemy(dragon, world, random, 18 + random() * 7, 18);
+        }
+        for (let i = 0; i < 8; i += 1) {
+          const point = randomPointInBiome(random, "swamp", 12);
+          const world = explorationToWorld(point.x, point.z);
+          const wisp = createWisp(world.x, world.z, 1 + Math.floor(random() * 2));
+          seedExplorationEnemy(wisp, world, random, 12 + random() * 5, 9.5);
         }
         updateQuestMarkers();
         updateQuestLog();
@@ -4735,6 +4996,44 @@
         return { group, body: abdomen, legs, healthRoot, hpFill, telegraph };
       }
 
+      function createWispModel(scale) {
+        const group = new THREE.Group();
+        group.scale.setScalar(scale);
+
+        const floatRoot = new THREE.Group();
+        floatRoot.position.y = 0.98;
+        const shell = makeSphere(0.42, materials.wisp.clone(), 0, 0, 0);
+        shell.scale.set(1.0, 1.18, 1.0);
+        const core = makeSphere(0.16, materials.wispCore.clone(), 0, 0, 0);
+        const ringA = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.014, 8, 28), materials.wispCore.clone());
+        ringA.rotation.x = Math.PI / 2;
+        const ringB = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.012, 8, 24), materials.wisp.clone());
+        ringB.rotation.y = Math.PI / 2;
+        const sparks = [];
+        for (let i = 0; i < 4; i += 1) {
+          const spark = makeSphere(0.055, materials.wispCore.clone(), 0, 0, 0);
+          sparks.push(spark);
+          floatRoot.add(spark);
+        }
+        const glow = new THREE.PointLight(0x8affd2, 1.25, 5.5, 1.9);
+        floatRoot.add(shell, core, ringA, ringB, glow);
+
+        const healthRoot = new THREE.Group();
+        healthRoot.position.set(0, 1.72, 0);
+        const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: 0x081713, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
+        const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.045), new THREE.MeshBasicMaterial({ color: 0x8affd2, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+        hpFill.position.z = 0.003;
+        healthRoot.add(hpBack, hpFill);
+
+        const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.04, 34), materials.danger.clone());
+        telegraph.rotation.x = -Math.PI / 2;
+        telegraph.position.y = 0.026;
+        telegraph.visible = false;
+
+        group.add(floatRoot, healthRoot, telegraph);
+        return { group, floatRoot, shell, core, ringA, ringB, sparks, healthRoot, hpFill, telegraph };
+      }
+
       function createBarbarian(x, z, wave) {
         const scale = 0.92 + Math.random() * 0.18 + Math.min(wave * 0.01, 0.14);
         const model = createBarbarianModel(scale);
@@ -4817,6 +5116,34 @@
           stunned: 0,
           dead: false,
           walkTime: Math.random() * 10
+        };
+        enemy.group.position.copy(enemy.position);
+        scene.add(enemy.group);
+        return enemy;
+      }
+
+      function createWisp(x, z, wave) {
+        const scale = 0.9 + Math.random() * 0.18;
+        const model = createWispModel(scale);
+        const enemy = {
+          ...model,
+          type: "wisp",
+          position: new THREE.Vector3(x, 0, z),
+          velocity: new THREE.Vector3(),
+          yaw: 0,
+          scale,
+          health: 40 + wave * 6,
+          maxHealth: 40 + wave * 6,
+          speed: 2.5 + Math.random() * 0.34,
+          radius: 0.62 * scale,
+          cooldown: 0.8 + Math.random() * 1.2,
+          state: "patrol",
+          attackTimer: 0,
+          attackDuration: 0,
+          attackHitDone: false,
+          stunned: 0,
+          dead: false,
+          bobSeed: Math.random() * 10
         };
         enemy.group.position.copy(enemy.position);
         scene.add(enemy.group);
@@ -5531,6 +5858,9 @@
         if (enemy.type === "dragon") {
           return out.copy(enemy.group.position);
         }
+        if (enemy.type === "wisp") {
+          return out.set(enemy.position.x, 1.05, enemy.position.z);
+        }
         return out.set(enemy.position.x, 1.08, enemy.position.z);
       }
 
@@ -5630,26 +5960,28 @@
         enemy.health -= damage;
         enemy.stunned = Math.max(enemy.stunned, stun);
         enemy.velocity.addScaledVector(direction, 4.3);
-        const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.position;
-        const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : 0xffd19b;
+        const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.position;
+        const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : 0xffd19b;
         spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
         if (enemy.health <= 0) {
           enemy.dead = true;
           if (enemy.type === "dragon") {
             dropDragonHealthPotion(enemy);
-          } else if (game.mode === "exploration" && Math.random() < (enemy.type === "spider" ? 0.2 : 0.3)) {
+          } else if (game.mode === "exploration" && Math.random() < (enemy.type === "spider" ? 0.2 : enemy.type === "wisp" ? 0.24 : 0.3)) {
             game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 18 }));
             trimPotionDrops();
           }
           scene.remove(enemy.group);
           game.kills += 1;
           if (game.mode === "exploration" && enemy.exploration) {
-            awardExplorationXp(enemy.type === "dragon" ? 28 : enemy.type === "spider" ? 10 : 12);
+            awardExplorationXp(enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12);
             updateQuestProgress("raiders", 1);
             if (enemy.type === "spider") {
               updateQuestProgress("spiders", 1);
             } else if (enemy.type === "dragon") {
               updateQuestProgress("dragons", 1);
+            } else if (enemy.type === "wisp") {
+              updateQuestProgress("wisps", 1);
             }
           }
         }
@@ -5812,6 +6144,107 @@
         updateSpiderAnimation(enemy, dt);
       }
 
+      function beginWispAttack(enemy) {
+        enemy.state = "pulse";
+        enemy.attackTimer = 0;
+        enemy.attackHitDone = false;
+        enemy.attackDuration = 0.76;
+        enemy.velocity.multiplyScalar(0.25);
+        enemy.telegraph.visible = true;
+        enemy.telegraph.material.opacity = 0.38;
+        enemy.telegraph.scale.setScalar(0.82);
+      }
+
+      function updateWispAttack(enemy, dt, playerDistance, playerDirection) {
+        enemy.attackTimer += dt;
+        const t = enemy.attackTimer / enemy.attackDuration;
+        enemy.telegraph.visible = true;
+        enemy.telegraph.scale.setScalar(0.82 + smoothstep(0, 0.72, t) * 1.15);
+        enemy.telegraph.material.opacity = 0.4 * (1 - smoothstep(0.45, 1, t));
+        enemy.floatRoot.scale.setScalar(1 + Math.sin(clamp(t, 0, 1) * Math.PI) * 0.22);
+        if (!enemy.attackHitDone && t > 0.5) {
+          enemy.attackHitDone = true;
+          if (playerDistance < 2.65) {
+            const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
+            applyPlayerDamage(15, 24, hitDirection, 0.16);
+            spawnImpact(tmpVec.set(enemy.position.x, 1.0, enemy.position.z), 0x8affd2, 16);
+          }
+        }
+        if (enemy.attackTimer >= enemy.attackDuration) {
+          enemy.state = "chase";
+          enemy.cooldown = 1.35 + Math.random() * 0.9;
+          enemy.telegraph.visible = false;
+          enemy.floatRoot.scale.setScalar(1);
+        }
+      }
+
+      function updateWispAnimation(enemy, dt) {
+        const time = clock.elapsedTime + enemy.bobSeed;
+        const bob = Math.sin(time * 3.2) * 0.16;
+        enemy.floatRoot.position.y = 0.98 + bob;
+        enemy.shell.scale.setScalar(1.02 + Math.sin(time * 5.1) * 0.08);
+        enemy.core.scale.setScalar(1.0 + Math.sin(time * 7.2) * 0.16);
+        enemy.ringA.rotation.z += dt * 2.7;
+        enemy.ringB.rotation.x -= dt * 3.6;
+        for (let i = 0; i < enemy.sparks.length; i += 1) {
+          const angle = time * (1.2 + i * 0.18) + i * TAU / enemy.sparks.length;
+          const radius = 0.42 + Math.sin(time * 2.1 + i) * 0.06;
+          enemy.sparks[i].position.set(Math.cos(angle) * radius, Math.sin(time * 3.8 + i) * 0.12, Math.sin(angle) * radius);
+        }
+      }
+
+      function updateExplorationWispEnemy(enemy, dt, playerDistance, playerDirection) {
+        if (enemy.stunned > 0) {
+          enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+          enemy.telegraph.visible = false;
+          enemy.floatRoot.scale.setScalar(1);
+        } else if (enemy.state === "pulse") {
+          enemy.yaw = yawFromDirection(playerDirection);
+          updateWispAttack(enemy, dt, playerDistance, playerDirection);
+        } else {
+          const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.7);
+          if (shouldChase) {
+            enemy.state = "chase";
+            enemy.yaw = yawFromDirection(playerDirection);
+            if (playerDistance < 2.7 && enemy.cooldown <= 0) {
+              beginWispAttack(enemy);
+            } else {
+              const desired = tmpVec2.set(0, 0, 0);
+              if (playerDistance > 4.8) {
+                desired.copy(playerDirection).multiplyScalar(enemy.speed);
+              } else if (playerDistance < 3.2) {
+                desired.copy(playerDirection).multiplyScalar(-enemy.speed * 0.78);
+              } else {
+                desired.set(-playerDirection.z, 0, playerDirection.x).multiplyScalar(enemy.speed * 0.5);
+              }
+              enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.017, dt));
+              enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.017, dt));
+              enemy.telegraph.visible = false;
+            }
+          } else {
+            enemy.state = "patrol";
+            if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.75) {
+              chooseExplorationPatrolTarget(enemy);
+            }
+            const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
+            const patrolDistance = Math.max(0.001, Math.hypot(toPatrol.x, toPatrol.z));
+            toPatrol.multiplyScalar(1 / patrolDistance);
+            enemy.yaw = yawFromDirection(toPatrol);
+            const desired = toPatrol.multiplyScalar(enemy.speed * 0.32);
+            enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.022, dt));
+            enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.022, dt));
+            enemy.telegraph.visible = false;
+          }
+        }
+
+        enemy.position.addScaledVector(enemy.velocity, dt);
+        enemy.velocity.multiplyScalar(Math.pow(0.25, dt));
+        constrainExplorationEnemy(enemy);
+        enemy.group.position.copy(enemy.position);
+        enemy.group.rotation.y = enemy.yaw;
+        updateWispAnimation(enemy, dt);
+      }
+
       function updateExplorationNpcs(dt) {
         for (const npc of game.npcs) {
           npc.retarget -= dt;
@@ -5894,6 +6327,10 @@
           }
           if (enemy.type === "spider") {
             updateExplorationSpiderEnemy(enemy, dt, playerDistance, playerDirection);
+            continue;
+          }
+          if (enemy.type === "wisp") {
+            updateExplorationWispEnemy(enemy, dt, playerDistance, playerDirection);
             continue;
           }
 
