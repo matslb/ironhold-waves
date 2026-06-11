@@ -6,10 +6,26 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 
 - The Game Director/Integrator owns final cohesion and release decisions.
 - Every implementation task has one primary owner and one reviewer.
-- Agents should work in narrow, named areas to reduce conflicts, especially while `index.html` remains large.
+- Agents should work in narrow, named areas to reduce conflicts. The app has started moving away from a single-file layout: `index.html` owns markup and routing, `styles/app.css` owns UI styling, and `src/main.js` currently owns the runtime module until more systems are extracted.
 - Agents must not revert work they did not make. If another change affects their task, they adapt or escalate.
 - Multiplayer, saves, quests, and rewards should be treated as shared systems, not one-off feature patches.
 - Firebase Hosting is the only supported deployment target.
+- Performance is cross-cutting. Rendering / Performance is the specialist reviewer, but every feature owner is responsible for the cost of their own objects, loops, particles, network messages, and UI work.
+- Theme is cross-cutting too. Every agent should ask whether a feature feels like Ironhold: low-poly, grounded fantasy, civic old-world settlements, readable silhouettes, practical magic, wilderness danger, and authored details that look lived-in rather than generated from a grid.
+
+## Current Code Layout
+
+- `index.html`: Firebase/GitHub Pages entry point, redirect logic, and DOM markup.
+- `styles/app.css`: HUD, menu, desktop, and touch styling.
+- `src/main.js`: Current game runtime, Three.js scene, world generation, combat, networking, progression, and input. Treat this as the integration module until smaller systems are extracted.
+- `src/content/rpg.js`: RPG constants, equipment definitions, perk definitions, ability unlock data, and level XP curve.
+
+Near-term extraction order:
+- Pure data and helpers: constants, equipment, quests, biomes, progression, math.
+- UI systems: session menu, HUD, input, touch controls.
+- Network systems: room flow, snapshots, host-authoritative world state.
+- World systems: roads, decor, Crownford, biomes, exploration quests.
+- Gameplay systems: enemies, combat, projectiles, arena activity.
 
 ## Core Agents
 
@@ -32,19 +48,44 @@ Definition of done:
 
 ### Gameplay Systems Agent
 
-Owns combat, abilities, XP, levels, rewards, potions, mounts, enemy behavior, and progression.
+Owns combat feel, abilities, enemy behavior, mounts, wave rules, damage resolution, and moment-to-moment gameplay systems.
 
 Responsibilities:
 - Tune knight, wizard, enemies, waves, and open-world mobs.
-- Maintain progression curves and unlock tables.
-- Keep rewards authoritative and non-duplicable.
-- Convert repeated logic into reusable combat/progression flows.
+- Keep abilities readable, responsive, and balanced in solo and online play.
+- Coordinate with RPG Mechanics / Economy on XP, unlocks, weapons, buffs, inventory, and reward values.
+- Convert repeated combat and activity logic into reusable gameplay flows.
+- Preserve host-authoritative outcomes for shared combat.
 
 Definition of done:
 - The mechanic is playable and balanced enough for the current milestone.
-- Rewards and XP cannot be double-claimed.
 - Existing modes still work.
 - Edge cases are covered for solo, host, and joiner.
+
+### RPG Mechanics / Economy Agent
+
+Owns long-term character growth, buildcraft, inventory, loot, equipment, buffs, unlock pacing, economy, and RPG feature design.
+
+Responsibilities:
+- Propose engaging RPG mechanics that fit Ironhold: weapon identities, class upgrades, passive perks, active ability unlocks, consumables, materials, merchants, crafting hooks, buffs, debuffs, status effects, and inventory limits.
+- Design progression curves for XP, levels, health, guard, magica, stamina-like resources, ability unlocks, and future specialization paths.
+- Keep rewards meaningful without flooding the player with clutter.
+- Define loot sources and reward tables for quests, arena waves, POIs, mobs, chests, merchants, and future dungeons.
+- Balance short-term rewards against long-term goals so one or two quests feel useful while still leaving room to grow.
+- Coordinate with Creative / Narrative on reward flavor and with Multiplayer / Netcode on authoritative reward grants.
+- Coordinate with UI / UX before adding inventory, equipment, buff bars, shops, or upgrade screens.
+
+Boundaries:
+- Does not implement enemy AI or networking protocols directly.
+- Does not add new resources, currencies, or item types without an approved player-facing purpose.
+- Does not create grind for its own sake; new systems should create choices, not chores.
+
+Definition of done:
+- The mechanic creates a clear player decision or satisfying reward moment.
+- Rewards, XP, items, and buffs cannot be double-claimed in solo or online sessions.
+- Inventory/equipment concepts have clear UI and persistence implications.
+- New systems have a minimal first version and a path for expansion.
+- Balance notes include expected pacing, risks, and how to tune after playtesting.
 
 ### Multiplayer / Netcode Agent
 
@@ -89,12 +130,14 @@ Responsibilities:
 - Keep villages and POIs readable from gameplay distance.
 - Maintain traversal goals for walking and mounts.
 - Connect arena, city, wilderness, and future dungeons into one world.
+- Shape roads, trails, rivers, districts, and biome edges so they feel natural and thematic. Prefer gentle curves, terrain-following bends, landmarks, forks, worn edges, and biome-specific path materials over long mathematical straight lines unless the location intentionally calls for formal city planning.
 
 Definition of done:
 - The new area has a clear identity.
 - It includes enemies, NPCs, architecture, rewards, and quest hooks.
 - It does not visually overlap awkwardly with neighboring biomes.
 - Navigation and collision are tested.
+- Layout choices support the fantasy of the place, not just navigation efficiency.
 
 ### Creative / Narrative Agent
 
@@ -125,12 +168,16 @@ AI NPC roadmap:
 - Phase 2, Assisted Authoring: AI drafts variants from approved lore packets; human review promotes accepted lines into scripted content.
 - Phase 3, Bounded Generation: selected NPCs generate responses inside narrow contexts with strict rules, safe fallbacks, and conversation review.
 
+Implementation note:
+- Quest definitions should carry scripted `dialogue` states and `conversationTags` first. Future AI-assisted NPC work must use those tags and authored lines as the approved lore packet, with deterministic fallbacks for every quest state.
+
 ### UI / UX Agent
 
-Owns menus, HUD, quest log, map, pause/session flow, desktop controls, onboarding prompts, and interaction clarity.
+Owns menus, HUD, quest log, map, pause/session flow, desktop and touch controls, onboarding prompts, and interaction clarity.
 
 Responsibilities:
-- Keep desktop gameplay primary.
+- Keep desktop gameplay primary while preserving touch/handheld playability.
+- Require landscape mode for small touch devices and provide a clear orientation notice when needed.
 - Make room states understandable: start, host, join, pause, leave, close, resume.
 - Prevent UI interactions from firing world actions underneath.
 - Keep quest information compact and actionable.
@@ -139,16 +186,21 @@ Responsibilities:
 Definition of done:
 - Controls are discoverable.
 - Text does not overlap or clip at common desktop sizes.
+- Touch controls are usable in landscape on handheld devices.
+- Portrait orientation communicates that landscape is required.
 - Escape, pointer lock, dialogs, and menus behave predictably.
 - Current game state is obvious.
 
 ### Rendering / Performance Agent
 
-Owns visual polish, Three.js performance, object pooling, draw calls, shadows, particle budgets, and visual bug fixes.
+Owns visual polish, textures/materials, Three.js performance, object pooling, draw calls, shadows, particle budgets, and visual bug fixes.
 
 Responsibilities:
 - Preserve fidelity while improving frame rate.
+- Apply `docs/ASSET_POLICY.md` when adding generated or external textures.
 - Profile exploration traversal, villages, waves, particles, shadows, and online sessions.
+- Review performance risk for any feature that adds repeated world objects, enemies, particles, lights, audio instances, network traffic, or per-frame logic.
+- Maintain practical budgets for draw calls, shadow casters, active enemies, projectiles, particles, foliage, lights, audio voices, and world snapshot size.
 - Add internal performance overlays when useful.
 - Fix visual oddities found during playthroughs.
 

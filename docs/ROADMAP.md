@@ -5,7 +5,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 ## Current Product Pillars
 
 - A fantasy action game that supports both arena waves and open-world exploration.
-- Desktop-first gameplay with third-person movement, combat, quests, mounts, and online rooms.
+- Desktop-first gameplay with third-person movement, combat, quests, mounts, and online rooms, plus supported landscape touch play on handheld devices.
 - Host-authoritative multiplayer today, with a path toward Firebase-backed identity and persistence.
 - Procedural geometry and lightweight deployment, with Firebase Hosting as the primary production target.
 - Sound should make combat, exploration, quests, and biomes easier to read while keeping the game lightweight.
@@ -26,6 +26,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Convert more online actions into intent messages rather than client-applied outcomes.
 - Add explicit room phases: lobby, loading, active, wave-complete, exploration, abandoned.
 - Define host disconnect behavior clearly. First version can fail closed instead of migrating host.
+- Move arena waves into Exploration as a host-authoritative Crownford activity instead of a top-level game mode.
 
 ### Quest And Progression Quality
 
@@ -33,10 +34,14 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Ensure discovered locations, collected items, and quest rewards survive reloads.
 - Prevent double rewards in both solo and online sessions.
 - Keep leveling fast enough that one or two quests matter.
+- Add Crownford arena rewards that support Exploration without replacing quest progression.
+- Define first-pass RPG systems: equipment slots, weapon identities, passive perks, temporary buffs, loot sources, and inventory boundaries.
+- Make every reward answer a player question: stronger now, new option, better survival, faster travel, access, or story/world recognition.
 
 ### UI And Onboarding
 
 - Add contextual desktop prompts for interact, attack, block/burst, mount, quest tracker, and map.
+- Support landscape touch controls for handheld devices, with a portrait-mode notice telling players to rotate.
 - Keep prompts sparse and state-aware.
 - Improve quest tracker and minimap/marker usefulness without removing exploration challenge.
 - Keep pause/session menus separate from start/join flows.
@@ -52,6 +57,8 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 
 ### Content Expansion
 
+- Add Crownford, a civic city hub with the Crownring arena district, Marshal Rowan Vale, an infirmary, and non-arena city hooks.
+- Expand roads and world decor so settlements feel lived-in: gently winding roads/trails, carts, buckets, brooms, lanterns, market clutter, training props, and biome-specific clutter.
 - Add one main quest beat per major biome.
 - Add three side quests per village: combat, discovery/delivery, and lore.
 - Add one repeatable hub task per major settlement later, once inventory/currency exists.
@@ -68,6 +75,25 @@ Priority POIs:
 - Abandoned watchtower with vertical exploration.
 - Cave or dungeon micro-zone with wave-style room locks.
 - Mount corral and mounted traversal challenge.
+
+### RPG Mechanics Foundation
+
+- Define class growth for knight and wizard beyond raw stats.
+- Add equipment concepts carefully: weapon, offhand/focus, armor/robe, trinket, mount tack, and consumables.
+- Give weapons identities rather than only numbers: reach, timing, cleave, stun, resource gain, elemental effects, or defensive utility.
+- Add temporary buffs from potions, shrines, food, arena boons, NPC blessings, and biome discoveries.
+- Add lightweight inventory before adding many item types; first version can cap stackable consumables/materials and avoid complex drag-and-drop.
+- Add upgrade benches or trainers in settlements so growth feels grounded in the world.
+- Keep loot sparse and readable: quests and POIs should be stronger reward sources than random enemy drops.
+- Ensure multiplayer reward grants are host-authoritative and persistence-safe.
+
+### Texture And Asset Pipeline
+
+- Use `docs/ASSET_POLICY.md` for generated and external assets.
+- Prefer procedural/generated stylized textures before external downloads.
+- Use CC0-first external sources only when they clearly improve the game.
+- Start with Crownford materials, arena sand, banners, stone, timber, roofs, shields, capes, dragon scales, and spider markings.
+- Keep textures lightweight enough for Firebase-hosted browser play.
 
 ### Systems Refactor
 
@@ -171,7 +197,10 @@ Phase 3, Bounded Generated Dialogue:
 ### Visual Gate
 
 - Check each biome at common desktop sizes: 1366x768, 1440x900, 1920x1080, ultrawide.
+- Check landscape handheld/tablet viewports and the portrait orientation notice.
 - Confirm roofs, horns, collision, terrain blending, water, fog, and shadows.
+- Confirm NPC, player, house, dragon, spider, and barbarian proportions follow the scale targets in `docs/ACTIVE_TASKS.md`.
+- Confirm generated or external textures follow `docs/ASSET_POLICY.md`.
 - Screenshot pass for villages, POIs, arena, mount state, and quest panel.
 
 ### Performance Gate
@@ -180,6 +209,7 @@ Phase 3, Bounded Generated Dialogue:
 - Track draw calls, shadow cost, particles, enemy counts, and foliage density.
 - Stress-test max waves, mounted traversal, village NPCs, and online sessions.
 - Add internal FPS/memory overlay if needed.
+- Treat performance as a required review note for every feature that adds repeated objects, per-frame logic, network messages, particles, lights, or audio voices.
 
 ### Audio Gate
 
