@@ -680,7 +680,7 @@
       display: grid;
       gap: 10px;
       z-index: 5;
-      pointer-events: auto;
+      pointer-events: none;
     }
 
     .quest-dialog[hidden],
@@ -707,6 +707,17 @@
       gap: 8px;
       justify-content: end;
       flex-wrap: wrap;
+    }
+
+    .quest-actions button {
+      pointer-events: none;
+    }
+
+    .quest-actions button.selected {
+      color: #17100a;
+      border-color: rgba(122, 232, 255, 0.86);
+      background: linear-gradient(180deg, #f7df9a, #d5aa50);
+      box-shadow: 0 0 0 2px rgba(122, 232, 255, 0.24), 0 14px 36px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.42);
     }
 
     .quest-log {
@@ -1140,6 +1151,7 @@
         quests: [],
         activeNpc: null,
         dialogNpc: null,
+        dialogActionIndex: 0,
         exploration: {
           origin: new THREE.Vector3(180, 0, 0),
           radius: 190,
@@ -2185,9 +2197,6 @@
         game.dialogNpc = npc;
         keys.clear();
         player.blockHeld = false;
-        if (document.exitPointerLock && document.pointerLockElement === document.body) {
-          document.exitPointerLock();
-        }
         refreshQuestDialog();
         questDialog.hidden = false;
         actionDock.hidden = true;
@@ -2198,6 +2207,72 @@
         questDialog.hidden = true;
         actionDock.hidden = false;
         game.dialogNpc = null;
+        updateDialogSelection(0);
+      }
+
+      function dialogActionButtons() {
+        return [questAcceptButton, questClaimButton, questCloseButton].filter(button => !button.hidden);
+      }
+
+      function updateDialogSelection(index = game.dialogActionIndex) {
+        const buttons = dialogActionButtons();
+        if (!buttons.length) {
+          game.dialogActionIndex = 0;
+          for (const button of [questAcceptButton, questClaimButton, questCloseButton]) {
+            button.classList.remove("selected");
+            button.setAttribute("tabindex", "-1");
+          }
+          return;
+        }
+        game.dialogActionIndex = (index + buttons.length) % buttons.length;
+        for (const button of [questAcceptButton, questClaimButton, questCloseButton]) {
+          const selected = button === buttons[game.dialogActionIndex];
+          button.classList.toggle("selected", selected);
+          button.setAttribute("aria-current", selected ? "true" : "false");
+          button.setAttribute("tabindex", "-1");
+        }
+      }
+
+      function moveDialogSelection(direction) {
+        updateDialogSelection(game.dialogActionIndex + direction);
+      }
+
+      function activateSelectedDialogAction() {
+        const button = dialogActionButtons()[game.dialogActionIndex];
+        if (button === questAcceptButton) {
+          acceptCurrentQuest();
+        } else if (button === questClaimButton) {
+          claimCurrentQuest();
+        } else {
+          closeQuestDialog();
+        }
+      }
+
+      function handleQuestDialogKey(event) {
+        if (questDialog.hidden) {
+          return false;
+        }
+        if (event.code === "ArrowRight" || event.code === "ArrowDown") {
+          event.preventDefault();
+          moveDialogSelection(1);
+          return true;
+        }
+        if (event.code === "ArrowLeft" || event.code === "ArrowUp") {
+          event.preventDefault();
+          moveDialogSelection(-1);
+          return true;
+        }
+        if (event.code === "Enter" || event.code === "NumpadEnter") {
+          event.preventDefault();
+          activateSelectedDialogAction();
+          return true;
+        }
+        if (event.code === "Escape") {
+          event.preventDefault();
+          closeQuestDialog();
+          return true;
+        }
+        return true;
       }
 
       function refreshQuestDialog() {
@@ -2219,6 +2294,7 @@
             questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
           }
           questDialogStatus.textContent = "Nearby villagers can mend small wounds when you stand close.";
+          updateDialogSelection(0);
           return;
         }
 
@@ -2235,6 +2311,7 @@
         } else {
           questDialogStatus.textContent = "Reward claimed. The valley already feels a little friendlier.";
         }
+        updateDialogSelection(0);
       }
 
       function acceptCurrentQuest() {
@@ -6102,10 +6179,9 @@
 
       function setupInput() {
         window.addEventListener("keydown", event => {
-          if (event.repeat && event.code !== "Space") return;
-          if (event.code === "Escape" && !questDialog.hidden) {
-            event.preventDefault();
-            closeQuestDialog();
+          if (event.repeat && event.code !== "Space" && questDialog.hidden) return;
+          if (!questDialog.hidden) {
+            handleQuestDialogKey(event);
             return;
           }
           if (event.code === "KeyR" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
@@ -6121,9 +6197,6 @@
               openNpcDialog(npc);
               return;
             }
-          }
-          if (!questDialog.hidden) {
-            return;
           }
           keys.add(event.code);
           if (event.code === "Space") {
