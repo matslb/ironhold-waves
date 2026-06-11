@@ -1040,6 +1040,14 @@
         remoteAlly: new THREE.MeshStandardMaterial({ color: 0x43b7d8, roughness: 0.7 }),
         remoteEnemy: new THREE.MeshStandardMaterial({ color: 0xc65444, roughness: 0.72 }),
         meadow: new THREE.MeshStandardMaterial({ color: 0x466b3c, roughness: 0.96 }),
+        desert: new THREE.MeshStandardMaterial({ color: 0xb99158, roughness: 0.98 }),
+        mountainGround: new THREE.MeshStandardMaterial({ color: 0x5a625e, roughness: 0.96 }),
+        cactus: new THREE.MeshStandardMaterial({ color: 0x356c48, roughness: 0.92 }),
+        dryBrush: new THREE.MeshStandardMaterial({ color: 0x8d7140, roughness: 0.96 }),
+        adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, roughness: 0.92 }),
+        mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, roughness: 0.9 }),
+        spiderCarapace: new THREE.MeshStandardMaterial({ color: 0x2d221c, roughness: 0.78, metalness: 0.03 }),
+        spiderMarking: new THREE.MeshBasicMaterial({ color: 0xd9a648 }),
         path: new THREE.MeshStandardMaterial({ color: 0x8f774f, roughness: 0.98 }),
         water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
         pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
@@ -1098,6 +1106,7 @@
           xp: 0,
           lakes: [],
           villages: [],
+          biomes: [],
           discovered: new Set(),
           completed: false,
           spawn: new THREE.Vector3(180, 0, 1.6)
@@ -1331,6 +1340,7 @@
         game.dialogNpc = null;
         game.exploration.lakes.length = 0;
         game.exploration.villages.length = 0;
+        game.exploration.biomes.length = 0;
         game.exploration.discovered = new Set();
         game.exploration.completed = false;
         game.exploration.xp = 0;
@@ -1367,7 +1377,143 @@
         group.add(path);
       }
 
-      function addExplorationHouse(group, x, z, scale, variant) {
+      function biomeContains(biome, x, z, padding = 0) {
+        const dx = x - biome.x;
+        const dz = z - biome.z;
+        const rx = Math.max(1, biome.rx - padding);
+        const rz = Math.max(1, biome.rz - padding);
+        return (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz) <= 1;
+      }
+
+      function biomeAt(localX, localZ) {
+        for (const biome of game.exploration.biomes) {
+          if (biome.id !== "meadow" && biomeContains(biome, localX, localZ)) {
+            return biome.id;
+          }
+        }
+        return "meadow";
+      }
+
+      function createBiomeTexture(seed, biomeId) {
+        const random = seededRandom(seed + "-" + biomeId);
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext("2d");
+        const desert = biomeId === "desert";
+        const mountain = biomeId === "mountain";
+        ctx.fillStyle = desert ? "#b99258" : mountain ? "#5d635f" : "#45683b";
+        ctx.fillRect(0, 0, 256, 256);
+        for (let i = 0; i < 850; i += 1) {
+          const x = random() * 256;
+          const y = random() * 256;
+          const r = 0.8 + random() * (desert ? 3.2 : 4.8);
+          ctx.fillStyle = desert
+            ? (random() > 0.52 ? "rgba(236, 196, 122, 0.2)" : "rgba(111, 79, 42, 0.14)")
+            : (random() > 0.48 ? "rgba(190, 198, 191, 0.17)" : "rgba(31, 38, 36, 0.18)");
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, TAU);
+          ctx.fill();
+        }
+        if (desert) {
+          for (let i = 0; i < 22; i += 1) {
+            ctx.strokeStyle = "rgba(237, 202, 135, 0.24)";
+            ctx.lineWidth = 2 + random() * 3;
+            ctx.beginPath();
+            const y = random() * 256;
+            ctx.moveTo(0, y);
+            ctx.bezierCurveTo(70, y - 20 + random() * 40, 170, y - 20 + random() * 40, 256, y + random() * 28);
+            ctx.stroke();
+          }
+        }
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(desert ? 6 : 5, desert ? 6 : 5);
+        return texture;
+      }
+
+      function addBiomePatch(group, biome, seed) {
+        const material = (biome.id === "desert" ? materials.desert : materials.mountainGround).clone();
+        material.map = createBiomeTexture(seed, biome.id);
+        const offsets = [
+          [0, 0, 1],
+          [biome.rx * 0.18, -biome.rz * 0.16, 0.62],
+          [-biome.rx * 0.2, biome.rz * 0.12, 0.54]
+        ];
+        for (let i = 0; i < offsets.length; i += 1) {
+          const [ox, oz, scale] = offsets[i];
+          const patch = new THREE.Mesh(new THREE.CircleGeometry(1, 96), material.clone());
+          patch.rotation.x = -Math.PI / 2;
+          patch.rotation.z = biome.rotation + i * 0.27;
+          patch.position.set(biome.x + ox, 0.019 + i * 0.002, biome.z + oz);
+          patch.scale.set(biome.rx * scale, biome.rz * scale, 1);
+          patch.receiveShadow = true;
+          group.add(patch);
+        }
+      }
+
+      function addDesertHouse(group, x, z, scale, variant) {
+        const house = new THREE.Group();
+        house.position.set(x, 0, z);
+        house.scale.setScalar(scale);
+        const walls = materials.adobe;
+        const roofMat = materials.dryBrush;
+        const base = makeBox(4.9, 0.16, 4.2, materials.desert, 0, 0.08, 0);
+        const back = makeBox(4.9, 2.0, 0.26, walls, 0, 1.08, 1.98);
+        const left = makeBox(0.26, 2.0, 4.2, walls, -2.32, 1.08, 0);
+        const right = makeBox(0.26, 2.0, 4.2, walls, 2.32, 1.08, 0);
+        const frontLeft = makeBox(1.72, 2.0, 0.26, walls, -1.55, 1.08, -1.98);
+        const frontRight = makeBox(1.72, 2.0, 0.26, walls, 1.55, 1.08, -1.98);
+        const lintel = makeBox(1.18, 0.3, 0.28, walls, 0, 1.98, -1.98);
+        const flatRoof = makeBox(5.35, 0.32, 4.65, roofMat, 0, 2.22, 0);
+        const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 1.54, -2.42);
+        shade.rotation.x = -0.18;
+        const dome = makeCylinder(0.1, 0.82, 0.55, 18, walls, variant % 2 ? -1.2 : 1.1, 2.58, 0.85);
+        const door = makeBox(0.82, 1.25, 0.08, materials.darkLeather, 0, 0.68, -2.16);
+        house.add(base, back, left, right, frontLeft, frontRight, lintel, flatRoof, shade, dome, door);
+        if (variant % 2 === 1) {
+          house.rotation.y = Math.PI / 2;
+        }
+        group.add(house);
+        return house;
+      }
+
+      function addMountainHouse(group, x, z, scale, variant) {
+        const house = new THREE.Group();
+        house.position.set(x, 0, z);
+        house.scale.setScalar(scale);
+        const wall = variant % 2 ? materials.mountainPlaster : materials.stone;
+        const floor = makeBox(5.0, 0.16, 4.4, materials.darkStone, 0, 0.08, 0);
+        const back = makeBox(5.0, 2.18, 0.28, wall, 0, 1.18, 2.08);
+        const left = makeBox(0.28, 2.18, 4.4, wall, -2.36, 1.18, 0);
+        const right = makeBox(0.28, 2.18, 4.4, wall, 2.36, 1.18, 0);
+        const frontLeft = makeBox(1.7, 2.18, 0.28, wall, -1.62, 1.18, -2.08);
+        const frontRight = makeBox(1.7, 2.18, 0.28, wall, 1.62, 1.18, -2.08);
+        const lintel = makeBox(1.35, 0.34, 0.3, materials.wood, 0, 2.08, -2.08);
+        const roofA = makeBox(5.8, 0.42, 2.85, materials.darkStone, 0, 2.7, -0.9);
+        const roofB = makeBox(5.8, 0.42, 2.85, materials.darkStone, 0, 2.7, 0.9);
+        roofA.rotation.x = -0.68;
+        roofB.rotation.x = 0.68;
+        const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.44, -2.2);
+        const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.08, 0.42);
+        const door = makeBox(0.82, 1.34, 0.08, materials.wood, 0, 0.72, -2.25);
+        house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, beam, chimney, door);
+        if (variant % 2 === 1) {
+          house.rotation.y = Math.PI / 2;
+        }
+        group.add(house);
+        return house;
+      }
+
+      function addExplorationHouse(group, x, z, scale, variant, biome = "meadow") {
+        if (biome === "desert") {
+          return addDesertHouse(group, x, z, scale, variant);
+        }
+        if (biome === "mountain") {
+          return addMountainHouse(group, x, z, scale, variant);
+        }
         const house = new THREE.Group();
         house.position.set(x, 0, z);
         house.scale.setScalar(scale);
@@ -1424,6 +1570,59 @@
         group.add(tree);
       }
 
+      function addMountainPine(group, x, z, random) {
+        const tree = new THREE.Group();
+        tree.position.set(x, 0, z);
+        const height = 2.9 + random() * 2.4;
+        const trunk = makeCylinder(0.14, 0.22, height, 8, materials.wood, 0, height / 2, 0);
+        const leafA = makeCone(1.08 + random() * 0.25, 1.95, 12, materials.pine, 0, height + 0.1, 0);
+        const leafB = makeCone(0.86 + random() * 0.2, 1.7, 12, materials.pine, 0, height + 0.88, 0);
+        const leafC = makeCone(0.62 + random() * 0.18, 1.35, 12, materials.pine, 0, height + 1.55, 0);
+        tree.add(trunk, leafA, leafB, leafC);
+        tree.rotation.y = random() * TAU;
+        if (Math.hypot(x, z) > 92) {
+          tree.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = false;
+            }
+          });
+        }
+        group.add(tree);
+      }
+
+      function addDesertCactus(group, x, z, random) {
+        const cactus = new THREE.Group();
+        cactus.position.set(x, 0, z);
+        const height = 1.35 + random() * 1.35;
+        const trunk = makeCylinder(0.16, 0.2, height, 9, materials.cactus, 0, height / 2, 0);
+        cactus.add(trunk);
+        if (random() > 0.28) {
+          const armY = height * (0.48 + random() * 0.22);
+          const side = random() > 0.5 ? 1 : -1;
+          const arm = makeCylinder(0.07, 0.09, 0.72 + random() * 0.36, 8, materials.cactus, side * 0.3, armY, 0);
+          arm.rotation.z = Math.PI / 2;
+          const lift = makeCylinder(0.07, 0.085, 0.46 + random() * 0.34, 8, materials.cactus, side * 0.64, armY + 0.18, 0);
+          cactus.add(arm, lift);
+        }
+        cactus.rotation.y = random() * TAU;
+        group.add(cactus);
+      }
+
+      function addDryBush(group, x, z, random) {
+        const bush = new THREE.Group();
+        bush.position.set(x, 0.08, z);
+        const tuftCount = 3 + Math.floor(random() * 3);
+        for (let i = 0; i < tuftCount; i += 1) {
+          const tuft = makeCylinder(0.02, 0.08 + random() * 0.05, 0.42 + random() * 0.25, 6, materials.dryBrush, (random() - 0.5) * 0.42, 0.18, (random() - 0.5) * 0.42);
+          tuft.rotation.x = (random() - 0.5) * 0.8;
+          tuft.rotation.z = (random() - 0.5) * 0.8;
+          tuft.castShadow = false;
+          bush.add(tuft);
+        }
+        bush.rotation.y = random() * TAU;
+        group.add(bush);
+      }
+
       function addExplorationRock(group, x, z, random, large = false) {
         const radius = large ? 1.15 + random() * 1.6 : 0.35 + random() * 0.85;
         const geometry = new THREE.DodecahedronGeometry(radius, 0);
@@ -1448,13 +1647,31 @@
         const quaternion = new THREE.Quaternion();
         const scale = new THREE.Vector3();
         for (let i = 0; i < count; i += 1) {
-          const point = randomExplorationPoint(random, 9, 165);
+          const point = randomExplorationPoint(random, 9, 165, (x, z) => biomeAt(x, z) === "meadow");
           const size = 0.75 + random() * 0.55;
           scale.set(size, 0.82 + random() * 0.45, size);
           matrix.compose(new THREE.Vector3(point.x, 0.16, point.z), quaternion, scale);
           flowers.setMatrixAt(i, matrix);
         }
         group.add(flowers);
+      }
+
+      function randomPointInBiome(random, biomeId, padding = 7) {
+        const biome = game.exploration.biomes.find(entry => entry.id === biomeId);
+        if (!biome) {
+          return randomExplorationPoint(random, 20, game.exploration.radius - 12);
+        }
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          const angle = random() * TAU;
+          const radius = Math.sqrt(random());
+          const x = biome.x + Math.cos(angle) * biome.rx * radius;
+          const z = biome.z + Math.sin(angle) * biome.rz * radius;
+          if (Math.hypot(x, z) < 16 || !biomeContains(biome, x, z, padding) || isExplorationBlocked(x, z)) {
+            continue;
+          }
+          return { x, z };
+        }
+        return { x: biome.x, z: biome.z };
       }
 
       function addExplorationLake(group, x, z, rx, rz, random) {
@@ -1476,16 +1693,27 @@
         });
       }
 
-      function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null) {
+      function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null, biome = "meadow") {
         const group = new THREE.Group();
         group.position.set(x, 0, z);
-        const body = makeCylinder(0.22, 0.28, 0.78, 12, materials.npcCloth.clone(), 0, 0.78, 0);
+        const cloth = materials.npcCloth.clone();
+        if (biome === "desert") {
+          cloth.color.setHex(0xb8894f);
+        } else if (biome === "mountain") {
+          cloth.color.setHex(0x596b77);
+        }
+        const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : materials.paleWood;
+        const body = makeCylinder(0.22, 0.28, 0.78, 12, cloth, 0, 0.78, 0);
         const head = makeSphere(0.18, materials.skin, 0, 1.32, 0);
-        const hood = makeCone(0.24, 0.34, 12, materials.paleWood, 0, 1.56, 0);
+        const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.56, 0);
         const leftLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, -0.1, 0.22, 0);
         const rightLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, 0.1, 0.22, 0);
         const leftArm = makeBox(0.1, 0.5, 0.1, materials.skin, -0.27, 0.85, 0);
         const rightArm = makeBox(0.1, 0.5, 0.1, materials.skin, 0.27, 0.85, 0);
+        if (biome === "desert") {
+          const scarf = makeCylinder(0.19, 0.22, 0.12, 12, materials.dryBrush, 0, 1.18, 0);
+          group.add(scarf);
+        }
         const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 1.92, 0);
         questMarker.visible = !!questId;
         group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
@@ -1505,6 +1733,7 @@
           walkTime: random() * 10,
           retarget: 0.5 + random() * 2,
           healCooldown: 0,
+          biome,
           friendly: true
         };
       }
@@ -1683,7 +1912,13 @@
         questClaimButton.hidden = true;
 
         if (!quest) {
-          questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
+          if (npc.biome === "desert") {
+            questDialogBody.textContent = "The dunes shift by the hour. Walk near the cactus shade and listen for legs under the sand.";
+          } else if (npc.biome === "mountain") {
+            questDialogBody.textContent = "Smoke over the ridges means dragons are awake. Keep low when the wind goes warm.";
+          } else {
+            questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
+          }
           questDialogStatus.textContent = "Nearby villagers can mend small wounds when you stand close.";
           return;
         }
@@ -1738,6 +1973,16 @@
           player.guard = player.maxGuard;
           player.maxMana += 15;
           player.mana = player.maxMana;
+        } else if (quest.id === "spiders") {
+          player.maxHealth += 10;
+          player.health = player.maxHealth;
+          game.potions.push(createHealthPotion(player.position.x + 1.2, player.position.z - 1.4, { kind: "small", healAmount: 28 }));
+          trimPotionDrops();
+        } else if (quest.id === "dragons") {
+          player.maxMana += 20;
+          player.mana = player.maxMana;
+          player.maxGuard += 10;
+          player.guard = player.maxGuard;
         } else if (quest.id === "villages") {
           player.health = player.maxHealth;
           player.guard = player.maxGuard;
@@ -1781,8 +2026,8 @@
             "raiders",
             "Quiet the Road",
             "Torren",
-            "The tracks are full of raiders. Thin them out and the villages can trade again without carrying axes in both hands.",
-            "Defeat roaming raiders",
+            "The tracks are full of raiders and worse things now. Thin them out and the villages can trade again without carrying axes in both hands.",
+            "Defeat roaming threats",
             "+15 max guard and +15 max magica",
             "hunt",
             8
@@ -1796,38 +2041,71 @@
             "A full recovery potion and faster potion cooldown",
             "discover",
             3
+          ),
+          createQuest(
+            "spiders",
+            "Silk in the Sand",
+            "Amara",
+            "The old wells are webbed over. Clear out enough dune spiders and I can reopen the cistern paths.",
+            "Defeat dune spiders",
+            "+10 max health and a field potion",
+            "hunt",
+            5
+          ),
+          createQuest(
+            "dragons",
+            "Smoke on the Peaks",
+            "Kael",
+            "The mountain nests are active again. Bring down a pair of dragons before they start hunting the roads.",
+            "Defeat mountain dragons",
+            "+20 max magica and +10 max guard",
+            "hunt",
+            2
           )
         );
       }
 
-      function addExplorationVillage(group, x, z, random, index) {
-        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: 15.5 };
+      function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
+        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: biome === "desert" ? 17.5 : 15.5, biome };
         game.exploration.villages.push(village);
         addExplorationPath(group, 0, 0, x, z, 2.8);
         for (let i = 0; i < 5; i += 1) {
           const angle = (i / 5) * TAU + random() * 0.45;
           const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
           const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
-          const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i);
+          const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i, biome);
           house.rotation.y += angle + Math.PI;
         }
-        const well = makeCylinder(0.62, 0.72, 0.62, 16, materials.stone, x, 0.31, z);
-        const beam = makeBox(1.8, 0.16, 0.18, materials.wood, x, 1.1, z);
+        const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : materials.stone;
+        const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, 0.31, z);
+        const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : materials.wood, x, 1.1, z);
         const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, 0.75, z);
         const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, 0.75, z);
         group.add(well, beam, postA, postB);
-        const names = ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
+        const names = biome === "desert"
+          ? ["Amara", "Sahir", "Nima", "Tarek", "Zala", "Omid"]
+          : biome === "mountain"
+            ? ["Kael", "Brunna", "Sten", "Yrsa", "Hald", "Runa"]
+            : ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
         for (let i = 0; i < 3; i += 1) {
           const angle = random() * TAU;
-          const questId = index === 0 && i === 0 ? "villages" : null;
-          const name = questId ? "Sella" : names[(index * 3 + i) % names.length];
+          let questId = null;
+          if (index === 0 && i === 0) {
+            questId = "villages";
+          } else if (biome === "desert" && i === 0) {
+            questId = "spiders";
+          } else if (biome === "mountain" && i === 0) {
+            questId = "dragons";
+          }
+          const name = questId === "villages" ? "Sella" : questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : names[(index * 3 + i) % names.length];
           game.npcs.push(createFriendlyNpc(
             game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
             game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
             random,
             8.5,
             name,
-            questId
+            questId,
+            biome
           ));
         }
       }
@@ -1851,17 +2129,96 @@
         return false;
       }
 
-      function randomExplorationPoint(random, minRadius, maxRadius) {
-        for (let attempt = 0; attempt < 80; attempt += 1) {
+      function randomExplorationPoint(random, minRadius, maxRadius, filter = null) {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
           const angle = random() * TAU;
           const radius = minRadius + random() * (maxRadius - minRadius);
           const x = Math.cos(angle) * radius;
           const z = Math.sin(angle) * radius;
-          if (!isExplorationBlocked(x, z)) {
+          if (!isExplorationBlocked(x, z) && (!filter || filter(x, z))) {
             return { x, z };
           }
         }
         return { x: minRadius, z: minRadius };
+      }
+
+      function setupExplorationBiomes(group, random, seed) {
+        const mountain = {
+          id: "mountain",
+          name: "Dragonspine Peaks",
+          x: 112 + random() * 12,
+          z: 100 + random() * 10,
+          rx: 76,
+          rz: 64,
+          rotation: -0.18
+        };
+        const desert = {
+          id: "desert",
+          name: "Amber Dunes",
+          x: -124 - random() * 10,
+          z: -92 - random() * 10,
+          rx: 82,
+          rz: 68,
+          rotation: 0.28
+        };
+        game.exploration.biomes.push(mountain, desert);
+        addBiomePatch(group, desert, seed);
+        addBiomePatch(group, mountain, seed);
+      }
+
+      function seedExplorationEnemy(enemy, world, random, awareness, homeRadius = 9) {
+        enemy.exploration = true;
+        enemy.home = world.clone();
+        enemy.homeRadius = homeRadius;
+        enemy.awareness = awareness;
+        enemy.patrolTarget = world.clone();
+        enemy.state = "patrol";
+        enemy.cooldown = 0.8 + random() * 1.8;
+        game.enemies.push(enemy);
+        return enemy;
+      }
+
+      function addMountainRoost(group, biome, random) {
+        for (let i = 0; i < 8; i += 1) {
+          const angle = (i / 8) * TAU + random() * 0.35;
+          const radius = 16 + random() * 34;
+          const x = biome.x + Math.cos(angle) * radius;
+          const z = biome.z + Math.sin(angle) * radius;
+          const spire = makeCone(1.4 + random() * 1.6, 4.8 + random() * 5.8, 7, materials.darkStone, x, 2.4 + random() * 1.8, z);
+          spire.rotation.y = random() * TAU;
+          spire.scale.x *= 0.7 + random() * 0.45;
+          group.add(spire);
+        }
+        const nest = new THREE.Group();
+        nest.position.set(biome.x + 8, 0.24, biome.z - 6);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(3.8, 0.16, 8, 32), materials.darkStone);
+        ring.rotation.x = Math.PI / 2;
+        const ember = makeSphere(0.22, materials.fireCore.clone(), 0, 0.34, 0);
+        ember.material.opacity = 0.7;
+        nest.add(ring, ember);
+        group.add(nest);
+      }
+
+      function addDesertMarkers(group, biome, random) {
+        for (let i = 0; i < 7; i += 1) {
+          const point = randomPointInBiome(random, "desert", 12);
+          const ribA = makeCylinder(0.035, 0.055, 1.3 + random() * 0.7, 7, materials.bone, point.x, 0.55, point.z);
+          const ribB = makeCylinder(0.035, 0.055, 1.0 + random() * 0.5, 7, materials.bone, point.x + 0.35, 0.45, point.z + 0.12);
+          ribA.rotation.z = 0.65;
+          ribB.rotation.z = -0.65;
+          group.add(ribA, ribB);
+        }
+        const oasis = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 42), materials.water.clone());
+        oasis.position.set(biome.x - 22, 0.045, biome.z + 18);
+        oasis.scale.set(6.5, 1, 3.4);
+        oasis.receiveShadow = true;
+        group.add(oasis);
+        game.exploration.lakes.push({
+          x: game.exploration.origin.x + oasis.position.x,
+          z: game.exploration.origin.z + oasis.position.z,
+          rx: 6.5,
+          rz: 3.4
+        });
       }
 
       function setupExplorationWorld() {
@@ -1893,11 +2250,15 @@
         ground.receiveShadow = true;
         group.add(ground);
 
+        setupExplorationBiomes(group, random, seed);
+        const mountainBiome = game.exploration.biomes.find(biome => biome.id === "mountain");
+        const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
+
         setupExplorationQuests();
-        addExplorationHouse(group, 0, 0, 1.05, 0);
+        addExplorationHouse(group, 0, 0, 1.05, 0, "meadow");
         addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs"));
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs", "meadow"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders", "meadow"));
 
         addExplorationLake(group, 42 + random() * 8, 58 + random() * 7, 15, 9, random);
         addExplorationLake(group, -74 - random() * 8, -52 - random() * 7, 12, 8, random);
@@ -1906,11 +2267,11 @@
         addExplorationLake(group, 8 + random() * 10, -142 - random() * 8, 10, 6.8, random);
         addHerbQuestItems(group, random);
 
-        addExplorationVillage(group, 82 + random() * 12, -62 - random() * 10, random, 0);
-        addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1);
-        addExplorationVillage(group, 132 + random() * 12, 82 + random() * 12, random, 2);
-        addExplorationVillage(group, -142 - random() * 10, -104 - random() * 12, random, 3);
-        addExplorationVillage(group, 10 + random() * 12, 150 + random() * 10, random, 4);
+        addExplorationVillage(group, 82 + random() * 12, -62 - random() * 10, random, 0, "meadow");
+        addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1, "meadow");
+        addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
+        addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
+        addExplorationVillage(group, 10 + random() * 12, 150 + random() * 10, random, 4, "meadow");
 
         for (let i = 0; i < 54; i += 1) {
           const angle = (i / 54) * TAU + (random() - 0.5) * 0.16;
@@ -1924,31 +2285,58 @@
             addExplorationRock(group, Math.cos(angle) * (radius - 6), Math.sin(angle) * (radius - 6), random, true);
           }
         }
+        addMountainRoost(group, mountainBiome, random);
+        addDesertMarkers(group, desertBiome, random);
 
-        for (let i = 0; i < 260; i += 1) {
-          const point = randomExplorationPoint(random, 16, 174);
+        for (let i = 0; i < 170; i += 1) {
+          const point = randomExplorationPoint(random, 16, 174, (x, z) => biomeAt(x, z) === "meadow");
           addExplorationTree(group, point.x, point.z, random);
         }
-        for (let i = 0; i < 160; i += 1) {
-          const point = randomExplorationPoint(random, 13, 178);
+        for (let i = 0; i < 86; i += 1) {
+          const point = randomPointInBiome(random, "mountain", 5);
+          if (random() > 0.42) {
+            addMountainPine(group, point.x, point.z, random);
+          } else {
+            addExplorationRock(group, point.x, point.z, random, random() > 0.6);
+          }
+        }
+        for (let i = 0; i < 82; i += 1) {
+          const point = randomPointInBiome(random, "desert", 6);
+          if (random() > 0.42) {
+            addDesertCactus(group, point.x, point.z, random);
+          } else {
+            addDryBush(group, point.x, point.z, random);
+          }
+        }
+        for (let i = 0; i < 112; i += 1) {
+          const point = randomExplorationPoint(random, 13, 178, (x, z) => biomeAt(x, z) !== "desert");
           addExplorationRock(group, point.x, point.z, random, random() > 0.82);
         }
         addExplorationFlowers(group, random, 120);
 
-        const mobCount = 42;
-        for (let i = 0; i < mobCount; i += 1) {
-          const point = randomExplorationPoint(random, 35, 176);
+        for (let i = 0; i < 26; i += 1) {
+          const point = randomExplorationPoint(random, 35, 176, (x, z) => biomeAt(x, z) === "meadow");
           const world = explorationToWorld(point.x, point.z);
           const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
-          mob.exploration = true;
-          mob.home = world.clone();
-          mob.awareness = 11 + random() * 7;
-          mob.patrolTarget = world.clone();
-          mob.state = "patrol";
-          mob.cooldown = 0.8 + random() * 1.8;
           mob.health *= 0.82;
           mob.maxHealth = mob.health;
-          game.enemies.push(mob);
+          seedExplorationEnemy(mob, world, random, 11 + random() * 7, 9.5);
+        }
+        for (let i = 0; i < 10; i += 1) {
+          const point = randomPointInBiome(random, "desert", 13);
+          const world = explorationToWorld(point.x, point.z);
+          const spider = createSpider(world.x, world.z, 1 + Math.floor(random() * 2));
+          seedExplorationEnemy(spider, world, random, 10 + random() * 5, 7.5);
+        }
+        for (let i = 0; i < 4; i += 1) {
+          const point = randomPointInBiome(random, "mountain", 16);
+          const world = explorationToWorld(point.x, point.z);
+          const dragon = createDragon(world.x, world.z, 1 + Math.floor(random() * 2));
+          dragon.health *= 0.72;
+          dragon.maxHealth = dragon.health;
+          dragon.hoverHeight = 2.05 + random() * 0.45;
+          dragon.desiredRange = 8.2 + random() * 1.8;
+          seedExplorationEnemy(dragon, world, random, 18 + random() * 7, 18);
         }
         updateQuestMarkers();
         updateQuestLog();
@@ -3382,6 +3770,55 @@
         return { group, body, leftWing, rightWing, lowerJaw, mouthGlow, healthRoot, hpFill };
       }
 
+      function createSpiderModel(scale) {
+        const group = new THREE.Group();
+        group.scale.setScalar(scale);
+
+        const abdomen = makeSphere(0.44, materials.spiderCarapace, 0, 0.48, 0.22);
+        abdomen.scale.set(1.15, 0.62, 1.28);
+        const thorax = makeSphere(0.32, materials.spiderCarapace.clone(), 0, 0.5, -0.32);
+        thorax.scale.set(1.0, 0.58, 0.9);
+        const head = makeSphere(0.22, materials.spiderCarapace.clone(), 0, 0.48, -0.68);
+        head.scale.set(1.05, 0.72, 0.78);
+        const marking = makeBox(0.34, 0.035, 0.18, materials.spiderMarking, 0, 0.76, 0.28);
+        const leftEye = makeSphere(0.04, materials.emberEye, -0.09, 0.58, -0.82);
+        const rightEye = makeSphere(0.04, materials.emberEye, 0.09, 0.58, -0.82);
+        const leftFang = makeCone(0.045, 0.18, 8, materials.bone, -0.08, 0.32, -0.86);
+        const rightFang = makeCone(0.045, 0.18, 8, materials.bone, 0.08, 0.32, -0.86);
+        leftFang.rotation.x = Math.PI;
+        rightFang.rotation.x = Math.PI;
+
+        const legs = [];
+        for (let side = -1; side <= 1; side += 2) {
+          for (let i = 0; i < 4; i += 1) {
+            const z = -0.46 + i * 0.25;
+            const leg = makeCylinder(0.032, 0.045, 0.92, 7, materials.spiderCarapace.clone(), side * 0.45, 0.38, z);
+            leg.rotation.z = side * (Math.PI / 2.35);
+            leg.rotation.x = (i - 1.5) * 0.16;
+            const shin = makeCylinder(0.026, 0.036, 0.72, 7, materials.spiderCarapace.clone(), side * 0.92, 0.2, z + (i - 1.5) * 0.1);
+            shin.rotation.z = side * (Math.PI / 2.7);
+            shin.rotation.x = (i - 1.5) * 0.22;
+            legs.push(leg, shin);
+            group.add(leg, shin);
+          }
+        }
+
+        const healthRoot = new THREE.Group();
+        healthRoot.position.set(0, 1.18, 0);
+        const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08), new THREE.MeshBasicMaterial({ color: 0x240c0b, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
+        const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.045), new THREE.MeshBasicMaterial({ color: 0xd9a648, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+        hpFill.position.z = 0.003;
+        healthRoot.add(hpBack, hpFill);
+
+        const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.58, 0.73, 32), materials.danger.clone());
+        telegraph.rotation.x = -Math.PI / 2;
+        telegraph.position.y = 0.025;
+        telegraph.visible = false;
+
+        group.add(abdomen, thorax, head, marking, leftEye, rightEye, leftFang, rightFang, healthRoot, telegraph);
+        return { group, body: abdomen, legs, healthRoot, hpFill, telegraph };
+      }
+
       function createBarbarian(x, z, wave) {
         const scale = 0.92 + Math.random() * 0.18 + Math.min(wave * 0.01, 0.14);
         const model = createBarbarianModel(scale);
@@ -3438,6 +3875,34 @@
           bobSeed: Math.random() * 10
         };
         enemy.group.position.set(enemy.position.x, enemy.hoverHeight, enemy.position.z);
+        scene.add(enemy.group);
+        return enemy;
+      }
+
+      function createSpider(x, z, wave) {
+        const scale = 0.92 + Math.random() * 0.16;
+        const model = createSpiderModel(scale);
+        const enemy = {
+          ...model,
+          type: "spider",
+          position: new THREE.Vector3(x, 0, z),
+          velocity: new THREE.Vector3(),
+          yaw: 0,
+          scale,
+          health: 48 + wave * 7,
+          maxHealth: 48 + wave * 7,
+          speed: 2.9 + Math.random() * 0.45,
+          radius: 0.72 * scale,
+          cooldown: 0.45 + Math.random() * 1.0,
+          state: "patrol",
+          attackTimer: 0,
+          attackDuration: 0,
+          attackHitDone: false,
+          stunned: 0,
+          dead: false,
+          walkTime: Math.random() * 10
+        };
+        enemy.group.position.copy(enemy.position);
         scene.add(enemy.group);
         return enemy;
       }
@@ -3671,9 +4136,11 @@
 
       function dropDragonHealthPotion(enemy) {
         const dropPosition = enemy.position.clone();
-        const dist = Math.hypot(dropPosition.x, dropPosition.z);
-        if (dist > arenaRadius - 2.2) {
-          dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+        if (game.mode !== "exploration") {
+          const dist = Math.hypot(dropPosition.x, dropPosition.z);
+          if (dist > arenaRadius - 2.2) {
+            dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+          }
         }
         game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "small", healAmount: 18 }));
         trimPotionDrops();
@@ -4214,27 +4681,33 @@
         enemy.stunned = Math.max(enemy.stunned, stun);
         enemy.velocity.addScaledVector(direction, 4.3);
         const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.position;
-        spawnImpact(impactPosition, enemy.type === "dragon" ? 0xffb15d : 0xffd19b, enemy.type === "dragon" ? 14 : 10);
+        const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : 0xffd19b;
+        spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
         if (enemy.health <= 0) {
           enemy.dead = true;
           if (enemy.type === "dragon") {
             dropDragonHealthPotion(enemy);
-          } else if (game.mode === "exploration" && Math.random() < 0.3) {
+          } else if (game.mode === "exploration" && Math.random() < (enemy.type === "spider" ? 0.2 : 0.3)) {
             game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 18 }));
             trimPotionDrops();
           }
           scene.remove(enemy.group);
           game.kills += 1;
           if (game.mode === "exploration" && enemy.exploration) {
-            awardExplorationXp(12);
+            awardExplorationXp(enemy.type === "dragon" ? 28 : enemy.type === "spider" ? 10 : 12);
             updateQuestProgress("raiders", 1);
+            if (enemy.type === "spider") {
+              updateQuestProgress("spiders", 1);
+            } else if (enemy.type === "dragon") {
+              updateQuestProgress("dragons", 1);
+            }
           }
         }
       }
 
       function chooseExplorationPatrolTarget(enemy) {
         const angle = Math.random() * TAU;
-        const radius = 2.5 + Math.random() * 9.5;
+        const radius = 2.5 + Math.random() * (enemy.homeRadius || 9.5);
         enemy.patrolTarget.set(
           enemy.home.x + Math.cos(angle) * radius,
           0,
@@ -4248,6 +4721,145 @@
           enemy.patrolTarget.x = game.exploration.origin.x + local.x;
           enemy.patrolTarget.z = game.exploration.origin.z + local.z;
         }
+      }
+
+      function constrainExplorationEnemy(enemy) {
+        const local = explorationLocalPosition(enemy.position, tmpVec);
+        const maxRadius = game.exploration.radius - 2.5;
+        const distance = Math.hypot(local.x, local.z);
+        if (distance > maxRadius) {
+          local.multiplyScalar(maxRadius / Math.max(0.001, distance));
+          enemy.position.x = game.exploration.origin.x + local.x;
+          enemy.position.z = game.exploration.origin.z + local.z;
+          enemy.velocity.multiplyScalar(0.25);
+        }
+      }
+
+      function updateExplorationDragonEnemy(enemy, dt, playerDistance, playerDirection) {
+        if (enemy.stunned > 0) {
+          enemy.velocity.multiplyScalar(Math.pow(0.08, dt));
+          enemy.position.addScaledVector(enemy.velocity, dt);
+          enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
+          constrainExplorationEnemy(enemy);
+          enemy.group.position.set(enemy.position.x, enemy.hoverHeight, enemy.position.z);
+          enemy.group.rotation.y = enemy.yaw;
+          updateDragonAnimation(enemy, dt);
+          return;
+        }
+        const active = playerDistance < enemy.awareness || ((enemy.state === "chase" || enemy.state === "fire") && playerDistance < enemy.awareness * 1.75);
+        if (active) {
+          if (enemy.state === "patrol") {
+            enemy.state = "chase";
+          }
+          enemy.yaw = yawFromDirection(playerDirection);
+          updateDragonEnemy(enemy, dt, playerDistance, playerDirection);
+        } else {
+          enemy.state = "patrol";
+          if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 1.2) {
+            chooseExplorationPatrolTarget(enemy);
+          }
+          const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
+          const patrolDistance = Math.max(0.001, Math.hypot(toPatrol.x, toPatrol.z));
+          toPatrol.multiplyScalar(1 / patrolDistance);
+          enemy.yaw = yawFromDirection(toPatrol);
+          const desired = toPatrol.multiplyScalar(enemy.speed * 0.5);
+          enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.018, dt));
+          enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.018, dt));
+        }
+
+        enemy.position.addScaledVector(enemy.velocity, dt);
+        enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
+        constrainExplorationEnemy(enemy);
+        const hover = enemy.hoverHeight + Math.sin(clock.elapsedTime * 3.4 + enemy.bobSeed) * 0.28;
+        enemy.group.position.set(enemy.position.x, hover, enemy.position.z);
+        enemy.group.rotation.y = enemy.yaw;
+        updateDragonAnimation(enemy, dt);
+      }
+
+      function beginSpiderAttack(enemy) {
+        enemy.state = "lunge";
+        enemy.attackTimer = 0;
+        enemy.attackHitDone = false;
+        enemy.attackDuration = 0.58;
+        enemy.telegraph.visible = true;
+        enemy.telegraph.material.opacity = 0.42;
+      }
+
+      function updateSpiderAttack(enemy, dt, playerDistance, playerDirection) {
+        enemy.attackTimer += dt;
+        const t = enemy.attackTimer / enemy.attackDuration;
+        enemy.telegraph.visible = true;
+        enemy.telegraph.material.opacity = 0.42 * (1 - smoothstep(0.45, 1, t));
+        if (t < 0.64) {
+          enemy.velocity.addScaledVector(playerDirection, dt * enemy.speed * 3.2);
+        }
+        if (!enemy.attackHitDone && t > 0.38) {
+          enemy.attackHitDone = true;
+          if (playerDistance < 2.05) {
+            const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
+            applyPlayerDamage(16, 22, hitDirection, 0.18);
+          }
+        }
+        if (enemy.attackTimer >= enemy.attackDuration) {
+          enemy.state = "chase";
+          enemy.cooldown = 1.05 + Math.random() * 0.75;
+          enemy.telegraph.visible = false;
+        }
+      }
+
+      function updateSpiderAnimation(enemy, dt) {
+        const speed = Math.min(1, enemy.velocity.length() / Math.max(0.001, enemy.speed));
+        enemy.walkTime += dt * enemy.speed * (0.8 + speed * 1.4);
+        for (let i = 0; i < enemy.legs.length; i += 1) {
+          const leg = enemy.legs[i];
+          const side = leg.position.x < 0 ? -1 : 1;
+          const phase = Math.sin(enemy.walkTime * 5.4 + i * 0.78) * 0.18 * (0.35 + speed);
+          leg.rotation.z = side * (Math.PI / (i % 2 ? 2.75 : 2.35)) + phase * side;
+        }
+        enemy.body.rotation.x = enemy.stunned > 0 ? -0.18 : Math.sin(enemy.walkTime * 2.8) * 0.035;
+      }
+
+      function updateExplorationSpiderEnemy(enemy, dt, playerDistance, playerDirection) {
+        if (enemy.stunned > 0) {
+          enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
+          enemy.telegraph.visible = false;
+        } else if (enemy.state === "lunge") {
+          enemy.yaw = yawFromDirection(playerDirection);
+          updateSpiderAttack(enemy, dt, playerDistance, playerDirection);
+        } else {
+          const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.55);
+          if (shouldChase) {
+            enemy.state = "chase";
+            enemy.yaw = yawFromDirection(playerDirection);
+            if (playerDistance < 2.1 && enemy.cooldown <= 0) {
+              beginSpiderAttack(enemy);
+            } else {
+              const desired = playerDirection.multiplyScalar(enemy.speed * 1.02);
+              enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.018, dt));
+              enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.018, dt));
+            }
+          } else {
+            enemy.state = "patrol";
+            if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.65) {
+              chooseExplorationPatrolTarget(enemy);
+            }
+            const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
+            const patrolDistance = Math.max(0.001, Math.hypot(toPatrol.x, toPatrol.z));
+            toPatrol.multiplyScalar(1 / patrolDistance);
+            enemy.yaw = yawFromDirection(toPatrol);
+            const desired = toPatrol.multiplyScalar(enemy.speed * 0.36);
+            enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.02, dt));
+            enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.02, dt));
+            enemy.telegraph.visible = false;
+          }
+        }
+
+        enemy.position.addScaledVector(enemy.velocity, dt);
+        enemy.velocity.multiplyScalar(Math.pow(0.22, dt));
+        constrainExplorationEnemy(enemy);
+        enemy.group.position.copy(enemy.position);
+        enemy.group.rotation.y = enemy.yaw;
+        updateSpiderAnimation(enemy, dt);
       }
 
       function updateExplorationNpcs(dt) {
@@ -4320,11 +4932,20 @@
           enemy.stunned = Math.max(0, enemy.stunned - dt);
           enemy.healthRoot.lookAt(camera.position);
           enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
-          enemy.hpFill.position.x = -0.41 * (1 - enemy.hpFill.scale.x);
+          enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
 
           const toPlayer = tmpVec.copy(player.position).sub(enemy.position);
           const playerDistance = Math.max(0.001, toPlayer.length());
           const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
+
+          if (enemy.type === "dragon") {
+            updateExplorationDragonEnemy(enemy, dt, playerDistance, playerDirection);
+            continue;
+          }
+          if (enemy.type === "spider") {
+            updateExplorationSpiderEnemy(enemy, dt, playerDistance, playerDirection);
+            continue;
+          }
 
           if (enemy.stunned > 0) {
             enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
@@ -4380,15 +5001,7 @@
 
           enemy.position.addScaledVector(enemy.velocity, dt);
           enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
-          const local = explorationLocalPosition(enemy.position, tmpVec);
-          const maxRadius = game.exploration.radius - 2.5;
-          const distance = Math.hypot(local.x, local.z);
-          if (distance > maxRadius) {
-            local.multiplyScalar(maxRadius / Math.max(0.001, distance));
-            enemy.position.x = game.exploration.origin.x + local.x;
-            enemy.position.z = game.exploration.origin.z + local.z;
-            enemy.velocity.multiplyScalar(0.25);
-          }
+          constrainExplorationEnemy(enemy);
           enemy.group.position.copy(enemy.position);
           enemy.group.rotation.y = enemy.yaw;
           const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
