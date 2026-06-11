@@ -99,7 +99,7 @@ import {
   const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
   const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
   const QUEST_MAP_UPDATE_INTERVAL = 0.16;
-  const AUDIO_MASTER_VOLUME = 0.52;
+  const AUDIO_MASTER_VOLUME = 1.0;
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
@@ -276,6 +276,32 @@ import {
       playTone(784, 0.2, { type: "triangle", gain: 0.04 * amount, delay: 0.22 });
     } else if (name === "ui") {
       playTone(360, 0.055, { type: "triangle", endFrequency: 460, gain: 0.025 * amount });
+    } else if (name === "uiMove") {
+      playTone(330, 0.04, { type: "triangle", endFrequency: 385, gain: 0.018 * amount });
+    } else if (name === "uiBack") {
+      playTone(420, 0.07, { type: "triangle", endFrequency: 250, gain: 0.024 * amount });
+    } else if (name === "arenaStart") {
+      playTone(262, 0.16, { type: "sawtooth", gain: 0.028 * amount });
+      playTone(392, 0.18, { type: "sawtooth", gain: 0.03 * amount, delay: 0.12 });
+      playTone(523, 0.3, { type: "triangle", gain: 0.045 * amount, delay: 0.26 });
+      playNoise(0.5, { frequency: 320, gain: 0.018 * amount, q: 0.6 });
+    } else if (name === "waveStart") {
+      playTone(98, 0.18, { type: "triangle", endFrequency: 62, gain: 0.06 * amount });
+      playNoise(0.16, { filterType: "lowpass", frequency: 420, gain: 0.04 * amount });
+    } else if (name === "waveClear") {
+      playTone(587, 0.1, { type: "triangle", gain: 0.04 * amount });
+      playTone(880, 0.16, { type: "triangle", gain: 0.038 * amount, delay: 0.09 });
+    } else if (name === "arenaMilestone") {
+      playTone(523, 0.12, { type: "triangle", gain: 0.045 * amount });
+      playTone(659, 0.12, { type: "triangle", gain: 0.042 * amount, delay: 0.11 });
+      playTone(784, 0.14, { type: "triangle", gain: 0.04 * amount, delay: 0.22 });
+      playTone(1047, 0.24, { type: "triangle", gain: 0.045 * amount, delay: 0.34 });
+    } else if (name === "arenaYield") {
+      playTone(392, 0.14, { type: "triangle", endFrequency: 294, gain: 0.035 * amount });
+      playTone(262, 0.2, { type: "triangle", endFrequency: 196, gain: 0.03 * amount, delay: 0.12 });
+    } else if (name === "arenaDefeat") {
+      playTone(220, 0.32, { type: "sawtooth", endFrequency: 88, gain: 0.042 * amount });
+      playNoise(0.3, { filterType: "lowpass", frequency: 300, gain: 0.048 * amount, delay: 0.05 });
     }
   }
 
@@ -1543,6 +1569,7 @@ import {
     player.group.position.copy(player.position);
     player.group.rotation.y = 0;
     game.cameraYaw = 0;
+    playSfx("arenaStart", 1);
     showBanner("Crownring opened - press Y to yield", 3);
     updateHud();
   }
@@ -1569,6 +1596,7 @@ import {
     player.group.rotation.y = player.yaw;
     parkHorseNear(player.position);
     spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
+    playSfx(defeated ? "arenaDefeat" : "arenaYield", 1.1);
     showBanner(defeated ? "Recovered at Crownford infirmary" : "Yielded from the Crownring", 2.6);
     saveProgress();
     updateHud();
@@ -1719,6 +1747,7 @@ import {
     player.group.rotation.y = 0;
     game.cameraYaw = 0;
     spawnWave();
+    playSfx("arenaStart", 1.1);
     showBanner("Crownring opened - press Y to yield", 3);
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     sendWorldSnapshot(true);
@@ -1788,6 +1817,8 @@ import {
     awardExplorationXp(xp);
     updateQuestProgress("crownringTrial", 1);
     if (xp > 0) {
+      const wave = Math.max(0, Math.floor(numberOrZero(message.wave)));
+      playSfx(wave > 0 && wave % 3 === 0 ? "arenaMilestone" : "waveClear", 1);
       showBanner("Crownring purse +" + xp + " XP", 2.4);
     }
   }
@@ -4008,6 +4039,9 @@ import {
   }
 
   function moveDialogSelection(direction) {
+    if (dialogActionButtons().length > 1) {
+      playSfx("uiMove", 1);
+    }
     updateDialogSelection(game.dialogActionIndex + direction);
   }
 
@@ -4020,6 +4054,7 @@ import {
     } else if (button === questServiceButton) {
       startCrownringArenaActivity();
     } else {
+      playSfx("uiBack", 1);
       closeQuestDialog();
     }
   }
@@ -4045,6 +4080,7 @@ import {
     }
     if (event.code === "Escape") {
       event.preventDefault();
+      playSfx("uiBack", 1);
       closeQuestDialog();
       return true;
     }
@@ -8208,6 +8244,9 @@ import {
         game.enemies.push(barbarian);
       }
     }
+    if (arenaActivityActive() && game.wave > 1) {
+      playSfx("waveStart", 1);
+    }
     showBanner(arenaActivityActive() ? "Crownring wave " + game.wave + " entering" : "Wave " + game.wave + " entering");
   }
 
@@ -9705,6 +9744,7 @@ import {
           activity.nextWaveIn = game.nextWaveIn;
           activity.exitOpen = true;
           const xp = grantCrownringWaveReward(game.wave);
+          playSfx(game.wave % 3 === 0 ? "arenaMilestone" : "waveClear", 1.1);
           showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP - press Y to yield", 3);
         } else {
           showBanner("Wave " + game.wave + " cleared");
@@ -10405,7 +10445,10 @@ import {
     questAcceptButton.addEventListener("click", acceptCurrentQuest);
     questClaimButton.addEventListener("click", claimCurrentQuest);
     questServiceButton.addEventListener("click", startCrownringArenaActivity);
-    questCloseButton.addEventListener("click", closeQuestDialog);
+    questCloseButton.addEventListener("click", () => {
+      playSfx("uiBack", 1);
+      closeQuestDialog();
+    });
 
     roomCodeInput.addEventListener("input", () => {
       roomCodeInput.value = normalizeRoomCode(roomCodeInput.value);
