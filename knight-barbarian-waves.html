@@ -810,8 +810,8 @@
     <div class="reticle"></div>
 
     <div class="talk-prompt panel" id="talkPrompt" hidden>
-      <span class="talk-key">E</span>
-      <span>Talk</span>
+      <span class="talk-key" id="talkKey">E</span>
+      <span id="talkAction">Talk</span>
       <strong id="talkTarget"></strong>
     </div>
 
@@ -959,6 +959,8 @@
       const joinControls = document.getElementById("joinControls");
       const onlineStatus = document.getElementById("onlineStatus");
       const talkPrompt = document.getElementById("talkPrompt");
+      const talkKey = document.getElementById("talkKey");
+      const talkAction = document.getElementById("talkAction");
       const talkTarget = document.getElementById("talkTarget");
       const questDialog = document.getElementById("questDialog");
       const questDialogTitle = document.getElementById("questDialogTitle");
@@ -1048,6 +1050,9 @@
         mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, roughness: 0.9 }),
         spiderCarapace: new THREE.MeshStandardMaterial({ color: 0x2d221c, roughness: 0.78, metalness: 0.03 }),
         spiderMarking: new THREE.MeshBasicMaterial({ color: 0xd9a648 }),
+        horseCoat: new THREE.MeshStandardMaterial({ color: 0x7b4a2a, roughness: 0.86 }),
+        horseMane: new THREE.MeshStandardMaterial({ color: 0x2f1b12, roughness: 0.9 }),
+        saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, roughness: 0.88 }),
         path: new THREE.MeshStandardMaterial({ color: 0x8f774f, roughness: 0.98 }),
         water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
         pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
@@ -1107,6 +1112,7 @@
           lakes: [],
           villages: [],
           biomes: [],
+          horse: null,
           discovered: new Set(),
           completed: false,
           spawn: new THREE.Vector3(180, 0, 1.6)
@@ -1333,6 +1339,10 @@
             item.group.parent.remove(item.group);
           }
         }
+        if (game.exploration.horse) {
+          scene.remove(game.exploration.horse.group);
+          game.exploration.horse = null;
+        }
         game.npcs.length = 0;
         game.questItems.length = 0;
         game.quests.length = 0;
@@ -1375,6 +1385,31 @@
         path.rotation.y = Math.atan2(dx, dz);
         path.receiveShadow = true;
         group.add(path);
+      }
+
+      function addStable(group, x, z) {
+        const stable = new THREE.Group();
+        stable.position.set(x, 0, z);
+        const postPositions = [
+          [-1.8, 0, -1.2],
+          [1.8, 0, -1.2],
+          [-1.8, 0, 1.2],
+          [1.8, 0, 1.2]
+        ];
+        for (const [px, py, pz] of postPositions) {
+          stable.add(makeBox(0.18, 1.85, 0.18, materials.wood, px, 0.92 + py, pz));
+        }
+        const roofA = makeBox(4.4, 0.26, 1.75, materials.roof, 0, 2.02, -0.52);
+        const roofB = makeBox(4.4, 0.26, 1.75, materials.roof, 0, 2.02, 0.52);
+        roofA.rotation.x = -0.48;
+        roofB.rotation.x = 0.48;
+        const railBack = makeBox(3.8, 0.16, 0.14, materials.wood, 0, 0.88, 1.38);
+        const railLeft = makeBox(0.14, 0.16, 2.3, materials.wood, -2.0, 0.8, 0);
+        const hay = makeBox(1.1, 0.36, 0.78, materials.dryBrush, 0.75, 0.2, 0.8);
+        hay.rotation.y = 0.18;
+        stable.add(roofA, roofB, railBack, railLeft, hay);
+        stable.rotation.y = -0.28;
+        group.add(stable);
       }
 
       function biomeContains(biome, x, z, padding = 0) {
@@ -1746,15 +1781,20 @@
         return game.quests.find(quest => quest.id === id) || null;
       }
 
-      function createQuestItem(group, questId, x, z, random) {
+      function createQuestItem(group, questId, x, z, random, options = {}) {
         const itemGroup = new THREE.Group();
         itemGroup.position.set(x, 0.12, z);
-        const stem = makeCylinder(0.025, 0.035, 0.35, 8, materials.broadleaf, 0, 0.18, 0);
-        const bloom = makeSphere(0.12, materials.questGlow.clone(), 0, 0.42, 0);
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 8, 18), materials.questGlow.clone());
+        const color = options.color || 0x9fffd1;
+        const stem = makeCylinder(0.025, 0.035, 0.35, 8, options.stemMaterial || materials.broadleaf, 0, 0.18, 0);
+        const bloomMaterial = materials.questGlow.clone();
+        bloomMaterial.color.setHex(color);
+        const bloom = makeSphere(options.radius || 0.12, bloomMaterial, 0, 0.42, 0);
+        const ringMaterial = materials.questGlow.clone();
+        ringMaterial.color.setHex(color);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 8, 18), ringMaterial);
         ring.rotation.x = Math.PI / 2;
         ring.position.y = 0.08;
-        const light = new THREE.PointLight(0x9fffd1, 0.75, 3.6, 1.8);
+        const light = new THREE.PointLight(color, 0.75, 3.6, 1.8);
         light.position.y = 0.35;
         itemGroup.add(stem, bloom, ring, light);
         itemGroup.visible = false;
@@ -1765,6 +1805,7 @@
           ring,
           light,
           questId,
+          color,
           collected: false,
           respawnTimer: 0,
           position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
@@ -1787,6 +1828,208 @@
             random
           );
         }
+      }
+
+      function addHorseQuestItems(group, random) {
+        for (let i = 0; i < 7; i += 1) {
+          const point = randomExplorationPoint(random, 13, 95, (x, z) => biomeAt(x, z) === "meadow" && Math.hypot(x, z) > 18);
+          createQuestItem(group, "horse", point.x, point.z, random, {
+            color: 0xffd889,
+            stemMaterial: materials.dryBrush,
+            radius: 0.1
+          });
+        }
+      }
+
+      function createHorseModel() {
+        const group = new THREE.Group();
+        const body = makeBox(0.86, 0.62, 1.62, materials.horseCoat, 0, 1.02, 0);
+        body.scale.set(1.05, 1, 1.08);
+        const chest = makeBox(0.76, 0.64, 0.72, materials.horseCoat.clone(), 0, 1.08, -0.58);
+        const neck = makeCylinder(0.16, 0.24, 0.78, 10, materials.horseCoat.clone(), 0, 1.38, -0.86);
+        neck.rotation.x = -0.66;
+        const head = makeBox(0.42, 0.36, 0.58, materials.horseCoat.clone(), 0, 1.58, -1.25);
+        head.rotation.x = -0.12;
+        const muzzle = makeBox(0.34, 0.22, 0.28, materials.paleWood, 0, 1.48, -1.55);
+        const leftEar = makeCone(0.07, 0.22, 8, materials.horseCoat.clone(), -0.13, 1.82, -1.28);
+        const rightEar = makeCone(0.07, 0.22, 8, materials.horseCoat.clone(), 0.13, 1.82, -1.28);
+        const leftEye = makeSphere(0.032, materials.emberEye, -0.16, 1.63, -1.52);
+        const rightEye = makeSphere(0.032, materials.emberEye.clone(), 0.16, 1.63, -1.52);
+        const mane = makeBox(0.12, 0.46, 0.78, materials.horseMane, 0, 1.5, -0.78);
+        mane.rotation.x = -0.36;
+        const saddle = makeBox(0.74, 0.18, 0.74, materials.saddle, 0, 1.38, 0.02);
+        const saddleTrim = makeBox(0.82, 0.055, 0.82, materials.gold, 0, 1.5, 0.02);
+        const tail = makeCylinder(0.06, 0.1, 0.78, 8, materials.horseMane, 0, 0.92, 0.95);
+        tail.rotation.x = 0.92;
+
+        const legs = [];
+        const legData = [
+          [-0.28, 0.44, -0.52],
+          [0.28, 0.44, -0.52],
+          [-0.28, 0.44, 0.58],
+          [0.28, 0.44, 0.58]
+        ];
+        for (const [x, y, z] of legData) {
+          const leg = new THREE.Group();
+          leg.position.set(x, y + 0.33, z);
+          const upper = makeCylinder(0.07, 0.09, 0.72, 8, materials.horseCoat.clone(), 0, -0.36, 0);
+          const hoof = makeBox(0.18, 0.11, 0.2, materials.darkLeather, 0, -0.72, -0.02);
+          leg.add(upper, hoof);
+          legs.push(leg);
+          group.add(leg);
+        }
+
+        group.add(body, chest, neck, head, muzzle, leftEar, rightEar, leftEye, rightEye, mane, saddle, saddleTrim, tail);
+        return { group, body, legs, tail };
+      }
+
+      function createHorse(x, z) {
+        const model = createHorseModel();
+        const horse = {
+          ...model,
+          position: new THREE.Vector3(x, 0, z),
+          velocity: new THREE.Vector3(),
+          yaw: 0,
+          mounted: false,
+          walkTime: Math.random() * 10,
+          followDistance: 5.8,
+          minFollowDistance: 3.6,
+          mountDistance: 2.8
+        };
+        horse.group.position.copy(horse.position);
+        scene.add(horse.group);
+        return horse;
+      }
+
+      function spawnHorseNearPlayer() {
+        if (game.exploration.horse) {
+          scene.remove(game.exploration.horse.group);
+        }
+        const side = rightFromYaw(player.yaw, tmpVec).multiplyScalar(-2.2);
+        const position = tmpVec2.copy(player.position).add(side);
+        game.exploration.horse = createHorse(position.x, position.z);
+        spawnImpact(position, 0xffd889, 24);
+      }
+
+      function isPlayerMounted() {
+        return game.mode === "exploration" && !!game.exploration.horse && game.exploration.horse.mounted;
+      }
+
+      function nearestHorse(maxDistance = 3.2) {
+        const horse = game.exploration.horse;
+        if (!horse) {
+          return null;
+        }
+        if (horse.mounted) {
+          return horse;
+        }
+        return player.position.distanceTo(horse.position) <= maxDistance ? horse : null;
+      }
+
+      function toggleHorseMount() {
+        const horse = game.exploration.horse;
+        if (!horse || game.mode !== "exploration" || game.state !== "playing") {
+          return false;
+        }
+        if (horse.mounted) {
+          horse.mounted = false;
+          const dismount = rightFromYaw(player.yaw, tmpVec).multiplyScalar(1.45);
+          player.position.copy(horse.position).add(dismount);
+          constrainExplorationPlayer();
+          player.velocity.multiplyScalar(0.25);
+          player.group.visible = true;
+          showBanner("Dismounted");
+          return true;
+        }
+        if (player.position.distanceTo(horse.position) > horse.mountDistance) {
+          return false;
+        }
+        horse.mounted = true;
+        horse.yaw = player.yaw;
+        player.attacking = false;
+        player.blockHeld = false;
+        player.blocking = false;
+        player.position.copy(horse.position);
+        player.velocity.multiplyScalar(0.2);
+        showBanner("Mounted");
+        return true;
+      }
+
+      function constrainHorsePosition(horse) {
+        const local = explorationLocalPosition(horse.position, tmpVec);
+        const distance = Math.hypot(local.x, local.z);
+        const maxRadius = game.exploration.radius - 2.5;
+        if (distance > maxRadius) {
+          local.multiplyScalar(maxRadius / Math.max(0.001, distance));
+          horse.position.x = game.exploration.origin.x + local.x;
+          horse.position.z = game.exploration.origin.z + local.z;
+          horse.velocity.multiplyScalar(0.25);
+        }
+        for (const lake of game.exploration.lakes) {
+          const dx = horse.position.x - lake.x;
+          const dz = horse.position.z - lake.z;
+          const rx = lake.rx + 1.25;
+          const rz = lake.rz + 1.25;
+          if ((dx * dx) / (rx * rx) + (dz * dz) / (rz * rz) < 1) {
+            const angle = Math.atan2(dz / rz, dx / rx);
+            horse.position.x = lake.x + Math.cos(angle) * rx;
+            horse.position.z = lake.z + Math.sin(angle) * rz;
+            horse.velocity.multiplyScalar(0.25);
+          }
+        }
+      }
+
+      function updateHorseAnimation(horse, dt) {
+        const speed = horse.velocity.length();
+        horse.walkTime += dt * (1.4 + speed * 1.5);
+        const moving = Math.min(1, speed / 7.5);
+        const bob = Math.sin(horse.walkTime * 2.2) * 0.045 * moving;
+        horse.group.position.set(horse.position.x, bob, horse.position.z);
+        horse.group.rotation.y = horse.yaw;
+        for (let i = 0; i < horse.legs.length; i += 1) {
+          const phase = Math.sin(horse.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
+          horse.legs[i].rotation.x = phase;
+        }
+        horse.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
+      }
+
+      function updateHorse(dt) {
+        const horse = game.exploration.horse;
+        if (!horse) {
+          return;
+        }
+        if (horse.mounted) {
+          horse.velocity.copy(player.velocity);
+          horse.position.copy(player.position);
+          horse.yaw = player.yaw;
+          updateHorseAnimation(horse, dt);
+          return;
+        }
+
+        const toPlayer = tmpVec.copy(player.position).sub(horse.position);
+        const distance = Math.max(0.001, Math.hypot(toPlayer.x, toPlayer.z));
+        toPlayer.y = 0;
+        toPlayer.multiplyScalar(1 / distance);
+        if (distance > 32) {
+          horse.position.copy(player.position).addScaledVector(toPlayer, -horse.followDistance);
+          horse.velocity.set(0, 0, 0);
+        } else if (distance > horse.followDistance) {
+          const desiredSpeed = distance > 11 ? 7.2 : 5.4;
+          horse.velocity.x = lerp(horse.velocity.x, toPlayer.x * desiredSpeed, 1 - Math.pow(0.012, dt));
+          horse.velocity.z = lerp(horse.velocity.z, toPlayer.z * desiredSpeed, 1 - Math.pow(0.012, dt));
+          horse.yaw = yawFromDirection(toPlayer);
+        } else if (distance < horse.minFollowDistance) {
+          horse.velocity.x = lerp(horse.velocity.x, -toPlayer.x * 1.8, 1 - Math.pow(0.02, dt));
+          horse.velocity.z = lerp(horse.velocity.z, -toPlayer.z * 1.8, 1 - Math.pow(0.02, dt));
+          horse.yaw = yawFromDirection(toPlayer);
+        } else {
+          horse.velocity.x = lerp(horse.velocity.x, 0, 1 - Math.pow(0.0002, dt));
+          horse.velocity.z = lerp(horse.velocity.z, 0, 1 - Math.pow(0.0002, dt));
+        }
+        horse.position.addScaledVector(horse.velocity, dt);
+        horse.velocity.multiplyScalar(Math.pow(0.3, dt));
+        constrainHorsePosition(horse);
+        updateHorseAnimation(horse, dt);
       }
 
       function updateQuestProgress(id, amount) {
@@ -1831,7 +2074,7 @@
             item.collected = true;
             item.respawnTimer = 22 + (item.bobSeed % 7);
             item.group.visible = false;
-            spawnImpact(item.position, 0x9fffd1, 12);
+            spawnImpact(item.position, item.color || 0x9fffd1, 12);
             awardExplorationXp(5);
             updateQuestProgress(item.questId, 1);
           }
@@ -1871,12 +2114,32 @@
           game.activeNpc = null;
           return;
         }
+        if (isPlayerMounted()) {
+          game.activeNpc = null;
+          talkKey.textContent = "R";
+          talkAction.textContent = "Dismount";
+          talkTarget.textContent = "Horse";
+          talkPrompt.hidden = false;
+          return;
+        }
         const npc = nearestNpc();
         game.activeNpc = npc;
-        talkPrompt.hidden = !npc;
         if (npc) {
+          talkKey.textContent = "E";
+          talkAction.textContent = "Talk";
           talkTarget.textContent = npc.name;
+          talkPrompt.hidden = false;
+          return;
         }
+        const horse = nearestHorse();
+        if (horse) {
+          talkKey.textContent = "R";
+          talkAction.textContent = "Ride";
+          talkTarget.textContent = "Horse";
+          talkPrompt.hidden = false;
+          return;
+        }
+        talkPrompt.hidden = true;
       }
 
       function openNpcDialog(npc) {
@@ -1983,6 +2246,8 @@
           player.mana = player.maxMana;
           player.maxGuard += 10;
           player.guard = player.maxGuard;
+        } else if (quest.id === "horse") {
+          spawnHorseNearPlayer();
         } else if (quest.id === "villages") {
           player.health = player.maxHealth;
           player.guard = player.maxGuard;
@@ -2061,6 +2326,16 @@
             "+20 max magica and +10 max guard",
             "hunt",
             2
+          ),
+          createQuest(
+            "horse",
+            "Hooves for the Long Road",
+            "Rowan",
+            "A good horse will cross this valley faster than any pair of boots. Gather wild oats, and I will saddle one that already likes your shadow.",
+            "Gather wild oats",
+            "A loyal horse mount",
+            "collect",
+            4
           )
         );
       }
@@ -2256,9 +2531,11 @@
 
         setupExplorationQuests();
         addExplorationHouse(group, 0, 0, 1.05, 0, "meadow");
+        addStable(group, -7.1, -1.8);
         addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders", "meadow"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 7.0, game.exploration.origin.z - 4.2, random, 4.5, "Rowan", "horse", "meadow"));
 
         addExplorationLake(group, 42 + random() * 8, 58 + random() * 7, 15, 9, random);
         addExplorationLake(group, -74 - random() * 8, -52 - random() * 7, 12, 8, random);
@@ -2266,6 +2543,7 @@
         addExplorationLake(group, -130 - random() * 8, 86 + random() * 9, 13, 8.5, random);
         addExplorationLake(group, 8 + random() * 10, -142 - random() * 8, 10, 6.8, random);
         addHerbQuestItems(group, random);
+        addHorseQuestItems(group, random);
 
         addExplorationVillage(group, 82 + random() * 12, -62 - random() * 10, random, 0, "meadow");
         addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1, "meadow");
@@ -3025,7 +3303,7 @@
         }
         if (removeRemotes) {
           for (const remote of online.remotePlayers.values()) {
-            scene.remove(remote.group);
+            removeRemotePlayer(remote);
           }
           online.remotePlayers.clear();
         }
@@ -3135,6 +3413,7 @@
       }
 
       function serializePlayerState() {
+        const horse = game.mode === "exploration" ? game.exploration.horse : null;
         return {
           id: online.localId,
           mode: game.mode,
@@ -3144,7 +3423,12 @@
           maxHealth: player.maxHealth,
           x: player.position.x,
           z: player.position.z,
-          yaw: player.yaw
+          yaw: player.yaw,
+          hasHorse: !!horse,
+          mounted: !!horse && horse.mounted,
+          horseX: horse ? horse.position.x : null,
+          horseZ: horse ? horse.position.z : null,
+          horseYaw: horse ? horse.yaw : player.yaw
         };
       }
 
@@ -3366,6 +3650,7 @@
 
       function createRemotePlayerModel(character, id) {
         const group = new THREE.Group();
+        const rider = new THREE.Group();
         const allyMode = game.mode === "exploration";
         const palette = remotePalette(id);
         const marker = new THREE.Mesh(
@@ -3374,16 +3659,22 @@
         );
         marker.rotation.x = Math.PI / 2;
         marker.position.y = 0.03;
-        group.add(marker);
+        group.add(marker, rider);
         const details = character === "wizard"
-          ? createRemoteWizardDetails(group, palette)
-          : createRemoteKnightDetails(group, palette);
+          ? createRemoteWizardDetails(rider, palette)
+          : createRemoteKnightDetails(rider, palette);
         const nameTag = createNameTag("", allyMode ? palette.glow : palette.trim);
         nameTag.sprite.position.set(0, details.nameTagY, 0);
-        group.add(nameTag.sprite);
+        rider.add(nameTag.sprite);
+        const horse = createHorseModel();
+        horse.group.visible = false;
+        horse.walkTime = Math.random() * 10;
+        scene.add(horse.group);
         scene.add(group);
         return {
           group,
+          rider,
+          horse,
           marker,
           nameTag,
           leftLeg: details.leftLeg,
@@ -3450,6 +3741,25 @@
         ctx.closePath();
       }
 
+      function removeRemotePlayer(remote) {
+        scene.remove(remote.group);
+        if (remote.horse) {
+          scene.remove(remote.horse.group);
+        }
+      }
+
+      function updateHorseModelLocalAnimation(model, speed, dt) {
+        model.walkTime += dt * (1.4 + speed * 1.5);
+        const moving = Math.min(1, speed / 7.5);
+        const bob = Math.sin(model.walkTime * 2.2) * 0.045 * moving;
+        for (let i = 0; i < model.legs.length; i += 1) {
+          const phase = Math.sin(model.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
+          model.legs[i].rotation.x = phase;
+        }
+        model.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
+        return bob;
+      }
+
       function upsertRemotePlayer(state) {
         let remote = online.remotePlayers.get(state.id);
         const nextCharacter = state.character || "knight";
@@ -3458,13 +3768,16 @@
           const previousPosition = previous ? previous.group.position.clone() : null;
           const previousTarget = previous ? previous.targetPosition.clone() : null;
           const previousWalk = previous ? previous.walkTime : 0;
+          const previousHorsePosition = previous && previous.horse ? previous.horse.group.position.clone() : null;
           if (previous) {
-            scene.remove(previous.group);
+            removeRemotePlayer(previous);
           }
           remote = createRemotePlayerModel(nextCharacter, state.id);
           online.remotePlayers.set(state.id, remote);
           remote.group.position.copy(previousPosition || new THREE.Vector3(state.x || 0, 0, state.z || 0));
           remote.targetPosition.copy(remote.group.position);
+          remote.horse.group.position.copy(previousHorsePosition || new THREE.Vector3(state.horseX ?? state.x ?? 0, 0, state.horseZ ?? state.z ?? 0));
+          remote.horseTargetPosition = remote.horse.group.position.clone();
           if (previousTarget) {
             remote.targetPosition.copy(previousTarget);
           }
@@ -3477,6 +3790,13 @@
         remote.maxHealth = state.maxHealth ?? remote.maxHealth;
         remote.targetPosition.set(state.x || 0, 0, state.z || 0);
         remote.targetYaw = state.yaw || 0;
+        remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
+        remote.mounted = !!state.mounted && remote.hasHorse;
+        if (!remote.horseTargetPosition) {
+          remote.horseTargetPosition = new THREE.Vector3();
+        }
+        remote.horseTargetPosition.set(state.horseX ?? state.x ?? 0, 0, state.horseZ ?? state.z ?? 0);
+        remote.horseTargetYaw = state.horseYaw ?? state.yaw ?? 0;
         remote.lastSeen = clock.elapsedTime;
       }
 
@@ -3487,14 +3807,37 @@
           remote.group.rotation.y = lerp(remote.group.rotation.y, remote.targetYaw || 0, 1 - Math.pow(0.00005, dt));
           const moved = remote.group.position.distanceTo(before);
           remote.walkTime += moved * 2.8;
+          const riderEase = 1 - Math.pow(0.0001, dt);
+          if (remote.rider) {
+            remote.rider.position.y = lerp(remote.rider.position.y, remote.mounted ? 1.2 : 0, riderEase);
+          }
           const swing = Math.sin(remote.walkTime * 7.2) * Math.min(0.28, moved * 8);
           if (remote.leftLeg && remote.rightLeg) {
-            remote.leftLeg.rotation.x = swing;
-            remote.rightLeg.rotation.x = -swing;
+            if (remote.mounted) {
+              remote.leftLeg.rotation.x = lerp(remote.leftLeg.rotation.x, -0.95, riderEase);
+              remote.rightLeg.rotation.x = lerp(remote.rightLeg.rotation.x, -0.95, riderEase);
+            } else {
+              remote.leftLeg.rotation.x = swing;
+              remote.rightLeg.rotation.x = -swing;
+            }
+          }
+          if (remote.horse) {
+            remote.horse.group.visible = !!remote.hasHorse;
+            if (remote.hasHorse) {
+              const previousHorseX = remote.horse.group.position.x;
+              const previousHorseZ = remote.horse.group.position.z;
+              const horseTarget = remote.horseTargetPosition || remote.targetPosition;
+              remote.horse.group.position.x = lerp(remote.horse.group.position.x, horseTarget.x, 1 - Math.pow(0.0002, dt));
+              remote.horse.group.position.z = lerp(remote.horse.group.position.z, horseTarget.z, 1 - Math.pow(0.0002, dt));
+              const horseMoved = Math.hypot(remote.horse.group.position.x - previousHorseX, remote.horse.group.position.z - previousHorseZ);
+              const horseSpeed = horseMoved / Math.max(0.001, dt);
+              remote.horse.group.position.y = updateHorseModelLocalAnimation(remote.horse, horseSpeed, dt);
+              remote.horse.group.rotation.y = lerp(remote.horse.group.rotation.y, remote.horseTargetYaw || 0, 1 - Math.pow(0.00005, dt));
+            }
           }
           remote.marker.rotation.z += dt * 0.9;
           if (clock.elapsedTime - (remote.lastSeen || 0) > 12) {
-            scene.remove(remote.group);
+            removeRemotePlayer(remote);
             online.remotePlayers.delete(id);
           }
         }
@@ -4147,7 +4490,7 @@
       }
 
       function dropWizardHealthPotion() {
-        if (game.state !== "playing" || !questDialog.hidden || player.character !== "wizard" || player.potionCooldown > 0) {
+        if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.character !== "wizard" || player.potionCooldown > 0) {
           return false;
         }
         const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
@@ -4213,6 +4556,7 @@
       }
 
       function updatePlayer(dt) {
+        const mounted = isPlayerMounted();
         player.attackCooldown = Math.max(0, player.attackCooldown - dt);
         player.secondaryCooldown = Math.max(0, player.secondaryCooldown - dt);
         player.hurtTimer = Math.max(0, player.hurtTimer - dt);
@@ -4221,13 +4565,17 @@
           player.potionCooldown = Math.max(0, player.potionCooldown - dt);
           player.blocking = false;
         } else {
-          const wantsBlock = player.blockHeld || keys.has("KeyK");
+          const wantsBlock = !mounted && (player.blockHeld || keys.has("KeyK"));
           player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
           if (player.blocking) {
             player.guard = Math.max(0, player.guard - dt * 8);
           } else if (!(player.attacking && player.attackKind === "bash")) {
             player.guard = Math.min(player.maxGuard, player.guard + dt * 22);
           }
+        }
+        if (mounted) {
+          player.blocking = false;
+          player.blockHeld = false;
         }
 
         const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -4239,13 +4587,15 @@
           tmpVec.addScaledVector(f, -inputZ);
           tmpVec.addScaledVector(r, inputX);
           tmpVec.normalize();
-          const speed = player.character === "wizard"
+          const speed = mounted
+            ? 10.4
+            : player.character === "wizard"
             ? (player.attacking ? 4.45 : 6.65)
             : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
           player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
           player.velocity.z = lerp(player.velocity.z, tmpVec.z * speed, 1 - Math.pow(0.001, dt));
           player.yaw = yawFromDirection(tmpVec);
-          player.walkTime += dt * speed;
+          player.walkTime += dt * speed * (mounted ? 0.4 : 1);
         } else {
           player.velocity.x = lerp(player.velocity.x, 0, 1 - Math.pow(0.0001, dt));
           player.velocity.z = lerp(player.velocity.z, 0, 1 - Math.pow(0.0001, dt));
@@ -4328,9 +4678,19 @@
         }
 
         const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
-        player.group.position.set(player.position.x, walkBob, player.position.z);
+        if (mounted) {
+          const horse = game.exploration.horse;
+          const rideBob = horse ? Math.sin(horse.walkTime * 2.2) * 0.04 : 0;
+          player.group.position.set(player.position.x, 1.2 + rideBob, player.position.z);
+        } else {
+          player.group.position.set(player.position.x, walkBob, player.position.z);
+        }
         player.group.rotation.y = player.yaw;
-        animatePlayerWalk(dt);
+        if (mounted) {
+          updateMountedPlayerPose(dt);
+        } else {
+          animatePlayerWalk(dt);
+        }
         const hurt = player.hurtTimer > 0 ? 1 : 0;
         player.body.material.emissive = player.body.material.emissive || new THREE.Color(0x000000);
         player.body.material.emissive.setRGB(0.4 * hurt, 0.02 * hurt, 0.02 * hurt);
@@ -4400,8 +4760,25 @@
         player.rightLeg.rotation.x = lerp(player.rightLeg.rotation.x, -swing, 1 - Math.pow(0.0001, dt));
       }
 
+      function updateMountedPlayerPose(dt) {
+        if (!player.leftLeg || !player.rightLeg) {
+          return;
+        }
+        const ease = 1 - Math.pow(0.0001, dt);
+        player.leftLeg.rotation.x = lerp(player.leftLeg.rotation.x, -0.95, ease);
+        player.rightLeg.rotation.x = lerp(player.rightLeg.rotation.x, -0.95, ease);
+        if (player.leftArm) {
+          player.leftArm.rotation.x = lerp(player.leftArm.rotation.x, -0.18, ease);
+          player.leftArm.rotation.z = lerp(player.leftArm.rotation.z, -0.08, ease);
+        }
+        if (player.rightArm) {
+          player.rightArm.rotation.x = lerp(player.rightArm.rotation.x, -0.18, ease);
+          player.rightArm.rotation.z = lerp(player.rightArm.rotation.z, 0.08, ease);
+        }
+      }
+
       function startAttack() {
-        if (game.state !== "playing" || !questDialog.hidden || player.attacking || player.attackCooldown > 0 || player.blocking) {
+        if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.attacking || player.attackCooldown > 0 || player.blocking) {
           return;
         }
         if (player.character === "wizard") {
@@ -4425,7 +4802,7 @@
       }
 
       function startSecondaryAbility() {
-        if (!questDialog.hidden) {
+        if (!questDialog.hidden || isPlayerMounted()) {
           return;
         }
         if (player.character === "knight") {
@@ -4451,7 +4828,7 @@
       }
 
       function startKnightBash() {
-        if (game.state !== "playing" || !questDialog.hidden || player.character !== "knight" || player.attacking || player.attackCooldown > 0) {
+        if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.character !== "knight" || player.attacking || player.attackCooldown > 0) {
           return false;
         }
         if (player.guard < knightBashGuardCost) {
@@ -5298,6 +5675,11 @@
           player.mana = player.maxMana;
           if (game.mode === "exploration") {
             player.position.copy(game.exploration.spawn);
+            if (game.exploration.horse) {
+              game.exploration.horse.mounted = false;
+              game.exploration.horse.position.copy(player.position).add(new THREE.Vector3(2.4, 0, 2.2));
+              game.exploration.horse.velocity.set(0, 0, 0);
+            }
           } else {
             const angle = Math.random() * TAU;
             const radius = 7 + Math.random() * 9;
@@ -5413,12 +5795,13 @@
           if (keys.has("KeyQ")) game.cameraYaw += dt * 1.8;
           if (keys.has("KeyE")) game.cameraYaw -= dt * 1.8;
         }
-        const shoulder = new THREE.Vector3(0.95, 4.1, 7.7);
+        const mounted = isPlayerMounted();
+        const shoulder = new THREE.Vector3(0.95, mounted ? 4.9 : 4.1, mounted ? 9.2 : 7.7);
         shoulder.applyAxisAngle(up, game.cameraYaw);
         const desired = tmpVec.copy(player.position).add(shoulder);
         camera.position.lerp(desired, 1 - Math.pow(0.00004, dt));
         const look = tmpVec2.copy(player.position);
-        look.y += 1.35;
+        look.y += mounted ? 1.85 : 1.35;
         camera.lookAt(look);
       }
 
@@ -5464,6 +5847,7 @@
           updatePotions(dt);
           if (game.mode === "exploration") {
             updateQuestItems(dt);
+            updateHorse(dt);
             updateTalkPrompt();
           }
           updateParticles(dt);
@@ -5513,7 +5897,13 @@
             closeQuestDialog();
             return;
           }
-          if (event.code === "KeyE" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
+          if (event.code === "KeyR" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
+            if (toggleHorseMount()) {
+              event.preventDefault();
+              return;
+            }
+          }
+          if (event.code === "KeyE" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden && !isPlayerMounted()) {
             const npc = nearestNpc();
             if (npc) {
               event.preventDefault();
