@@ -88,6 +88,29 @@ Acceptance:
 - Decor improves lived-in readability without blocking NPCs, quest items, or main travel routes.
 - Crownford decor feels civic and disciplined, while biome decor matches local architecture and threats.
 
+## Phase 2C: Terrain Elevation And Landforms
+
+Primary owner: World & Content Agent
+
+Support: Rendering / Performance Agent, Gameplay Systems Agent, QA / Playtest Agent
+
+Status: Queued. Add hills and mountain landforms after current material/performance slices, with careful road, collision, camera, and mob-pathing checks.
+
+Tasks:
+- Add broad rolling hills to meadow and wilderness areas without making basic traversal tedious.
+- Give Dragonspine Peaks real mountain massing: foothills, ridges, passes, roost shelves, and a few readable silhouettes from long distance.
+- Keep roads believable by letting them bend around slopes, climb through passes, and avoid steep terrain where possible.
+- Preserve flat enough areas around Crownford, Crownring, villages, house spawn, quest items, lakes, and arena activity spaces.
+- Add terrain-aware placement rules so trees, rocks, mobs, NPCs, and decor sit cleanly on or above the ground.
+- Review camera height, horse riding, projectile aim, collision, and quest markers after elevation is introduced.
+
+Acceptance:
+- The world no longer reads as a mostly flat board.
+- Mountain and hill shapes support biome identity and navigation rather than creating visual clutter.
+- Roads remain readable and traversable.
+- Players, mounts, enemies, NPCs, structures, herbs, and quest markers do not float or sink.
+- Performance remains stable in Crownford, Crownring, and mountain traversal.
+
 ## Phase 3: Arena Activity System
 
 Primary owner: Gameplay Systems Agent
@@ -201,6 +224,8 @@ Acceptance:
 Primary owner: Rendering / Performance Agent
 
 Support: World & Content Agent, Sound Design / Audio Agent, QA / Playtest Agent
+
+Status: First procedural material pass in progress. Shared low-cost CanvasTexture detail now covers stone, city wall, slate/roof tile, timber, plaster/adobe, cloth banners, roads, thatch, desert sand, and Crownring arena sand without adding external assets.
 
 Policy:
 - Follow `docs/ASSET_POLICY.md`.

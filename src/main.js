@@ -267,6 +267,163 @@ import {
     }
   }
 
+  function createMaterialDetailTexture(seed, style, repeatX = 1, repeatY = 1) {
+    const random = seededRandom("material-" + seed + "-" + style);
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f4efe2";
+    ctx.fillRect(0, 0, 256, 256);
+
+    if (style === "stone") {
+      ctx.fillStyle = "#e9e4d6";
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.strokeStyle = "rgba(62, 66, 62, 0.24)";
+      ctx.lineWidth = 3;
+      for (let y = 0; y <= 256; y += 42) {
+        ctx.beginPath();
+        ctx.moveTo(0, y + (random() - 0.5) * 5);
+        ctx.lineTo(256, y + (random() - 0.5) * 5);
+        ctx.stroke();
+      }
+      for (let row = 0; row < 7; row += 1) {
+        const offset = row % 2 ? 32 : 0;
+        for (let x = offset; x <= 256; x += 64) {
+          ctx.beginPath();
+          ctx.moveTo(x + (random() - 0.5) * 6, row * 42);
+          ctx.lineTo(x + (random() - 0.5) * 6, row * 42 + 42);
+          ctx.stroke();
+        }
+      }
+      for (let i = 0; i < 90; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(255,255,255,0.16)" : "rgba(45,48,45,0.12)";
+        ctx.fillRect(random() * 256, random() * 256, 2 + random() * 8, 1 + random() * 4);
+      }
+    } else if (style === "roof") {
+      ctx.fillStyle = "#efe7d4";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let y = 4; y < 256; y += 22) {
+        ctx.fillStyle = y % 44 ? "rgba(70, 32, 30, 0.22)" : "rgba(255, 218, 176, 0.12)";
+        ctx.fillRect(0, y, 256, 4);
+        for (let x = y % 44 ? 0 : 18; x < 256; x += 36) {
+          ctx.fillRect(x, y, 3, 20);
+        }
+      }
+      for (let i = 0; i < 120; i += 1) {
+        ctx.fillStyle = random() > 0.55 ? "rgba(255,255,255,0.1)" : "rgba(55,16,20,0.14)";
+        ctx.fillRect(random() * 256, random() * 256, 5 + random() * 15, 1 + random() * 3);
+      }
+    } else if (style === "wood") {
+      ctx.fillStyle = "#f2e4c8";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 42; i += 1) {
+        const x = random() * 256;
+        ctx.strokeStyle = random() > 0.45 ? "rgba(83, 52, 30, 0.22)" : "rgba(255, 232, 181, 0.15)";
+        ctx.lineWidth = 1 + random() * 3;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.bezierCurveTo(x + random() * 24 - 12, 72, x + random() * 30 - 15, 160, x + random() * 20 - 10, 256);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 18; i += 1) {
+        ctx.strokeStyle = "rgba(70, 43, 24, 0.24)";
+        ctx.lineWidth = 1;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.ellipse(random() * 256, y, 8 + random() * 18, 2 + random() * 5, random() * Math.PI, 0, TAU);
+        ctx.stroke();
+      }
+    } else if (style === "cloth") {
+      ctx.fillStyle = "#f3ece4";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let line = 0; line < 256; line += 8) {
+        ctx.fillStyle = line % 16 ? "rgba(255,255,255,0.13)" : "rgba(42,30,34,0.16)";
+        ctx.fillRect(0, line, 256, 1);
+        ctx.fillRect(line, 0, 1, 256);
+      }
+      for (let i = 0; i < 55; i += 1) {
+        ctx.fillStyle = "rgba(35,24,28,0.08)";
+        ctx.fillRect(random() * 256, random() * 256, 2 + random() * 8, 1 + random() * 4);
+      }
+    } else if (style === "sand") {
+      ctx.fillStyle = "#f2dfb5";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 24; i += 1) {
+        ctx.strokeStyle = random() > 0.45 ? "rgba(156, 112, 55, 0.18)" : "rgba(255, 239, 184, 0.18)";
+        ctx.lineWidth = 2 + random() * 3;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.moveTo(-10, y);
+        ctx.bezierCurveTo(70, y - 16 + random() * 32, 170, y - 18 + random() * 36, 266, y + random() * 22 - 11);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 500; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(133,91,46,0.12)" : "rgba(255,255,255,0.12)";
+        ctx.fillRect(random() * 256, random() * 256, 1.2, 1.2);
+      }
+    } else if (style === "path") {
+      ctx.fillStyle = "#ead6aa";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 28; i += 1) {
+        ctx.strokeStyle = random() > 0.5 ? "rgba(98, 70, 42, 0.2)" : "rgba(255, 229, 169, 0.16)";
+        ctx.lineWidth = 3 + random() * 5;
+        ctx.beginPath();
+        const y = random() * 256;
+        ctx.moveTo(0, y);
+        ctx.bezierCurveTo(64, y - 18 + random() * 36, 168, y - 20 + random() * 40, 256, y + random() * 24 - 12);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 320; i += 1) {
+        ctx.fillStyle = "rgba(71, 51, 30, 0.14)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 0.7 + random() * 1.8, 0, TAU);
+        ctx.fill();
+      }
+    } else if (style === "plaster") {
+      ctx.fillStyle = "#f6efd8";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 700; i += 1) {
+        ctx.fillStyle = random() > 0.6 ? "rgba(255,255,255,0.14)" : "rgba(122,101,71,0.1)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 0.7 + random() * 3.2, 0, TAU);
+        ctx.fill();
+      }
+      for (let i = 0; i < 12; i += 1) {
+        ctx.strokeStyle = "rgba(84, 69, 50, 0.16)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const x = random() * 256;
+        const y = random() * 256;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + random() * 34 - 17, y + 9 + random() * 22);
+        ctx.lineTo(x + random() * 42 - 21, y + 24 + random() * 28);
+        ctx.stroke();
+      }
+    } else if (style === "thatch") {
+      ctx.fillStyle = "#efe2b5";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 150; i += 1) {
+        ctx.strokeStyle = random() > 0.48 ? "rgba(94, 74, 37, 0.22)" : "rgba(255, 241, 175, 0.18)";
+        ctx.lineWidth = 1 + random() * 2;
+        const x = random() * 256;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + 12 + random() * 24, y + 8 + random() * 20);
+        ctx.stroke();
+      }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(repeatX, repeatY);
+    texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1);
+    return texture;
+  }
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x82bee8);
   scene.fog = new THREE.FogExp2(0x9ac7e8, 0.018);
@@ -276,16 +433,16 @@ import {
 
   const materials = {
     grass: new THREE.MeshStandardMaterial({ color: 0x394736, roughness: 0.92 }),
-    dirt: new THREE.MeshStandardMaterial({ color: 0x6a5740, roughness: 0.98 }),
-    stone: new THREE.MeshStandardMaterial({ color: 0x646865, roughness: 0.88, metalness: 0.02 }),
-    darkStone: new THREE.MeshStandardMaterial({ color: 0x3e4544, roughness: 0.94 }),
+    dirt: new THREE.MeshStandardMaterial({ color: 0x6a5740, map: createMaterialDetailTexture("dirt", "path", 2, 2), roughness: 0.98 }),
+    stone: new THREE.MeshStandardMaterial({ color: 0x646865, map: createMaterialDetailTexture("field-stone", "stone", 1.4, 1.4), roughness: 0.88, metalness: 0.02 }),
+    darkStone: new THREE.MeshStandardMaterial({ color: 0x3e4544, map: createMaterialDetailTexture("dark-stone", "stone", 1.25, 1.25), roughness: 0.94 }),
     steel: new THREE.MeshStandardMaterial({ color: 0xbfc8c5, metalness: 0.82, roughness: 0.34 }),
     iron: new THREE.MeshStandardMaterial({ color: 0x727d7d, metalness: 0.7, roughness: 0.44 }),
     gold: new THREE.MeshStandardMaterial({ color: 0xd5aa50, metalness: 0.55, roughness: 0.42 }),
     bone: new THREE.MeshStandardMaterial({ color: 0xd9cfb1, roughness: 0.7 }),
     blue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, roughness: 0.68 }),
     royalBlue: new THREE.MeshStandardMaterial({ color: 0x173f5c, roughness: 0.72 }),
-    cloth: new THREE.MeshStandardMaterial({ color: 0x8d3430, roughness: 0.82 }),
+    cloth: new THREE.MeshStandardMaterial({ color: 0x8d3430, map: createMaterialDetailTexture("red-cloth", "cloth", 1.3, 1.3), roughness: 0.82 }),
     wizardRobe: new THREE.MeshStandardMaterial({ color: 0x273f78, roughness: 0.78 }),
     wizardTrim: new THREE.MeshStandardMaterial({ color: 0x7ae8ff, roughness: 0.46, metalness: 0.14 }),
     wizardHat: new THREE.MeshStandardMaterial({ color: 0x1f2f5f, roughness: 0.76 }),
@@ -299,13 +456,13 @@ import {
     dragonBelly: new THREE.MeshStandardMaterial({ color: 0x9a7d4d, roughness: 0.82 }),
     dragonWing: new THREE.MeshStandardMaterial({ color: 0x28443e, roughness: 0.86, side: THREE.DoubleSide }),
     dragonEye: new THREE.MeshBasicMaterial({ color: 0xffd15f }),
-    wood: new THREE.MeshStandardMaterial({ color: 0x6b4326, roughness: 0.9 }),
-    paleWood: new THREE.MeshStandardMaterial({ color: 0x9b7650, roughness: 0.84 }),
+    wood: new THREE.MeshStandardMaterial({ color: 0x6b4326, map: createMaterialDetailTexture("dark-wood", "wood", 1, 1.8), roughness: 0.9 }),
+    paleWood: new THREE.MeshStandardMaterial({ color: 0x9b7650, map: createMaterialDetailTexture("pale-wood", "wood", 1, 1.6), roughness: 0.84 }),
     clay: new THREE.MeshStandardMaterial({ color: 0xa66f48, roughness: 0.94 }),
     rope: new THREE.MeshStandardMaterial({ color: 0xb8965c, roughness: 0.96 }),
     basket: new THREE.MeshStandardMaterial({ color: 0x8a6339, roughness: 0.95 }),
     lampGlow: new THREE.MeshBasicMaterial({ color: 0xffd889, transparent: true, opacity: 0.86 }),
-    cityBannerRed: new THREE.MeshStandardMaterial({ color: 0x7f2d2d, roughness: 0.86 }),
+    cityBannerRed: new THREE.MeshStandardMaterial({ color: 0x7f2d2d, map: createMaterialDetailTexture("crownford-banner", "cloth", 1.4, 1.4), roughness: 0.86 }),
     crowdRed: new THREE.MeshStandardMaterial({ color: 0x8d3430, roughness: 0.8 }),
     crowdBlue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, roughness: 0.8 }),
     crowdGreen: new THREE.MeshStandardMaterial({ color: 0x4f6f4a, roughness: 0.8 }),
@@ -313,34 +470,35 @@ import {
     remoteAlly: new THREE.MeshStandardMaterial({ color: 0x43b7d8, roughness: 0.7 }),
     remoteEnemy: new THREE.MeshStandardMaterial({ color: 0xc65444, roughness: 0.72 }),
     meadow: new THREE.MeshStandardMaterial({ color: 0x466b3c, roughness: 0.96 }),
-    desert: new THREE.MeshStandardMaterial({ color: 0xb99158, roughness: 0.98 }),
-    mountainGround: new THREE.MeshStandardMaterial({ color: 0x5a625e, roughness: 0.96 }),
+    desert: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("dry-sand", "sand", 2.2, 2.2), roughness: 0.98 }),
+    mountainGround: new THREE.MeshStandardMaterial({ color: 0x5a625e, map: createMaterialDetailTexture("mountain-ground", "stone", 2, 2), roughness: 0.96 }),
     cactus: new THREE.MeshStandardMaterial({ color: 0x356c48, roughness: 0.92 }),
     dryBrush: new THREE.MeshStandardMaterial({ color: 0x8d7140, roughness: 0.96 }),
-    adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, roughness: 0.92 }),
-    mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, roughness: 0.9 }),
+    adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, map: createMaterialDetailTexture("sun-adobe", "plaster", 1.2, 1.2), roughness: 0.92 }),
+    mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, map: createMaterialDetailTexture("mountain-plaster", "plaster", 1.15, 1.15), roughness: 0.9 }),
     swampGround: new THREE.MeshStandardMaterial({ color: 0x314f3a, roughness: 0.98 }),
     bogWater: new THREE.MeshStandardMaterial({ color: 0x254f49, roughness: 0.34, metalness: 0.02, transparent: true, opacity: 0.68 }),
     reed: new THREE.MeshStandardMaterial({ color: 0x607747, roughness: 0.94 }),
     willowLeaf: new THREE.MeshStandardMaterial({ color: 0x2d5d3f, roughness: 0.9 }),
-    swampPlank: new THREE.MeshStandardMaterial({ color: 0x5b4932, roughness: 0.95 }),
-    thatch: new THREE.MeshStandardMaterial({ color: 0x77623f, roughness: 0.96 }),
+    swampPlank: new THREE.MeshStandardMaterial({ color: 0x5b4932, map: createMaterialDetailTexture("swamp-plank", "wood", 1, 1.4), roughness: 0.95 }),
+    thatch: new THREE.MeshStandardMaterial({ color: 0x77623f, map: createMaterialDetailTexture("thatch", "thatch", 1.6, 1.6), roughness: 0.96 }),
     spiderCarapace: new THREE.MeshStandardMaterial({ color: 0x2d221c, roughness: 0.78, metalness: 0.03 }),
     spiderMarking: new THREE.MeshBasicMaterial({ color: 0xd9a648 }),
     wisp: new THREE.MeshBasicMaterial({ color: 0x5effbd, transparent: true, opacity: 0.48, depthWrite: false }),
     wispCore: new THREE.MeshBasicMaterial({ color: 0xd8fff1, transparent: true, opacity: 0.94 }),
-    cityWall: new THREE.MeshStandardMaterial({ color: 0xb8b7aa, roughness: 0.88 }),
-    cityRoof: new THREE.MeshStandardMaterial({ color: 0x435260, roughness: 0.86 }),
+    cityWall: new THREE.MeshStandardMaterial({ color: 0xb8b7aa, map: createMaterialDetailTexture("crownford-stone", "stone", 1.5, 1.5), roughness: 0.88 }),
+    cityRoof: new THREE.MeshStandardMaterial({ color: 0x435260, map: createMaterialDetailTexture("crownford-slate", "roof", 1.4, 1.4), roughness: 0.86 }),
     stainedGlass: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.72 }),
     horseCoat: new THREE.MeshStandardMaterial({ color: 0x7b4a2a, roughness: 0.86 }),
     horseMane: new THREE.MeshStandardMaterial({ color: 0x2f1b12, roughness: 0.9 }),
     saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, roughness: 0.88 }),
-    path: new THREE.MeshStandardMaterial({ color: 0x8f774f, roughness: 0.98 }),
+    path: new THREE.MeshStandardMaterial({ color: 0x8f774f, map: createMaterialDetailTexture("travel-road", "path", 2.4, 1.2), roughness: 0.98 }),
+    sand: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("arena-sand", "sand", 1.6, 1.6), roughness: 0.99 }),
     water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
     pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
     broadleaf: new THREE.MeshStandardMaterial({ color: 0x4d7d3d, roughness: 0.86 }),
-    roof: new THREE.MeshStandardMaterial({ color: 0x6f2f2b, roughness: 0.88 }),
-    plaster: new THREE.MeshStandardMaterial({ color: 0xd0bc91, roughness: 0.9 }),
+    roof: new THREE.MeshStandardMaterial({ color: 0x6f2f2b, map: createMaterialDetailTexture("village-roof", "roof", 1.4, 1.4), roughness: 0.88 }),
+    plaster: new THREE.MeshStandardMaterial({ color: 0xd0bc91, map: createMaterialDetailTexture("village-plaster", "plaster", 1.2, 1.2), roughness: 0.9 }),
     npcCloth: new THREE.MeshStandardMaterial({ color: 0x7d6cb0, roughness: 0.82 }),
     flower: new THREE.MeshBasicMaterial({ color: 0xffe28a }),
     questGlow: new THREE.MeshBasicMaterial({ color: 0x9fffd1, transparent: true, opacity: 0.86 }),
