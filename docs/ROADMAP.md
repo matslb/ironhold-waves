@@ -26,6 +26,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Convert more online actions into intent messages rather than client-applied outcomes.
 - Add explicit room phases: lobby, loading, active, wave-complete, exploration, abandoned.
 - Define host disconnect behavior clearly. First version can fail closed instead of migrating host.
+- Move arena waves into Exploration as a host-authoritative Crownford activity instead of a top-level game mode.
 
 ### Quest And Progression Quality
 
@@ -33,6 +34,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Ensure discovered locations, collected items, and quest rewards survive reloads.
 - Prevent double rewards in both solo and online sessions.
 - Keep leveling fast enough that one or two quests matter.
+- Add Crownford arena rewards that support Exploration without replacing quest progression.
 
 ### UI And Onboarding
 
@@ -52,6 +54,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 
 ### Content Expansion
 
+- Add Crownford, a civic city hub with the Crownring arena district, Marshal Rowan Vale, an infirmary, and non-arena city hooks.
 - Add one main quest beat per major biome.
 - Add three side quests per village: combat, discovery/delivery, and lore.
 - Add one repeatable hub task per major settlement later, once inventory/currency exists.
@@ -172,6 +175,7 @@ Phase 3, Bounded Generated Dialogue:
 
 - Check each biome at common desktop sizes: 1366x768, 1440x900, 1920x1080, ultrawide.
 - Confirm roofs, horns, collision, terrain blending, water, fog, and shadows.
+- Confirm NPC, player, house, dragon, spider, and barbarian proportions follow the scale targets in `docs/ACTIVE_TASKS.md`.
 - Screenshot pass for villages, POIs, arena, mount state, and quest panel.
 
 ### Performance Gate
