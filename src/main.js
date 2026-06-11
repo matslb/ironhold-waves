@@ -351,15 +351,39 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return mesh;
   }
 
+  const primitiveGeometryCache = new Map();
+
+  function primitiveGeometryKey(type, values) {
+    return type + ":" + values.map(value => Number(value).toFixed(4)).join(":");
+  }
+
+  function cachedPrimitiveGeometry(type, values, factory) {
+    const key = primitiveGeometryKey(type, values);
+    let geometry = primitiveGeometryCache.get(key);
+    if (!geometry) {
+      geometry = factory();
+      primitiveGeometryCache.set(key, geometry);
+    }
+    return geometry;
+  }
+
   function makeBox(width, height, depth, material, x, y, z) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+    const mesh = new THREE.Mesh(
+      cachedPrimitiveGeometry("box", [width, height, depth], () => new THREE.BoxGeometry(width, height, depth)),
+      material
+    );
     mesh.position.set(x || 0, y || 0, z || 0);
     return addShadow(mesh);
   }
 
   function makeCylinder(radiusTop, radiusBottom, height, radialSegments, material, x, y, z) {
+    const segments = radialSegments || 16;
     const mesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments || 16),
+      cachedPrimitiveGeometry(
+        "cylinder",
+        [radiusTop, radiusBottom, height, segments],
+        () => new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments)
+      ),
       material
     );
     mesh.position.set(x || 0, y || 0, z || 0);
@@ -367,7 +391,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   }
 
   function makeSphere(radius, material, x, y, z) {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 20, 14), material);
+    const mesh = new THREE.Mesh(
+      cachedPrimitiveGeometry("sphere", [radius, 20, 14], () => new THREE.SphereGeometry(radius, 20, 14)),
+      material
+    );
     mesh.position.set(x || 0, y || 0, z || 0);
     return addShadow(mesh);
   }
@@ -625,13 +652,26 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return (getCharacterProgress(character).perks || []).includes(id);
   }
 
+  function sanitizedCombatProfile(character, weaponId, perks = []) {
+    const key = character === "wizard" ? "wizard" : "knight";
+    const fallbackWeapon = defaultWeaponByCharacter[key];
+    const safeWeapon = validEquipmentForCharacter(key, weaponId) ? weaponId : fallbackWeapon;
+    const safePerks = Array.isArray(perks)
+      ? perks.filter(id => !!perkDefs[id]).filter((id, index, values) => values.indexOf(id) === index).slice(0, 8)
+      : [];
+    return { character: key, weaponId: safeWeapon, perks: safePerks };
+  }
+
   function combatTuningFor(character = player.character, options = {}) {
     const key = character === "wizard" ? "wizard" : "knight";
-    const weapon = validEquipmentForCharacter(key, options.weaponId) ? options.weaponId : equippedWeapon(key);
-    const perkIds = Array.isArray(options.perks) ? options.perks.filter(id => !!perkDefs[id]) : getCharacterProgress(key).perks || [];
+    const profile = sanitizedCombatProfile(
+      key,
+      options.weaponId || equippedWeapon(key),
+      Array.isArray(options.perks) ? options.perks : getCharacterProgress(key).perks || []
+    );
     const tuning = { ...defaultCombatTuning };
-    Object.assign(tuning, equipmentDefs[weapon].tuning || {});
-    for (const perkId of perkIds) {
+    Object.assign(tuning, equipmentDefs[profile.weaponId].tuning || {});
+    for (const perkId of profile.perks) {
       Object.assign(tuning, perkDefs[perkId].tuning || {});
     }
     return tuning;
@@ -1051,7 +1091,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   function explorationGuidanceText() {
     const level = getCharacterLevel();
     if (!progression.exploration.guidanceSeen) {
-      return "Talk to villagers for quests. Progress saves on this browser.";
+      return "Talk to Sella by the homestead to start mapping the valley. Progress saves on this browser.";
     }
     if (player.character === "wizard" && !hasAbility("burst")) {
       return "Level " + level + " wizard. " + nextUnlockText() + ".";
@@ -1120,7 +1160,15 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   }
 
   function makeCone(radius, height, segments, material, x, y, z) {
-    const mesh = new THREE.Mesh(new THREE.ConeGeometry(radius, height, segments || 16), material);
+    const segmentCount = segments || 16;
+    const mesh = new THREE.Mesh(
+      cachedPrimitiveGeometry(
+        "cone",
+        [radius, height, segmentCount],
+        () => new THREE.ConeGeometry(radius, height, segmentCount)
+      ),
+      material
+    );
     mesh.position.set(x || 0, y || 0, z || 0);
     return addShadow(mesh);
   }
@@ -1173,6 +1221,74 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return geometry;
   }
 
+  function createRoadRibbonGeometry(points, width) {
+    const positions = [];
+    const uvs = [];
+    const indices = [];
+    let distance = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const prev = points[Math.max(0, i - 1)];
+      const next = points[Math.min(points.length - 1, i + 1)];
+      if (i > 0) {
+        distance += Math.hypot(point.x - prev.x, point.z - prev.z);
+      }
+
+      let normalX = 0;
+      let normalZ = 1;
+      let miterScale = 1;
+      if (i === 0 || i === points.length - 1) {
+        const other = i === 0 ? next : prev;
+        const dx = i === 0 ? other.x - point.x : point.x - other.x;
+        const dz = i === 0 ? other.z - point.z : point.z - other.z;
+        const length = Math.max(0.001, Math.hypot(dx, dz));
+        normalX = -dz / length;
+        normalZ = dx / length;
+      } else {
+        const prevDx = point.x - prev.x;
+        const prevDz = point.z - prev.z;
+        const nextDx = next.x - point.x;
+        const nextDz = next.z - point.z;
+        const prevLength = Math.max(0.001, Math.hypot(prevDx, prevDz));
+        const nextLength = Math.max(0.001, Math.hypot(nextDx, nextDz));
+        const prevNormalX = -prevDz / prevLength;
+        const prevNormalZ = prevDx / prevLength;
+        const nextNormalX = -nextDz / nextLength;
+        const nextNormalZ = nextDx / nextLength;
+        normalX = prevNormalX + nextNormalX;
+        normalZ = prevNormalZ + nextNormalZ;
+        const normalLength = Math.hypot(normalX, normalZ);
+        if (normalLength < 0.001) {
+          normalX = nextNormalX;
+          normalZ = nextNormalZ;
+        } else {
+          normalX /= normalLength;
+          normalZ /= normalLength;
+          const denom = Math.max(0.24, Math.abs(normalX * nextNormalX + normalZ * nextNormalZ));
+          miterScale = clamp(1 / denom, 0.72, 1.65);
+        }
+      }
+
+      const edge = width * 0.5 * miterScale;
+      const y = explorationTerrainHeight(point.x, point.z) + 0.074;
+      positions.push(
+        point.x + normalX * edge, y, point.z + normalZ * edge,
+        point.x - normalX * edge, y, point.z - normalZ * edge
+      );
+      uvs.push(0, distance / 5, 1, distance / 5);
+      if (i < points.length - 1) {
+        const base = i * 2;
+        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+
   function createRoadJunctionGeometry(x, z, radius) {
     const positions = [x, explorationTerrainHeight(x, z) + 0.062, z];
     const uvs = [0.5, 0.5];
@@ -1201,6 +1317,25 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     path.receiveShadow = true;
     group.add(path);
     game.exploration.roads.push({ fromX, fromZ, toX, toZ, width });
+    return path;
+  }
+
+  function addExplorationRoadRibbon(group, points, width) {
+    if (points.length < 2) {
+      return null;
+    }
+    const path = new THREE.Mesh(createRoadRibbonGeometry(points, width), materials.path);
+    path.receiveShadow = true;
+    group.add(path);
+    for (let i = 0; i < points.length - 1; i += 1) {
+      game.exploration.roads.push({
+        fromX: points[i].x,
+        fromZ: points[i].z,
+        toX: points[i + 1].x,
+        toZ: points[i + 1].z,
+        width
+      });
+    }
     return path;
   }
 
@@ -1248,10 +1383,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return false;
   }
 
-  function roadDetourPoint(a, b, lake, padding) {
+  function roadDetourPoints(a, b, lake, padding) {
     const dx = b.x - a.x;
     const dz = b.z - a.z;
     const length = Math.max(0.001, Math.hypot(dx, dz));
+    const ux = dx / length;
+    const uz = dz / length;
     const nx = -dz / length;
     const nz = dx / length;
     const reach = Math.max(lake.rx, lake.rz) + padding;
@@ -1264,7 +1401,11 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       const rightDistance = Math.hypot(right.x - a.x, right.z - a.z) + Math.hypot(b.x - right.x, b.z - right.z);
       return leftDistance - rightDistance;
     });
-    return candidates[0];
+    const shoulder = Math.min(length * 0.32, reach * 0.7);
+    return [
+      { x: candidates[0].x - ux * shoulder, z: candidates[0].z - uz * shoulder },
+      { x: candidates[0].x + ux * shoulder, z: candidates[0].z + uz * shoulder }
+    ];
   }
 
   function routeRoadAroundLakes(points, width) {
@@ -1276,7 +1417,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         .map(roadLakeLocal)
         .find(candidate => roadSegmentTouchesLake(from, to, candidate, width + 2.2));
       if (lake) {
-        routed.push(roadDetourPoint(from, to, lake, Math.max(width + 5.5, 9.5)));
+        routed.push(...roadDetourPoints(from, to, lake, Math.max(width + 5.5, 9.5)));
       }
       routed.push(to);
     }
@@ -1285,10 +1426,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
   function roadWindingSettings(style = "wild") {
     if (style === "formal") {
-      return { spacing: 46, maxOffset: 1.05, strength: 0.045 };
+      return { spacing: 42, maxOffset: 1.35, strength: 0.055 };
     }
     if (style === "lane") {
-      return { spacing: 24, maxOffset: 2.2, strength: 0.09 };
+      return { spacing: 24, maxOffset: 2.45, strength: 0.1 };
     }
     if (style === "mountain") {
       return { spacing: 24, maxOffset: 6.4, strength: 0.2 };
@@ -1352,11 +1493,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   function addExplorationRoad(group, points, width = 2.8, style = "wild") {
     const winding = addWindingRoadPoints(points, style);
     const routed = routeRoadAroundLakes(winding, width);
-    for (let i = 0; i < routed.length - 1; i += 1) {
-      addExplorationPath(group, routed[i].x, routed[i].z, routed[i + 1].x, routed[i + 1].z, width);
-    }
-    for (const point of routed) {
-      addExplorationRoadJunction(group, point.x, point.z, width);
+    addExplorationRoadRibbon(group, routed, width);
+    for (const point of points) {
+      addExplorationRoadJunction(group, point.x, point.z, width * 0.82);
     }
   }
 
@@ -1383,12 +1522,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
 
-    addExplorationRoad(group, [homeDoor, homeJunction, { x: -4, z: 31 }, { x: 6, z: 58 }, northFork], 3.15, "wild");
+    addExplorationRoad(group, [homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 3.15, "wild");
 
     const city = game.exploration.city;
     if (city) {
       const cityGate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
-      addExplorationRoad(group, [northFork, { x: cityGate.x * 0.35, z: northFork.z + 15 }, { x: cityGate.x, z: cityGate.z - 20 }, cityGate], 3.25, "formal");
+      addExplorationRoad(group, [northFork, { x: -4, z: northFork.z + 18 }, { x: cityGate.x * 0.45, z: cityGate.z - 27 }, { x: cityGate.x - 4, z: cityGate.z - 12 }, cityGate], 3.25, "formal");
     }
 
     for (const village of game.exploration.villages) {
@@ -1400,22 +1539,23 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       let entrance;
       if (village.biome === "mountain") {
         entrance = roadEntranceForVillage(village, mountainFork);
-        addExplorationRoad(group, [northFork, { x: mountainFork.x * 0.48, z: mountainFork.z - 4 }, mountainFork, entrance], 2.85, "mountain");
+        addExplorationRoad(group, [northFork, { x: 24, z: 99 }, { x: 56, z: 122 }, mountainFork, { x: mountainFork.x + 17, z: mountainFork.z + 8 }, entrance], 2.85, "mountain");
       } else if (village.biome === "desert") {
         entrance = roadEntranceForVillage(village, desertFork);
-        addExplorationRoad(group, [homeJunction, { x: -20, z: -45 }, desertFork, entrance], 2.75, "desert");
+        addExplorationRoad(group, [homeJunction, { x: -18, z: -42 }, { x: -48, z: -58 }, desertFork, { x: desertFork.x - 28, z: desertFork.z - 15 }, entrance], 2.75, "desert");
       } else if (village.biome === "swamp") {
         entrance = roadEntranceForVillage(village, swampFork);
-        addExplorationRoad(group, [northFork, { x: -38, z: 106 }, swampFork, entrance], 2.65, "swamp");
+        addExplorationRoad(group, [northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, swampFork, { x: swampFork.x - 24, z: swampFork.z + 10 }, entrance], 2.65, "swamp");
       } else if (localX >= 0) {
         entrance = roadEntranceForVillage(village, meadowEastFork);
-        addExplorationRoad(group, [homeJunction, { x: 22, z: -38 }, meadowEastFork, entrance], 2.75, "wild");
+        addExplorationRoad(group, [homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, meadowEastFork, entrance], 2.75, "wild");
       } else {
         entrance = roadEntranceForVillage(village, meadowWestFork);
-        addExplorationRoad(group, [homeJunction, { x: -28, z: 15 }, meadowWestFork, entrance], 2.75, "wild");
+        addExplorationRoad(group, [homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, meadowWestFork, entrance], 2.75, "wild");
       }
       addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2, "lane");
     }
+    addRoadsideWayfindingDecor(group);
   }
 
   function makeDecorGroup(group, x, z, rotation = 0, scale = 1) {
@@ -1550,6 +1690,43 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return dummy;
   }
 
+  function addSignpost(group, x, z, rotation = 0, scale = 1, markerMaterial = materials.paleWood) {
+    const sign = makeDecorGroup(group, x, z, rotation, scale);
+    const post = makeCylinder(0.055, 0.075, 1.45, 7, materials.wood, 0, 0.72, 0);
+    const armA = makeBox(0.92, 0.18, 0.08, materials.paleWood, 0.42, 1.22, 0);
+    const armB = makeBox(0.72, 0.16, 0.08, materials.wood, -0.34, 0.96, 0);
+    const cap = makeCone(0.14, 0.24, 5, markerMaterial, 0, 1.56, 0);
+    armA.rotation.z = -0.08;
+    armB.rotation.z = 0.06;
+    sign.add(post, armA, armB, cap);
+    addExplorationCollider(x, z, scale * 0.44, "decor");
+    return sign;
+  }
+
+  function addRoadsideWayfindingDecor(group) {
+    addSignpost(group, 4.7, -18.0, -0.18, 0.95, materials.flower);
+    addLanternPost(group, -4.6, -19.2, 0.24, 0.86);
+    addSignpost(group, -5.2, 87.4, -0.5, 1.0, materials.cityRoof);
+    addLanternPost(group, 5.0, 83.8, -0.15, 0.88);
+    addSignpost(group, 53.5, -52.0, 0.68, 0.92, materials.broadleaf);
+    addSignpost(group, -59.0, 47.0, -0.82, 0.92, materials.broadleaf);
+    addSignpost(group, 75.0, 117.5, 0.9, 0.96, materials.darkStone);
+    addLanternPost(group, 82.5, 107.8, 0.5, 0.82);
+    addSignpost(group, -64.5, -70.8, -0.95, 0.96, materials.dryBrush);
+    addBucket(group, -61.4, -77.0, 0.2, 0.92);
+    addSignpost(group, -98.5, 132.0, -0.5, 0.96, materials.reed);
+    addLanternPost(group, -88.6, 123.4, -0.7, 0.78);
+
+    const city = game.exploration.city;
+    if (city) {
+      const gate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
+      addBannerPole(group, gate.x - 7.4, gate.z - 2.8, 0.12, 0.96);
+      addBannerPole(group, gate.x + 7.4, gate.z - 2.8, -0.12, 0.96);
+      addCrateStack(group, gate.x - 10.2, gate.z + 4.4, 0.18, 0.84);
+      addBarrel(group, gate.x + 10.2, gate.z + 4.6, -0.12, 0.84);
+    }
+  }
+
   function addBiomeVillageProp(group, village, random) {
     const x = village.localX;
     const z = village.localZ;
@@ -1632,9 +1809,14 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   function biomeContains(biome, x, z, padding = 0) {
     const dx = x - biome.x;
     const dz = z - biome.z;
+    const rotation = -(biome.rotation || 0);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
     const rx = Math.max(1, biome.rx - padding);
     const rz = Math.max(1, biome.rz - padding);
-    return (dx * dx) / (rx * rx) + (dz * dz) / (rz * rz) <= 1;
+    return (localX * localX) / (rx * rx) + (localZ * localZ) / (rz * rz) <= 1;
   }
 
   function biomeAt(localX, localZ) {
@@ -1703,6 +1885,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     const random = seededRandom(seed + "-patch-" + biome.id);
     const phaseA = random() * TAU;
     const phaseB = random() * TAU;
+    const rotation = biome.rotation || 0;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const points = [];
     const steps = 112;
     for (let i = 0; i < steps; i += 1) {
@@ -1711,7 +1896,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         + Math.sin(angle * 3 + phaseA) * 0.045
         + Math.sin(angle * 5 + phaseB) * 0.03
         + (random() - 0.5) * 0.018;
-      points.push(new THREE.Vector2(Math.cos(angle) * biome.rx * wobble, Math.sin(angle) * biome.rz * wobble));
+      const x = Math.cos(angle) * biome.rx * wobble;
+      const z = Math.sin(angle) * biome.rz * wobble;
+      points.push(new THREE.Vector2(x * cos - z * sin, x * sin + z * cos));
     }
     return new THREE.ShapeGeometry(new THREE.Shape(points));
   }
@@ -2049,11 +2236,16 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     if (!biome) {
       return randomExplorationPoint(random, 20, game.exploration.radius - 12);
     }
+    const rotation = biome.rotation || 0;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     for (let attempt = 0; attempt < 120; attempt += 1) {
       const angle = random() * TAU;
       const radius = Math.sqrt(random());
-      const x = biome.x + Math.cos(angle) * biome.rx * radius;
-      const z = biome.z + Math.sin(angle) * biome.rz * radius;
+      const localX = Math.cos(angle) * biome.rx * radius;
+      const localZ = Math.sin(angle) * biome.rz * radius;
+      const x = biome.x + localX * cos - localZ * sin;
+      const z = biome.z + localX * sin + localZ * cos;
       if (Math.hypot(x, z) < 16 || Math.hypot(x, z) > game.exploration.radius - padding || !biomeContains(biome, x, z, padding) || isExplorationBlocked(x, z)) {
         continue;
       }
@@ -2138,8 +2330,23 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     };
   }
 
-  function createQuest(id, title, giver, body, objective, reward, type, target) {
-    return { id, title, giver, body, objective, reward, type, target, progress: 0, state: "available" };
+  function createQuest(id, title, giver, body, objective, reward, type, target, options = {}) {
+    return {
+      id,
+      title,
+      giver,
+      body,
+      objective,
+      reward,
+      type,
+      target,
+      progress: 0,
+      state: "available",
+      startMethod: "npc",
+      rewardXp: Math.max(0, Math.floor(numberOrZero(options.rewardXp || 50))),
+      dialogue: options.dialogue && typeof options.dialogue === "object" ? options.dialogue : {},
+      conversationTags: Array.isArray(options.conversationTags) ? options.conversationTags.slice(0, 8) : [type]
+    };
   }
 
   function getQuest(id) {
@@ -2444,14 +2651,19 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return count;
   }
 
-  function syncVillageQuestProgress({ silent = true } = {}) {
-    const quest = getQuest("villages");
+  function allDiscoverableVillagesFound() {
+    return game.exploration.villages.length > 0 && discoveredVillageCount() >= game.exploration.villages.length;
+  }
+
+  function reconcileVillageQuestProgress(quest, { silent = true } = {}) {
     if (!quest || quest.state === "done") {
-      return;
+      return false;
     }
     const discovered = discoveredVillageCount();
-    const allVillagesFound = game.exploration.villages.length > 0 && discovered >= game.exploration.villages.length;
+    const allVillagesFound = allDiscoverableVillagesFound();
     const nextProgress = Math.min(quest.target, discovered);
+    const beforeState = quest.state;
+    const beforeProgress = quest.progress;
     if (nextProgress > quest.progress) {
       quest.progress = nextProgress;
     }
@@ -2462,6 +2674,21 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         showBanner(quest.title + " complete");
       }
     }
+    return beforeState !== quest.state || beforeProgress !== quest.progress;
+  }
+
+  function reconcileQuestProgress(quest, options = {}) {
+    if (!quest || quest.state === "done") {
+      return false;
+    }
+    if (quest.id === "villages") {
+      return reconcileVillageQuestProgress(quest, options);
+    }
+    return false;
+  }
+
+  function syncVillageQuestProgress({ silent = true } = {}) {
+    reconcileQuestProgress(getQuest("villages"), { silent });
   }
 
   function questProgressText(quest) {
@@ -2643,6 +2870,27 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     return true;
   }
 
+  function questDialogueLine(quest) {
+    const lines = quest.dialogue || {};
+    if (quest.id === "villages" && quest.state === "available" && allDiscoverableVillagesFound()) {
+      return lines.alreadyComplete || "You've already walked every hearth-road I know. Let me put proper names to your map before the ink dries.";
+    }
+    return lines[quest.state] || quest.body;
+  }
+
+  function questStatusLine(quest) {
+    if (quest.state === "available") {
+      return quest.objective + ". Reward: " + quest.reward + ".";
+    }
+    if (quest.state === "active") {
+      return questProgressText(quest);
+    }
+    if (quest.state === "ready") {
+      return (quest.dialogue && quest.dialogue.readyStatus ? quest.dialogue.readyStatus : "Objective complete") + ". Reward: " + quest.reward + ".";
+    }
+    return (quest.dialogue && quest.dialogue.doneStatus) || "Reward claimed. The valley already feels a little friendlier.";
+  }
+
   function refreshQuestDialog() {
     const npc = game.dialogNpc;
     if (!npc) {
@@ -2671,17 +2919,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     }
 
     questDialogTitle.textContent = quest.giver + " - " + quest.title;
-    questDialogBody.textContent = quest.body;
+    questDialogBody.textContent = questDialogueLine(quest);
+    questDialogStatus.textContent = questStatusLine(quest);
     if (quest.state === "available") {
-      questDialogStatus.textContent = quest.objective + ". Reward: " + quest.reward + ".";
       questAcceptButton.hidden = false;
-    } else if (quest.state === "active") {
-      questDialogStatus.textContent = questProgressText(quest);
     } else if (quest.state === "ready") {
-      questDialogStatus.textContent = "Objective complete. Reward: " + quest.reward + ".";
       questClaimButton.hidden = false;
-    } else {
-      questDialogStatus.textContent = "Reward claimed. The valley already feels a little friendlier.";
     }
     updateDialogSelection(0);
   }
@@ -2693,9 +2936,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       return;
     }
     quest.state = "active";
-    if (quest.id === "villages") {
-      syncVillageQuestProgress({ silent: true });
-    }
+    reconcileQuestProgress(quest, { silent: true });
     showBanner(quest.state === "ready" ? quest.title + " complete" : "Quest started");
     saveProgress();
     updateQuestLog();
@@ -2709,8 +2950,8 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     if (!quest || quest.state !== "ready") {
       return;
     }
-    grantQuestReward(quest);
     quest.state = "done";
+    grantQuestReward(quest);
     saveProgress();
     updateQuestLog();
     updateQuestMarkers();
@@ -2764,7 +3005,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       game.potions.push(createHealthPotion(player.position.x - 1.2, player.position.z + 1.4, { kind: "small", healAmount: 34 }));
       trimPotionDrops();
     }
-    awardExplorationXp(50);
+    awardExplorationXp(quest.rewardXp);
     spawnImpact(player.position, 0xffd889, 24);
     showBanner(unlocks.length ? "Unlocked " + unlocks.join(" and ") : "Reward claimed");
     updateHud();
@@ -3008,7 +3249,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         "Torren",
         "The tracks are full of raiders and worse things now. Thin them out and the villages can trade again without carrying axes in both hands.",
         "Defeat roaming threats",
-        "Roadwarden kit, guard and magica boons plus XP",
+        "Class travel kit, guard and magica boons plus XP",
         "hunt",
         8
       ),
@@ -3020,7 +3261,20 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         "Discover villages",
         "A full recovery potion and faster potion cooldown",
         "discover",
-        3
+        3,
+        {
+          rewardXp: 65,
+          conversationTags: ["starter", "cartography", "settlements", "safe-roads"],
+          dialogue: {
+            available: "If you want a first road worth walking, take my hearth-map. Mark three settlements and every later journey will feel less like wandering.",
+            alreadyComplete: "You've already found the smoke, bells, and well-stones I hoped to mark. Give me a moment and I will make your map official.",
+            active: "Follow the road bends and the chimney smoke. I only need three good marks before I can trust the routes.",
+            ready: "These marks are clean. Now the valley has names instead of rumors.",
+            readyStatus: "Map ready",
+            done: "Keep that map close. Roads are braver when someone has named what waits at the end.",
+            doneStatus: "Sella has copied your route notes into the hearth-map."
+          }
+        }
       ),
       createQuest(
         "spiders",
@@ -3078,7 +3332,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
         "Marshal Rowan Vale",
         "Crownford's Wayfinder Beacon keeps the old roads honest. Read the four carved waystones and I will mark you as a sworn guide of the high city.",
         "Inspect beacon waystones",
-        "Crownford Drill perk, guard and magica boons plus XP",
+        "Crownford Drill perk, cheaper bash/burst, boons plus XP",
         "collect",
         4
       ),
@@ -3449,29 +3703,29 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     const mountain = {
       id: "mountain",
       name: "Dragonspine Peaks",
-      x: 176 + random() * 10,
-      z: 142 + random() * 10,
-      rx: 112,
-      rz: 94,
-      rotation: -0.12
+      x: 198 + random() * 9,
+      z: 158 + random() * 9,
+      rx: 128,
+      rz: 106,
+      rotation: -0.26
     };
     const desert = {
       id: "desert",
       name: "Amber Dunes",
-      x: -166 - random() * 14,
-      z: -126 - random() * 14,
-      rx: 118,
-      rz: 98,
-      rotation: 0.22
+      x: -208 - random() * 10,
+      z: -158 - random() * 10,
+      rx: 132,
+      rz: 110,
+      rotation: 0.36
     };
     const swamp = {
       id: "swamp",
       name: "Mistfen",
-      x: -164 - random() * 12,
-      z: 150 + random() * 12,
-      rx: 92,
-      rz: 78,
-      rotation: -0.32
+      x: -218 - random() * 10,
+      z: 168 + random() * 10,
+      rx: 116,
+      rz: 96,
+      rotation: -0.44
     };
     game.exploration.biomes.push(mountain, desert, swamp);
     addBiomePatch(group, desert, seed);
@@ -4322,6 +4576,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     onlineStatus.textContent = text;
   }
 
+  function sessionIsActive() {
+    return game.state === "playing" || game.state === "paused" || game.pausedFromPlay;
+  }
+
   function modeDisplayName(mode = game.mode) {
     return "Exploration";
   }
@@ -4374,10 +4632,14 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     const joinPhase = phase === "joinSetup";
     const joinReady = phase === "joinReady";
     const pausePhase = phase === "pause";
+    const activeSessionMenu = pausePhase && sessionIsActive();
     const showOnlinePanel = hostPhase || joinPhase || joinReady || (pausePhase && roomIsOpen());
     const activeGame = savedActiveGame();
 
-    sessionSelect.hidden = phase !== "landing";
+    overlay.dataset.phase = phase;
+    overlay.classList.toggle("active-session-menu", activeSessionMenu);
+    onlinePanel.classList.toggle("session-management", activeSessionMenu);
+    sessionSelect.hidden = phase !== "landing" || activeSessionMenu;
     sessionSelect.classList.toggle("has-resume", !!activeGame);
     resumeGameButton.hidden = !activeGame;
     if (activeGame) {
@@ -4387,14 +4649,15 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     backMenuButton.hidden = phase === "landing" || pausePhase;
     onlinePanel.hidden = !showOnlinePanel;
     modeSelect.hidden = true;
-    characterSelect.hidden = !(hostPhase || joinReady);
-    startButton.hidden = !(hostPhase || joinReady);
+    characterSelect.hidden = activeSessionMenu || !(hostPhase || joinReady);
+    startButton.hidden = activeSessionMenu || !(hostPhase || joinReady);
     resumeButton.hidden = !pausePhase;
-    closeRoomButton.hidden = !(online.role === "host" && (pausePhase || hostPhase));
+    closeRoomButton.hidden = !((online.role === "host" && (pausePhase || hostPhase)) || (pausePhase && !online.role));
     leaveRoomButton.hidden = !(online.role === "join" && (pausePhase || joinReady));
     restartButton.hidden = true;
+    closeRoomButton.textContent = pausePhase && online.role !== "host" ? "Close Session" : "Close Room";
 
-    joinControls.hidden = !joinPhase;
+    joinControls.hidden = activeSessionMenu || !joinPhase;
     joinButton.textContent = online.connected ? "Retry" : "Join";
     roomCodeCard.hidden = !(online.role === "host" && online.roomCode && (hostPhase || pausePhase));
 
@@ -4409,6 +4672,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     } else if (hostPhase) {
       overlayCopy.textContent = "Pick your character, then start Exploration. Share the room code whenever friends are joining.";
       setSessionNote(online.roomCode ? "Room " + online.roomCode + " - " + modeDisplayName() : "Creating room");
+      if (!online.connected && online.role === "host") {
+        updateOnlineStatus("Opening room");
+      }
     } else if (joinPhase) {
       overlayCopy.textContent = "Enter the host's four digit code. Your saved progress stays with you.";
       setSessionNote(online.lastRoomCode ? "Last room " + online.lastRoomCode : "");
@@ -4419,7 +4685,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       overlayCopy.textContent = "Connected to " + modeDisplayName() + ". Saved progress carries into the room.";
       setSessionNote("Room " + (online.roomCode || "----") + " - " + modeDisplayName());
     } else if (pausePhase) {
-      overlayCopy.textContent = "Session paused.";
+      overlayCopy.textContent = online.role === "join"
+        ? "Session paused. Leave returns you to the menu and remembers this room code for rejoining."
+        : "Session paused. Closing saves progress and shuts this room for everyone.";
       if (online.role === "host" && online.roomCode) {
         setSessionNote("Room " + online.roomCode + " - " + modeDisplayName());
       } else if (online.role === "join" && online.roomCode) {
@@ -4491,6 +4759,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     if (game.state !== "playing") {
       return;
     }
+    saveProgress();
     game.state = "paused";
     game.pausedFromPlay = true;
     keys.clear();
@@ -4499,6 +4768,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     overlay.classList.remove("hidden");
     document.exitPointerLock?.();
     setMenuPhase("pause");
+  }
+
+  function pauseForControlLoss() {
+    if (game.state === "playing") {
+      openSessionMenu();
+    }
   }
 
   function resumeSession() {
@@ -4513,6 +4788,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   }
 
   function returnToLanding(message = "") {
+    saveProgress();
     game.state = "menu";
     game.pausedFromPlay = false;
     keys.clear();
@@ -4531,7 +4807,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       sendOnlineMessage({ kind: "roomClosed" });
     }
     closeOnlineConnection(true, true, false);
-    returnToLanding("Room closed");
+    returnToLanding("Room closed. Start Session opens a fresh room.");
   }
 
   function leaveRoomToMenu(message = "Left room", preserveCode = true) {
@@ -4541,7 +4817,7 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       roomCodeInput.value = previousCode;
       online.lastRoomCode = previousCode;
       online.lastRoomMode = game.mode;
-      message += ". Join Session will remember " + previousCode;
+      message += ". Use Join Session to rejoin " + previousCode + ".";
     }
     returnToLanding(message);
   }
@@ -4808,6 +5084,10 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       action,
       state: serializePlayerState()
     });
+  }
+
+  function messageFromKnownHost(message) {
+    return online.role !== "join" || (!!online.hostId && message.id === online.hostId);
   }
 
   function isJoinedClient() {
@@ -5334,6 +5614,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     if (!message || message.targetId !== online.localId || game.mode !== "exploration") {
       return;
     }
+    if (!messageFromKnownHost(message)) {
+      return;
+    }
     awardExplorationXp(message.xp || 0);
     for (const questType of message.progress || []) {
       updateQuestProgress(questType, 1);
@@ -5366,6 +5649,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     if (message.kind === "host" && (!message.sentAt || Date.now() - message.sentAt > 45000)) {
       return;
     }
+    if (message.kind === "host") {
+      online.hostId = message.id || online.hostId;
+    }
+    if (message.state && message.id) {
+      message.state.id = message.id;
+    }
     if (message.kind === "kick" && message.targetId === online.localId) {
       leaveRoomToMenu("Removed by host", false);
       return;
@@ -5375,6 +5664,9 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       return;
     }
     if (message.kind === "playerDamage") {
+      if (!messageFromKnownHost(message)) {
+        return;
+      }
       handlePlayerDamageMessage(message);
       return;
     }
@@ -5391,19 +5683,25 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
       return;
     }
     if (message.kind === "potionPicked") {
+      if (!messageFromKnownHost(message)) {
+        return;
+      }
       handlePotionPicked(message);
       return;
     }
     if (message.kind === "world") {
+      if (!messageFromKnownHost(message)) {
+        return;
+      }
       applyWorldSnapshot(message.world);
       return;
     }
     if (message.kind === "effect") {
+      if (!messageFromKnownHost(message)) {
+        return;
+      }
       applyOnlineEffect(message.effect);
       return;
-    }
-    if (message.kind === "host") {
-      online.hostId = message.id || online.hostId;
     }
     if (online.role === "join" && (message.kind === "host" || message.kind === "welcome") && message.mode && game.state !== "playing" && game.mode !== message.mode) {
       setGameMode(message.mode);
@@ -5736,8 +6034,12 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     }
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
-    remote.weaponId = validEquipmentForCharacter(nextCharacter, state.weaponId) ? state.weaponId : defaultWeaponByCharacter[nextCharacter === "wizard" ? "wizard" : "knight"];
-    remote.perks = Array.isArray(state.perks) ? state.perks.filter(id => !!perkDefs[id]).slice(0, 8) : [];
+    const claimedProfile = sanitizedCombatProfile(nextCharacter, state.weaponId, state.perks);
+    if (!remote.combatProfile || remote.combatProfile.character !== claimedProfile.character) {
+      remote.combatProfile = claimedProfile;
+    }
+    remote.weaponId = remote.combatProfile.weaponId;
+    remote.perks = remote.combatProfile.perks.slice();
     remote.targetPosition.set(state.x || 0, 0, state.z || 0);
     remote.targetYaw = state.yaw || 0;
     remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
@@ -5844,12 +6146,15 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   }
 
   function applyRemoteActionToEnemies(action, source, yaw, forward, state = {}) {
-    const character = state.character === "wizard" ? "wizard" : "knight";
-    const tuning = combatTuningFor(character, {
-      weaponId: state.weaponId,
-      perks: state.perks
-    });
     const sourceId = state.id || online.localId;
+    const remote = sourceId !== online.localId ? online.remotePlayers.get(sourceId) : null;
+    const profile = remote && remote.combatProfile
+      ? remote.combatProfile
+      : sanitizedCombatProfile(state.character, state.weaponId, state.perks);
+    const tuning = combatTuningFor(profile.character, {
+      weaponId: profile.weaponId,
+      perks: profile.perks
+    });
     if (action === "burst") {
       for (const enemy of game.enemies) {
         if (!enemy.dead && enemy.position.distanceTo(source) < 3.45 + enemy.radius) {
@@ -8414,8 +8719,15 @@ import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
     document.addEventListener("pointerlockchange", () => {
       const wasPointerActive = game.pointerActive;
       game.pointerActive = document.pointerLockElement === document.body;
-      if (wasPointerActive && !game.pointerActive && game.state === "playing") {
-        openSessionMenu();
+      if (!game.pointerActive && game.state === "playing" && (wasPointerActive || game.startedOnce)) {
+        pauseForControlLoss();
+      }
+    });
+
+    window.addEventListener("blur", pauseForControlLoss);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        pauseForControlLoss();
       }
     });
 

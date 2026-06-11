@@ -6,12 +6,25 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 
 - The Game Director/Integrator owns final cohesion and release decisions.
 - Every implementation task has one primary owner and one reviewer.
-- Agents should work in narrow, named areas to reduce conflicts, especially while `index.html` remains large.
+- Agents should work in narrow, named areas to reduce conflicts. The app has started moving away from a single-file layout: `index.html` owns markup and routing, `styles/app.css` owns UI styling, and `src/main.js` currently owns the runtime module until more systems are extracted.
 - Agents must not revert work they did not make. If another change affects their task, they adapt or escalate.
 - Multiplayer, saves, quests, and rewards should be treated as shared systems, not one-off feature patches.
 - Firebase Hosting is the only supported deployment target.
 - Performance is cross-cutting. Rendering / Performance is the specialist reviewer, but every feature owner is responsible for the cost of their own objects, loops, particles, network messages, and UI work.
 - Theme is cross-cutting too. Every agent should ask whether a feature feels like Ironhold: low-poly, grounded fantasy, civic old-world settlements, readable silhouettes, practical magic, wilderness danger, and authored details that look lived-in rather than generated from a grid.
+
+## Current Code Layout
+
+- `index.html`: Firebase/GitHub Pages entry point, redirect logic, and DOM markup.
+- `styles/app.css`: HUD, menu, desktop, and touch styling.
+- `src/main.js`: Current game runtime, Three.js scene, world generation, combat, networking, progression, and input. Treat this as the integration module until smaller systems are extracted.
+
+Near-term extraction order:
+- Pure data and helpers: constants, equipment, quests, biomes, progression, math.
+- UI systems: session menu, HUD, input, touch controls.
+- Network systems: room flow, snapshots, host-authoritative world state.
+- World systems: roads, decor, Crownford, biomes, exploration quests.
+- Gameplay systems: enemies, combat, projectiles, arena activity.
 
 ## Core Agents
 
@@ -153,6 +166,9 @@ AI NPC roadmap:
 - Phase 1, Scripted Canon: authored dialogue trees, barks, quest text, voice sheets, lore bible, fallback lines.
 - Phase 2, Assisted Authoring: AI drafts variants from approved lore packets; human review promotes accepted lines into scripted content.
 - Phase 3, Bounded Generation: selected NPCs generate responses inside narrow contexts with strict rules, safe fallbacks, and conversation review.
+
+Implementation note:
+- Quest definitions should carry scripted `dialogue` states and `conversationTags` first. Future AI-assisted NPC work must use those tags and authored lines as the approved lore packet, with deterministic fallbacks for every quest state.
 
 ### UI / UX Agent
 

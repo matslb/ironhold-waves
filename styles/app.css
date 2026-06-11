@@ -545,6 +545,16 @@ canvas {
   gap: 8px;
 }
 
+.online-panel.session-management {
+  margin: 12px 0 18px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.online-panel.session-management .name-entry {
+  display: none;
+}
+
 .online-panel[hidden] {
   display: none;
 }
@@ -639,6 +649,10 @@ canvas {
   font-size: 12px;
   font-weight: 900;
   text-align: center;
+}
+
+.online-panel.session-management .online-status {
+  color: #7ae8ff;
 }
 
 .session-note {
