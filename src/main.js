@@ -258,6 +258,8 @@ import {
       villages: [],
       biomes: [],
       colliders: [],
+      colliderGrid: new Map(),
+      colliderCellSize: 8,
       roads: [],
       roadJunctions: [],
       city: null,
@@ -514,12 +516,69 @@ import {
     if (!Number.isFinite(localX) || !Number.isFinite(localZ) || !Number.isFinite(radius) || radius <= 0) {
       return;
     }
-    game.exploration.colliders.push({
+    const collider = {
       x: game.exploration.origin.x + localX,
       z: game.exploration.origin.z + localZ,
       radius,
       kind
-    });
+    };
+    game.exploration.colliders.push(collider);
+    registerExplorationCollider(collider);
+  }
+
+  function explorationColliderCell(value) {
+    return Math.floor(value / game.exploration.colliderCellSize);
+  }
+
+  function explorationColliderCellKey(cx, cz) {
+    return cx + ":" + cz;
+  }
+
+  function registerExplorationCollider(collider) {
+    const padding = collider.radius + 0.25;
+    const minX = explorationColliderCell(collider.x - padding);
+    const maxX = explorationColliderCell(collider.x + padding);
+    const minZ = explorationColliderCell(collider.z - padding);
+    const maxZ = explorationColliderCell(collider.z + padding);
+    for (let cx = minX; cx <= maxX; cx += 1) {
+      for (let cz = minZ; cz <= maxZ; cz += 1) {
+        const key = explorationColliderCellKey(cx, cz);
+        let bucket = game.exploration.colliderGrid.get(key);
+        if (!bucket) {
+          bucket = [];
+          game.exploration.colliderGrid.set(key, bucket);
+        }
+        bucket.push(collider);
+      }
+    }
+  }
+
+  function explorationCollidersNear(worldX, worldZ, radius = 0) {
+    if (!game.exploration.colliderGrid.size) {
+      return game.exploration.colliders;
+    }
+    const queryRadius = Math.max(0.1, radius);
+    const minX = explorationColliderCell(worldX - queryRadius);
+    const maxX = explorationColliderCell(worldX + queryRadius);
+    const minZ = explorationColliderCell(worldZ - queryRadius);
+    const maxZ = explorationColliderCell(worldZ + queryRadius);
+    const colliders = [];
+    const seen = new Set();
+    for (let cx = minX; cx <= maxX; cx += 1) {
+      for (let cz = minZ; cz <= maxZ; cz += 1) {
+        const bucket = game.exploration.colliderGrid.get(explorationColliderCellKey(cx, cz));
+        if (!bucket) {
+          continue;
+        }
+        for (const collider of bucket) {
+          if (!seen.has(collider)) {
+            seen.add(collider);
+            colliders.push(collider);
+          }
+        }
+      }
+    }
+    return colliders;
   }
 
   function addExplorationLineColliders(localX, localZ, width, depth, kind = "structure") {
@@ -1409,6 +1468,7 @@ import {
     game.exploration.villages.length = 0;
     game.exploration.biomes.length = 0;
     game.exploration.colliders.length = 0;
+    game.exploration.colliderGrid.clear();
     game.exploration.roads.length = 0;
     game.exploration.roadJunctions.length = 0;
     game.exploration.city = null;
@@ -4238,7 +4298,7 @@ import {
     }
     const worldX = game.exploration.origin.x + localX;
     const worldZ = game.exploration.origin.z + localZ;
-    for (const collider of game.exploration.colliders) {
+    for (const collider of explorationCollidersNear(worldX, worldZ, 5.2)) {
       const spacing = collider.kind === "tree" ? 1.15 : collider.kind === "rock" ? 1.25 : collider.kind === "decor" ? 0.85 : 2.1;
       if (Math.hypot(worldX - collider.x, worldZ - collider.z) < collider.radius + spacing) {
         return true;
@@ -7632,7 +7692,7 @@ import {
       return;
     }
     for (let pass = 0; pass < 2; pass += 1) {
-      for (const collider of game.exploration.colliders) {
+      for (const collider of explorationCollidersNear(position.x, position.z, radius + 7.0)) {
         const minDistance = collider.radius + radius;
         const dx = position.x - collider.x;
         const dz = position.z - collider.z;
