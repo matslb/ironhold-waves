@@ -88,6 +88,15 @@ Acceptance:
 - Decor improves lived-in readability without blocking NPCs, quest items, or main travel routes.
 - Crownford decor feels civic and disciplined, while biome decor matches local architecture and threats.
 
+## Phase 2B-R: Roadwarden Tack Slice
+
+Status: Implemented in the gameplay slice. Quartermaster Pell now offers "Shoes for the Long Road" after the horse unlock only, with four mounted road waymarks and a personal `roadwarden_tack` reward.
+
+Acceptance:
+- The quest does not require Crownring arena completion.
+- The reward remains local progression while online player state carries mount tack for remote rendering.
+- No currency, shop, timed race, or inventory screen is introduced.
+
 ## Phase 2C: Terrain Elevation And Landforms
 
 Primary owner: World & Content Agent
