@@ -2869,6 +2869,37 @@
         }
       }
 
+      function discoveredVillageCount() {
+        const validVillageIds = new Set(game.exploration.villages.map(village => village.id));
+        let count = 0;
+        for (const id of game.exploration.discovered) {
+          if (validVillageIds.has(id)) {
+            count += 1;
+          }
+        }
+        return count;
+      }
+
+      function syncVillageQuestProgress({ silent = true } = {}) {
+        const quest = getQuest("villages");
+        if (!quest || quest.state === "done") {
+          return;
+        }
+        const discovered = discoveredVillageCount();
+        const allVillagesFound = game.exploration.villages.length > 0 && discovered >= game.exploration.villages.length;
+        const nextProgress = Math.min(quest.target, discovered);
+        if (nextProgress > quest.progress) {
+          quest.progress = nextProgress;
+        }
+        if (quest.state === "active" && (quest.progress >= quest.target || allVillagesFound)) {
+          quest.progress = quest.target;
+          quest.state = "ready";
+          if (!silent) {
+            showBanner(quest.title + " complete");
+          }
+        }
+      }
+
       function questProgressText(quest) {
         return quest.objective + " " + Math.min(quest.progress, quest.target) + "/" + quest.target;
       }
@@ -3098,7 +3129,10 @@
           return;
         }
         quest.state = "active";
-        showBanner("Quest started");
+        if (quest.id === "villages") {
+          syncVillageQuestProgress({ silent: true });
+        }
+        showBanner(quest.state === "ready" ? quest.title + " complete" : "Quest started");
         saveProgress();
         updateQuestLog();
         updateQuestMarkers();
@@ -3524,9 +3558,7 @@
         for (let i = 0; i < 3; i += 1) {
           const angle = random() * TAU;
           let questId = null;
-          if (index === 0 && i === 0) {
-            questId = "villages";
-          } else if (biome === "desert" && i === 0) {
+          if (biome === "desert" && i === 0) {
             questId = "spiders";
           } else if (biome === "mountain" && i === 0) {
             questId = "dragons";
@@ -3535,7 +3567,7 @@
           } else if (biome === "swamp" && i === 1) {
             questId = "bogRelics";
           }
-          const name = questId === "villages" ? "Sella" : questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : names[(index * 3 + i) % names.length];
+          const name = questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : names[(index * 3 + i) % names.length];
           game.npcs.push(createFriendlyNpc(
             game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
             game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
@@ -3992,6 +4024,7 @@
         addExplorationHouse(group, 0, 0, 1.05, 0, "meadow");
         addStable(group, -7.1, -1.8);
         addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 7.0, game.exploration.origin.z - 4.4, random, 4.5, "Sella", "villages", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders", "meadow"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 7.0, game.exploration.origin.z - 4.2, random, 4.5, "Rowan", "horse", "meadow"));
@@ -4011,6 +4044,7 @@
         addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
         addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
         addArenaCity(group, 12 + random() * 5, 132 + random() * 6, random);
+        syncVillageQuestProgress({ silent: true });
         addSwampQuestItems(group, swampBiome, random);
 
         for (let i = 0; i < 64; i += 1) {
@@ -8017,7 +8051,7 @@
             spawnImpact(new THREE.Vector3(village.x, 0, village.z), 0xffd889, 24);
             showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
             awardExplorationXp(20);
-            updateQuestProgress("villages", 1);
+            syncVillageQuestProgress({ silent: false });
             saveProgress();
           }
         }
