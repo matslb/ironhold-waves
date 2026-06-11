@@ -187,6 +187,10 @@
       font-size: 15px;
     }
 
+    .readout[hidden] {
+      display: none;
+    }
+
     #banner {
       justify-self: center;
       align-self: start;
@@ -413,7 +417,7 @@
 
     .mode-select {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       margin: -8px 0 18px;
     }
@@ -762,6 +766,7 @@
       <section class="rightbox panel" aria-label="Battle status">
         <div class="readout"><span>Enemies</span><strong id="enemyText">0</strong></div>
         <div class="readout"><span>KOs</span><strong id="koText">0</strong></div>
+        <div class="readout" id="xpReadout" hidden><span>XP</span><strong id="xpText">0</strong></div>
         <div class="readout"><span>Threat</span><strong id="threatText">Low</strong></div>
       </section>
     </div>
@@ -845,10 +850,6 @@
           <strong>Free For All</strong>
           <span>Duel</span>
         </button>
-        <button class="mode-card" type="button" data-mode="coop" role="radio" aria-checked="false">
-          <strong>Co-op</strong>
-          <span>Waves</span>
-        </button>
         <button class="mode-card" type="button" data-mode="exploration" role="radio" aria-checked="false">
           <strong>Exploration</strong>
           <span>Open world</span>
@@ -903,6 +904,8 @@
       const guardText = document.getElementById("guardText");
       const enemyText = document.getElementById("enemyText");
       const koText = document.getElementById("koText");
+      const xpReadout = document.getElementById("xpReadout");
+      const xpText = document.getElementById("xpText");
       const threatText = document.getElementById("threatText");
       const attackIcon = document.getElementById("attackIcon");
       const blockIcon = document.getElementById("blockIcon");
@@ -1052,6 +1055,7 @@
           origin: new THREE.Vector3(180, 0, 0),
           radius: 190,
           seed: "",
+          xp: 0,
           lakes: [],
           villages: [],
           discovered: new Set(),
@@ -1286,12 +1290,21 @@
         game.exploration.villages.length = 0;
         game.exploration.discovered = new Set();
         game.exploration.completed = false;
+        game.exploration.xp = 0;
         closeQuestDialog();
         updateQuestLog();
       }
 
       function explorationSeed() {
         return "explore-" + (online.roomCode || roomCodeInput.value || "local");
+      }
+
+      function awardExplorationXp(amount) {
+        if (game.mode !== "exploration" || amount <= 0) {
+          return;
+        }
+        game.exploration.xp += amount;
+        updateHud();
       }
 
       function makeCone(radius, height, segments, material, x, y, z) {
@@ -1512,6 +1525,7 @@
             item.collected = true;
             scene.remove(item.group);
             spawnImpact(item.position, 0x9fffd1, 12);
+            awardExplorationXp(5);
             updateQuestProgress(item.questId, 1);
           }
         }
@@ -1652,6 +1666,7 @@
           game.potions.push(createHealthPotion(player.position.x + 1.8, player.position.z + 1.2, { kind: "full" }));
           trimPotionDrops();
         }
+        awardExplorationXp(50);
         spawnImpact(player.position, 0xffd889, 24);
         showBanner("Reward claimed");
         updateHud();
@@ -1774,7 +1789,7 @@
         const seed = explorationSeed();
         const random = seededRandom(seed);
         game.exploration.seed = seed;
-        game.exploration.spawn.copy(explorationToWorld(0, 1.6));
+        game.exploration.spawn.copy(explorationToWorld(0, -6.8));
 
         const group = new THREE.Group();
         group.position.copy(game.exploration.origin);
@@ -1801,8 +1816,8 @@
         setupExplorationQuests();
         addExplorationHouse(group, 0, 0, 1.05, 0);
         addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 1.8, game.exploration.origin.z - 1.0, random, 4.5, "Mira", "herbs"));
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 1.8, game.exploration.origin.z - 1.2, random, 4.5, "Torren", "raiders"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.4, game.exploration.origin.z - 5.2, random, 4.5, "Mira", "herbs"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders"));
 
         addExplorationLake(group, 42 + random() * 8, 58 + random() * 7, 15, 9, random);
         addExplorationLake(group, -74 - random() * 8, -52 - random() * 7, 12, 8, random);
@@ -2379,9 +2394,6 @@
         if (game.mode === "ffa") {
           return "Start FFA as " + className;
         }
-        if (game.mode === "coop") {
-          return "Start Co-op as " + className;
-        }
         if (game.mode === "exploration") {
           return "Start Exploration as " + className;
         }
@@ -2389,6 +2401,9 @@
       }
 
       function setGameMode(mode) {
+        if (!["solo", "ffa", "exploration"].includes(mode)) {
+          mode = "solo";
+        }
         game.mode = mode;
         onlinePanel.hidden = mode === "solo";
         if (mode === "solo") {
@@ -2686,7 +2701,7 @@
 
       function createRemotePlayerModel(character) {
         const group = new THREE.Group();
-        const allyMode = game.mode === "coop" || game.mode === "exploration";
+        const allyMode = game.mode === "exploration";
         const remoteMaterial = allyMode ? materials.remoteAlly.clone() : materials.remoteEnemy.clone();
         const trimMaterial = character === "wizard" ? materials.wizardTrim.clone() : materials.gold;
         const body = makeCylinder(0.34, 0.44, 1.0, 14, remoteMaterial, 0, 0.88, 0);
@@ -2839,9 +2854,9 @@
       function applyRemoteAction(action, state) {
         const source = new THREE.Vector3(state.x || 0, 0, state.z || 0);
         const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
-        spawnImpact(source, game.mode === "coop" || game.mode === "exploration" ? 0x7ae8ff : 0xff705c, action === "burst" ? 18 : 10);
+        spawnImpact(source, game.mode === "exploration" ? 0x7ae8ff : 0xff705c, action === "burst" ? 18 : 10);
 
-        if (game.mode === "coop" || game.mode === "exploration") {
+        if (game.mode === "exploration") {
           applyRemoteActionToEnemies(action, source, state.yaw || 0, forward);
         } else if (game.mode === "ffa") {
           applyRemoteActionToPlayer(action, source, state.yaw || 0, forward);
@@ -3859,6 +3874,7 @@
           scene.remove(enemy.group);
           game.kills += 1;
           if (game.mode === "exploration" && enemy.exploration) {
+            awardExplorationXp(12);
             updateQuestProgress("raiders", 1);
           }
         }
@@ -3928,6 +3944,7 @@
             game.exploration.discovered.add(village.id);
             spawnImpact(new THREE.Vector3(village.x, 0, village.z), 0xffd889, 24);
             showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
+            awardExplorationXp(20);
             updateQuestProgress("villages", 1);
           }
         }
@@ -4461,6 +4478,8 @@
         waveLabel.textContent = game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
         enemyText.textContent = game.mode === "ffa" ? online.remotePlayers.size : game.enemies.length;
         koText.textContent = game.kills;
+        xpReadout.hidden = game.mode !== "exploration";
+        xpText.textContent = game.exploration.xp;
         const nearby = game.mode === "ffa"
           ? Array.from(online.remotePlayers.values()).filter(remote => remote.group.position.distanceTo(player.position) < 4.2).length
           : game.enemies.filter(enemy => enemy.position.distanceTo(player.position) < 4.2).length;
