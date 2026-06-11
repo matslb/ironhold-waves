@@ -137,7 +137,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     lastPlayed: new Map(),
     playerStepDistance: 0,
     playerLastSurface: "grass",
-    remoteStepDistance: new Map()
+    remoteStepDistance: new Map(),
+    musicTargetVolume: AUDIO_MUSIC_VOLUME
   };
 
   const MUSIC_THEME_DEFAULT_ID = "meadow-wild";
@@ -367,6 +368,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return audio.sfx || audio.master;
   }
 
+  function setMusicPaused(paused) {
+    if (!audio.context || !audio.music) {
+      return;
+    }
+    const target = paused ? 0 : AUDIO_MUSIC_VOLUME;
+    if (Math.abs(audio.musicTargetVolume - target) < 0.001) {
+      return;
+    }
+    audio.musicTargetVolume = target;
+    audio.music.gain.cancelScheduledValues(audio.context.currentTime);
+    audio.music.gain.setTargetAtTime(target, audio.context.currentTime, paused ? 0.035 : 0.16);
+  }
+
   function playTone(frequency, duration, options = {}) {
     const ctx = ensureAudio();
     if (!ctx || !audio.master) {
@@ -500,17 +514,17 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     const amount = clamp(intensity, 0.08, 1.35);
     if (surface === "horse") {
-      playNoise(0.07, { filterType: "lowpass", frequency: 420, gain: 0.055 * amount, q: 0.7 });
-      playTone(96, 0.055, { type: "triangle", endFrequency: 64, gain: 0.032 * amount, delay: 0.01 });
+      playNoise(0.07, { filterType: "lowpass", frequency: 420, gain: 0.011 * amount, q: 0.7 });
+      playTone(96, 0.055, { type: "triangle", endFrequency: 64, gain: 0.006 * amount, delay: 0.01 });
     } else if (surface === "sand") {
-      playNoise(0.09, { filterType: "bandpass", frequency: 940, gain: 0.033 * amount, q: 0.55 });
+      playNoise(0.09, { filterType: "bandpass", frequency: 940, gain: 0.0065 * amount, q: 0.55 });
     } else if (surface === "stone") {
-      playNoise(0.045, { filterType: "highpass", frequency: 1280, gain: 0.026 * amount, q: 0.8 });
-      playTone(185, 0.04, { type: "triangle", endFrequency: 130, gain: 0.018 * amount });
+      playNoise(0.045, { filterType: "highpass", frequency: 1280, gain: 0.0055 * amount, q: 0.8 });
+      playTone(185, 0.04, { type: "triangle", endFrequency: 130, gain: 0.0032 * amount });
     } else if (surface === "mud") {
-      playNoise(0.1, { filterType: "lowpass", frequency: 360, gain: 0.038 * amount, q: 0.8 });
+      playNoise(0.1, { filterType: "lowpass", frequency: 360, gain: 0.0075 * amount, q: 0.8 });
     } else {
-      playNoise(0.075, { filterType: "bandpass", frequency: 1250, gain: 0.026 * amount, q: 0.65 });
+      playNoise(0.075, { filterType: "bandpass", frequency: 1250, gain: 0.0052 * amount, q: 0.65 });
     }
   }
 
@@ -524,6 +538,68 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     playTone(second, 0.07, { type: "sine", endFrequency: third, gain: 0.018, attack: 0.006, delay: 0.095, bus: "ambience" });
     if (Math.random() < 0.42) {
       playTone(third * 1.12, 0.06, { type: "triangle", endFrequency: third * 0.96, gain: 0.012, attack: 0.005, delay: 0.19, bus: "ambience" });
+    }
+  }
+
+  function npcVoiceProfile(npc) {
+    const biome = npc && npc.biome ? npc.biome : "meadow";
+    if (biome === "mountain") {
+      return { root: 180, gain: 0.010, pace: 0.052, type: "triangle", degrees: [0, 3, 5, 3, 0] };
+    }
+    if (biome === "desert") {
+      return { root: 260, gain: 0.009, pace: 0.046, type: "square", degrees: [0, 1, 4, 1, 0] };
+    }
+    if (biome === "swamp") {
+      return { root: 150, gain: 0.008, pace: 0.058, type: "triangle", degrees: [0, 2, -1, 2, 0] };
+    }
+    if (biome === "city") {
+      return { root: 240, gain: 0.0095, pace: 0.044, type: "square", degrees: [0, 2, 4, 2, 5] };
+    }
+    return { root: 230, gain: 0.009, pace: 0.048, type: "square", degrees: [0, 2, 4, 2, 0] };
+  }
+
+  function npcVoiceNameOffset(name = "") {
+    let hash = 0;
+    for (let i = 0; i < name.length; i += 1) {
+      hash = (hash * 31 + name.charCodeAt(i)) % 997;
+    }
+    return (hash % 7) - 3;
+  }
+
+  function playNpcVoiceLine(npc, text) {
+    const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+    if (!cleanText) {
+      return;
+    }
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master || audio.muted) {
+      return;
+    }
+    const profile = npcVoiceProfile(npc);
+    const offset = npcVoiceNameOffset(npc && npc.name);
+    const chirps = clamp(Math.ceil(cleanText.length / 13), 3, 13);
+    for (let i = 0; i < chirps; i += 1) {
+      const char = cleanText[Math.min(cleanText.length - 1, i * 9)] || " ";
+      const punctuationPause = /[,.!?]/.test(char) ? 0.055 : 0;
+      const degree = profile.degrees[(i + Math.abs(offset)) % profile.degrees.length] + offset;
+      const frequency = profile.root * Math.pow(2, degree / 12);
+      const delay = i * profile.pace + punctuationPause;
+      const gain = profile.gain * (i % 3 === 0 ? 1.08 : 0.9);
+      playTone(frequency, 0.035, {
+        type: profile.type,
+        endFrequency: frequency * (i % 2 === 0 ? 1.035 : 0.965),
+        gain,
+        attack: 0.003,
+        delay
+      });
+      if (i % 4 === 0) {
+        playTone(frequency * 2, 0.022, {
+          type: "sine",
+          gain: gain * 0.32,
+          attack: 0.002,
+          delay: delay + 0.006
+        });
+      }
     }
   }
 
@@ -667,7 +743,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     const active = game.state === "playing";
-    const paused = game.state === "paused";
+    setMusicPaused(!active);
+    if (!active) {
+      audio.musicState.nextNoteAt = ctx.currentTime + 0.45;
+      return;
+    }
     const inArena = localPlayerInArenaActivity() || (game.mode !== "exploration" && active);
     let biome = "meadow";
     if (game.mode === "exploration") {
@@ -912,11 +992,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playTone(220, 0.32, { type: "sawtooth", endFrequency: 88, gain: 0.042 * amount });
       playNoise(0.3, { filterType: "lowpass", frequency: 300, gain: 0.048 * amount, delay: 0.05 });
     } else if (name === "enemyFoot") {
-      playNoise(0.075, { filterType: "lowpass", frequency: 560, gain: 0.028 * amount, q: 0.7 });
-      playTone(110, 0.045, { type: "triangle", endFrequency: 82, gain: 0.014 * amount });
+      playNoise(0.075, { filterType: "lowpass", frequency: 560, gain: 0.0055 * amount, q: 0.7 });
+      playTone(110, 0.045, { type: "triangle", endFrequency: 82, gain: 0.0025 * amount });
     } else if (name === "spiderStep") {
-      playNoise(0.045, { filterType: "bandpass", frequency: 1850, gain: 0.026 * amount, q: 1.35 });
-      playTone(155, 0.035, { type: "square", endFrequency: 118, gain: 0.008 * amount });
+      playNoise(0.045, { filterType: "bandpass", frequency: 1850, gain: 0.0048 * amount, q: 1.35 });
+      playTone(155, 0.035, { type: "square", endFrequency: 118, gain: 0.0016 * amount });
     } else if (name === "dragonFlap") {
       playNoise(0.18, { filterType: "lowpass", frequency: 330, gain: 0.04 * amount, q: 0.55 });
       playTone(74, 0.12, { type: "triangle", endFrequency: 52, gain: 0.018 * amount });
@@ -1294,6 +1374,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     quests: [],
     activeNpc: null,
     dialogNpc: null,
+    dialogVoiceKey: "",
     dialogActionIndex: 0,
     questMapTimer: 0,
     exploration: {
@@ -4934,6 +5015,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     game.dialogNpc = npc;
+    game.dialogVoiceKey = "";
     keys.clear();
     player.blockHeld = false;
     playSfx("ui", 0.7);
@@ -4947,6 +5029,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     questDialog.hidden = true;
     actionDock.hidden = false;
     game.dialogNpc = null;
+    game.dialogVoiceKey = "";
     updateDialogSelection(0);
   }
 
@@ -5030,6 +5113,24 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return lines[quest.state] || quest.body;
   }
 
+  function playDialogVoiceIfChanged() {
+    const npc = game.dialogNpc;
+    if (!npc) {
+      return;
+    }
+    const key = npc.name + "|" + questDialogTitle.textContent + "|" + questDialogBody.textContent;
+    if (game.dialogVoiceKey === key) {
+      return;
+    }
+    game.dialogVoiceKey = key;
+    playNpcVoiceLine(npc, questDialogBody.textContent);
+  }
+
+  function finishQuestDialogRefresh() {
+    updateDialogSelection(0);
+    playDialogVoiceIfChanged();
+  }
+
   function questStatusLine(quest) {
     if (quest.state === "available") {
       if (!questPrerequisiteMet(quest)) {
@@ -5071,14 +5172,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         questDialogBody.textContent = ambientLineFor({ npcName: npc.name, biome: npc.biome });
       }
       questDialogStatus.textContent = "Nearby villagers can mend small wounds when you stand close.";
-      updateDialogSelection(0);
+      finishQuestDialogRefresh();
       return;
     }
 
     if (!questPrerequisiteMet(quest)) {
       questDialogBody.textContent = "Pell looks over the empty stable hook and shakes his head. \"Bring me a loyal horse first. I can fit tack to a mount, not to a promise.\"";
       questDialogStatus.textContent = questPrerequisiteStatus(quest);
-      updateDialogSelection(0);
+      finishQuestDialogRefresh();
       return;
     }
 
@@ -5094,7 +5195,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       questServiceButton.hidden = false;
       questServiceButton.textContent = "Enter Crownring";
     }
-    updateDialogSelection(0);
+    finishQuestDialogRefresh();
   }
 
   function acceptCurrentQuest() {
@@ -7033,18 +7134,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       quiver.add(shaft, fletch);
     }
 
-    // Recurve bow held in the left hand, drawn toward -Z.
+    // Recurve bow held vertically in the left hand, stave bulging toward -Z.
     const bowPivot = new THREE.Group();
-    bowPivot.position.set(-0.58, 1.3, -0.12);
-    const bowUpper = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.035, 8, 18, Math.PI * 0.62), materials.paleWood);
-    bowUpper.rotation.set(0, Math.PI / 2, Math.PI / 2 - Math.PI * 0.31);
-    addShadow(bowUpper);
-    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, 0);
-    const bowString = makeBox(0.012, 1.16, 0.012, materials.bone, 0, 0, 0.17);
-    const upperTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, 0.61, 0.16);
-    const lowerTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, -0.61, 0.16);
-    bowPivot.add(bowUpper, bowGrip, bowString, upperTip, lowerTip);
-    bowPivot.rotation.set(0, -0.35, -0.08);
+    bowPivot.position.set(-0.56, 1.0, -0.08);
+    // Torus arc lives in XY; Rz centers it on +X, then Ry(90deg) maps it into the
+    // Y-Z plane so the limbs sweep up/down and the belly points forward (-Z).
+    const bowStave = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 8, 20, Math.PI * 0.62), materials.paleWood);
+    bowStave.rotation.set(0, Math.PI / 2, -Math.PI * 0.31);
+    bowStave.position.z = 0.48;
+    addShadow(bowStave);
+    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
+    const bowString = makeBox(0.012, 0.96, 0.012, materials.bone, 0, 0, 0.15);
+    const upperTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, 0.48, 0.15);
+    const lowerTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, -0.48, 0.15);
+    bowPivot.add(bowStave, bowGrip, bowString, upperTip, lowerTip);
+    bowPivot.rotation.set(0, -0.3, -0.06);
 
     const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
     hitFlash.position.set(0, 1.5, -0.62);
@@ -8701,14 +8805,15 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
 
     const bowPivot = new THREE.Group();
-    bowPivot.position.set(-0.58, 1.3, -0.12);
-    const bowUpper = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.035, 8, 18, Math.PI * 0.62), materials.paleWood);
-    bowUpper.rotation.set(0, Math.PI / 2, Math.PI / 2 - Math.PI * 0.31);
-    addShadow(bowUpper);
-    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, 0);
-    const bowString = makeBox(0.012, 1.16, 0.012, materials.bone, 0, 0, 0.17);
-    bowPivot.add(bowUpper, bowGrip, bowString);
-    bowPivot.rotation.set(0, -0.35, -0.08);
+    bowPivot.position.set(-0.56, 1.0, -0.08);
+    const bowStave = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 8, 20, Math.PI * 0.62), materials.paleWood);
+    bowStave.rotation.set(0, Math.PI / 2, -Math.PI * 0.31);
+    bowStave.position.z = 0.48;
+    addShadow(bowStave);
+    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
+    const bowString = makeBox(0.012, 0.96, 0.012, materials.bone, 0, 0, 0.15);
+    bowPivot.add(bowStave, bowGrip, bowString);
+    bowPivot.rotation.set(0, -0.3, -0.06);
 
     group.add(
       leftLeg, rightLeg, leftBoot, rightBoot,
@@ -10215,8 +10320,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function updateRangerDrawAnimation(t, swing) {
     if (player.bowPivot) {
-      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -1.35, swing);
-      player.bowPivot.rotation.z = -0.08 - swing * 0.1;
+      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -1.25, swing);
+      player.bowPivot.rotation.z = -0.06 - swing * 0.1;
     }
     if (player.leftArm) {
       player.leftArm.rotation.x = -swing * 1.25;
@@ -10231,8 +10336,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   function resetRangerDrawPose(dt) {
     const ease = 1 - Math.pow(0.00001, dt);
     if (player.bowPivot) {
-      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -0.35, ease);
-      player.bowPivot.rotation.z = lerp(player.bowPivot.rotation.z, -0.08, ease);
+      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -0.3, ease);
+      player.bowPivot.rotation.z = lerp(player.bowPivot.rotation.z, -0.06, ease);
     }
   }
 
