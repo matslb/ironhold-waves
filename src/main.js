@@ -577,6 +577,7 @@ import {
       colliderCellSize: 8,
       roads: [],
       roadJunctions: [],
+      terrainFlatZones: [],
       city: null,
       arenaCity: null,
       horse: null,
@@ -1811,6 +1812,7 @@ import {
     game.exploration.colliderGrid.clear();
     game.exploration.roads.length = 0;
     game.exploration.roadJunctions.length = 0;
+    game.exploration.terrainFlatZones.length = 0;
     game.exploration.city = null;
     game.exploration.arenaCity = null;
     game.exploration.discovered = new Set();
@@ -1875,13 +1877,56 @@ import {
     return clamp(1 - normalized, 0, 1);
   }
 
-  function explorationTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
+  function terrainLineInfluence(localX, localZ, fromX, fromZ, toX, toZ, width) {
+    const dx = toX - fromX;
+    const dz = toZ - fromZ;
+    const lengthSq = dx * dx + dz * dz;
+    if (lengthSq <= 0.0001) {
+      return 0;
+    }
+    const t = clamp(((localX - fromX) * dx + (localZ - fromZ) * dz) / lengthSq, 0, 1);
+    const closestX = fromX + dx * t;
+    const closestZ = fromZ + dz * t;
+    const distance = Math.hypot(localX - closestX, localZ - closestZ);
+    return 1 - smoothstep(width * 0.35, width, distance);
+  }
+
+  function terrainPeakInfluence(localX, localZ, centerX, centerZ, radius, power = 1.25) {
+    const distance = Math.hypot(localX - centerX, localZ - centerZ);
+    const normalized = clamp(1 - distance / Math.max(1, radius), 0, 1);
+    return Math.pow(smoothstep(0, 1, normalized), power);
+  }
+
+  function explorationRawTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
     const distance = Math.hypot(localX, localZ);
     const edgeRise = game.exploration.radius * 0.78;
     const seedPhase = hashString(seed) * 0.0001;
     let height = Math.sin(localX * 0.13 + seedPhase) * 0.08 + Math.cos(localZ * 0.11) * 0.07;
-    height += Math.sin((localX + localZ) * 0.024 + seedPhase * 0.7) * 0.16;
-    height += Math.cos((localX - localZ) * 0.018 - seedPhase * 0.45) * 0.12;
+    height += Math.sin((localX + localZ) * 0.024 + seedPhase * 0.7) * 0.34;
+    height += Math.cos((localX - localZ) * 0.018 - seedPhase * 0.45) * 0.26;
+
+    const wildernessMask = smoothstep(22, 86, distance);
+    const meadowRidgeA = terrainLineInfluence(localX, localZ, -44, 10, 112, 118, 38);
+    const meadowRidgeB = terrainLineInfluence(localX, localZ, -158, 26, -12, 164, 34);
+    const northEscarpment = terrainLineInfluence(localX, localZ, -32, 78, 164, 144, 46);
+    const westShoulder = terrainLineInfluence(localX, localZ, -180, -14, -42, 108, 39);
+    const southernHollow = terrainLineInfluence(localX, localZ, -120, -118, 82, -18, 42);
+    const eastKnoll = terrainPeakInfluence(localX, localZ, 98, -34, 86, 1.18);
+    const westKnoll = terrainPeakInfluence(localX, localZ, -112, 12, 76, 1.2);
+    const crownVale = terrainPeakInfluence(localX, localZ, 28, 92, 94, 1.05);
+    const southVale = terrainPeakInfluence(localX, localZ, -22, -108, 96, 1.08);
+    const rollingSwell = Math.sin(localX * 0.031 - localZ * 0.019 + seedPhase * 0.5) * 0.48
+      + Math.cos(localX * 0.018 + localZ * 0.027 - seedPhase * 0.35) * 0.36;
+    height += wildernessMask * rollingSwell;
+    height += wildernessMask * meadowRidgeA * (0.9 + Math.sin(localZ * 0.05 + seedPhase) * 0.18);
+    height += wildernessMask * meadowRidgeB * (0.72 + Math.cos(localX * 0.047 - seedPhase) * 0.16);
+    height += wildernessMask * northEscarpment * (0.78 + Math.sin(localX * 0.038 + seedPhase) * 0.16);
+    height += wildernessMask * westShoulder * (0.58 + Math.cos(localZ * 0.04 - seedPhase) * 0.13);
+    height += wildernessMask * eastKnoll * 1.05;
+    height += wildernessMask * westKnoll * 0.85;
+    height -= wildernessMask * crownVale * 0.44;
+    height -= wildernessMask * southVale * 0.62;
+    height -= wildernessMask * southernHollow * (0.54 + Math.sin((localX - localZ) * 0.028) * 0.12);
 
     const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
@@ -1890,22 +1935,60 @@ import {
     if (mountainInfluence > 0) {
       const ridge = Math.sin(localX * 0.052 + localZ * 0.018 + seedPhase) * 0.48
         + Math.cos(localZ * 0.064 - seedPhase) * 0.32;
-      height += mountainInfluence * (0.55 + ridge) + Math.pow(mountainInfluence, 1.75) * 2.35;
+      const crest = Math.pow(Math.max(0, Math.sin((localX - localZ) * 0.038 + seedPhase * 0.55)), 1.45);
+      const pass = terrainLineInfluence(localX, localZ, mountain.x - 34, mountain.z - 48, mountain.x + 58, mountain.z + 16, 20);
+      height += mountainInfluence * (0.82 + ridge * 1.08) + Math.pow(mountainInfluence, 1.75) * 4.35;
+      height += Math.pow(mountainInfluence, 1.35) * crest * 1.65;
+      height -= pass * mountainInfluence * 1.12;
     }
     const desertInfluence = biomeTerrainInfluence(desert, localX, localZ);
     if (desertInfluence > 0) {
       const dune = Math.sin(localX * 0.076 + localZ * 0.024 + seedPhase) * 0.24
         + Math.cos(localZ * 0.088 - seedPhase) * 0.16;
-      height += desertInfluence * dune;
+      const duneBand = Math.sin(localX * 0.04 - localZ * 0.018 + seedPhase * 0.7) * 0.28;
+      const mesa = terrainPeakInfluence(localX, localZ, desert.x - 26, desert.z + 34, 72, 1.4);
+      height += desertInfluence * (dune * 1.95 + duneBand * 1.35);
+      height += desertInfluence * mesa * 1.15;
     }
     const swampInfluence = biomeTerrainInfluence(swamp, localX, localZ);
     if (swampInfluence > 0) {
-      height -= swampInfluence * 0.22;
-      height += Math.sin(localX * 0.09 + localZ * 0.04) * swampInfluence * 0.06;
+      const bogBasin = terrainPeakInfluence(localX, localZ, swamp.x - 12, swamp.z + 18, 82, 1.1);
+      height -= swampInfluence * 0.42;
+      height -= Math.pow(swampInfluence, 1.5) * 0.34;
+      height -= swampInfluence * bogBasin * 0.48;
+      height += Math.sin(localX * 0.09 + localZ * 0.04) * swampInfluence * 0.11;
     }
 
     if (distance > edgeRise) {
-      height += (distance - edgeRise) * 0.012;
+      height += (distance - edgeRise) * 0.016;
+    }
+    return height;
+  }
+
+  function registerExplorationFlatZone(localX, localZ, radius, blend = 7, height = null, strength = 0.92) {
+    const targetHeight = Number.isFinite(height)
+      ? height
+      : explorationRawTerrainHeight(localX, localZ);
+    game.exploration.terrainFlatZones.push({
+      x: localX,
+      z: localZ,
+      radius: Math.max(1, radius),
+      blend: Math.max(0.5, blend),
+      height: targetHeight,
+      strength: clamp(strength, 0, 1)
+    });
+    return targetHeight;
+  }
+
+  function explorationTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
+    let height = explorationRawTerrainHeight(localX, localZ, seed);
+    for (const zone of game.exploration.terrainFlatZones) {
+      const distance = Math.hypot(localX - zone.x, localZ - zone.z);
+      if (distance >= zone.radius + zone.blend) {
+        continue;
+      }
+      const falloff = 1 - smoothstep(zone.radius, zone.radius + zone.blend, distance);
+      height = lerp(height, zone.height, falloff * zone.strength);
     }
     return height;
   }
@@ -1924,6 +2007,95 @@ import {
   function setExplorationLocalGroundPosition(object, localX, localZ, offset = 0) {
     object.position.set(localX, explorationGroundLocalY(localX, localZ, offset), localZ);
     return object;
+  }
+
+  function setupExplorationFlatZones() {
+    const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
+    const desert = game.exploration.biomes.find(biome => biome.id === "desert");
+    const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
+    const zones = [];
+    const landmarkZones = [
+      { x: 0, z: -2, radius: 24, blend: 11, strength: 1.0 },
+      { x: 0, z: -17, radius: 6, blend: 6, strength: 0.8 },
+      { x: 0, z: 86, radius: 7, blend: 7, strength: 0.75 },
+      { x: 58, z: -48, radius: 6, blend: 7, strength: 0.72 },
+      { x: -64, z: 42, radius: 6, blend: 7, strength: 0.72 },
+      { x: 12, z: 132, radius: 53, blend: 18, strength: 0.98 },
+      { x: 158, z: 48, radius: 46, blend: 16, strength: 0.98 },
+      { x: 125, z: -92, radius: 32, blend: 14, strength: 0.92 },
+      { x: -133, z: 96, radius: 32, blend: 14, strength: 0.92 },
+      { x: 63, z: 81, radius: 21, blend: 10, strength: 0.82 },
+      { x: -104, z: -78, radius: 18, blend: 9, strength: 0.82 },
+      { x: 155, z: -134, radius: 19, blend: 9, strength: 0.82 },
+      { x: -209, z: 90, radius: 19, blend: 9, strength: 0.82 },
+      { x: 18, z: -207, radius: 16, blend: 8, strength: 0.78 },
+      { x: 238, z: 30, radius: 17, blend: 8, strength: 0.78 }
+    ];
+    const addPathZones = (points, radius = 5.4, blend = 7, strength = 0.54) => {
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        const length = Math.max(0.001, Math.hypot(b.x - a.x, b.z - a.z));
+        const steps = Math.max(1, Math.ceil(length / 24));
+        for (let step = 0; step <= steps; step += 1) {
+          const t = step / steps;
+          zones.push({
+            x: lerp(a.x, b.x, t),
+            z: lerp(a.z, b.z, t),
+            radius,
+            blend,
+            strength
+          });
+        }
+      }
+    };
+    const homeDoor = { x: 0, z: -2.4 };
+    const homeJunction = { x: 0, z: -17 };
+    const northFork = { x: 0, z: 86 };
+    const meadowEastFork = { x: 58, z: -48 };
+    const meadowWestFork = { x: -64, z: 42 };
+    const mountainFork = { x: 78, z: 112 };
+    const desertFork = { x: -58, z: -74 };
+    const swampFork = { x: -92, z: 128 };
+    addPathZones([homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 5.8, 7.5, 0.58);
+    addPathZones([northFork, { x: -4, z: 104 }, { x: 2, z: 132 }], 6.2, 8, 0.62);
+    addPathZones([northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: 124, z: 30 }], 5.8, 7.5, 0.58);
+    addPathZones([homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, meadowEastFork, { x: 118, z: -86 }], 5.2, 7, 0.54);
+    addPathZones([homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, meadowWestFork, { x: -126, z: 90 }], 5.2, 7, 0.54);
+    if (mountain) {
+      addPathZones([northFork, { x: 24, z: 99 }, { x: 56, z: 122 }, mountainFork, { x: mountain.x + 18, z: mountain.z - 24 }], 5.2, 7.5, 0.5);
+    }
+    if (desert) {
+      addPathZones([homeJunction, { x: -18, z: -42 }, { x: -48, z: -58 }, desertFork, { x: desert.x + 10, z: desert.z + 2 }], 5.2, 7.5, 0.5);
+    }
+    if (swamp) {
+      addPathZones([northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, swampFork, { x: swamp.x + 7, z: swamp.z - 7 }], 5.2, 7.5, 0.5);
+    }
+    zones.push(...landmarkZones);
+    if (mountain) {
+      zones.push(
+        { x: mountain.x + 22, z: mountain.z - 28, radius: 34, blend: 16, strength: 0.9 },
+        { x: mountain.x + 8, z: mountain.z - 6, radius: 15, blend: 10, strength: 0.82 },
+        { x: 78, z: 112, radius: 7, blend: 8, strength: 0.72 }
+      );
+    }
+    if (desert) {
+      zones.push(
+        { x: desert.x + 14, z: desert.z + 6, radius: 34, blend: 16, strength: 0.9 },
+        { x: desert.x - 22, z: desert.z + 18, radius: 12, blend: 8, strength: 0.86 },
+        { x: -58, z: -74, radius: 7, blend: 8, strength: 0.72 }
+      );
+    }
+    if (swamp) {
+      zones.push(
+        { x: swamp.x + 10, z: swamp.z - 10, radius: 35, blend: 17, strength: 0.9 },
+        { x: swamp.x - 4, z: swamp.z + 3, radius: 13, blend: 8, strength: 0.86 },
+        { x: -92, z: 128, radius: 7, blend: 8, strength: 0.72 }
+      );
+    }
+    for (const zone of zones) {
+      registerExplorationFlatZone(zone.x, zone.z, zone.radius, zone.blend, null, zone.strength);
+    }
   }
 
   function createRoadStripGeometry(fromX, fromZ, toX, toZ, width) {
@@ -3123,6 +3295,7 @@ import {
   }
 
   function addExplorationLake(group, x, z, rx, rz, random) {
+    registerExplorationFlatZone(x, z, Math.max(rx, rz) + 2.5, 6.5, null, 0.82);
     const lake = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 48), materials.water.clone());
     setExplorationLocalGroundPosition(lake, x, z, 0.04);
     lake.scale.set(rx, 1, rz);
@@ -4454,6 +4627,8 @@ import {
   }
 
   function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
+    const flatRadius = biome === "desert" ? 24 : biome === "swamp" ? 25 : biome === "mountain" ? 24 : 23;
+    registerExplorationFlatZone(x, z, flatRadius, 12, null, 0.94);
     const villageGroundY = explorationGroundLocalY(x, z);
     const village = {
       id: "village-" + index,
@@ -4696,6 +4871,7 @@ import {
   }
 
   function addCrownfordCity(group, x, z, random) {
+    registerExplorationFlatZone(x, z, 50, 16, null, 1.0);
     const city = {
       id: "crownford",
       name: "Crownford",
@@ -4764,6 +4940,7 @@ import {
   }
 
   function addCrownringCity(group, x, z, random) {
+    registerExplorationFlatZone(x, z, 43, 15, null, 1.0);
     const city = {
       id: "crownring",
       name: "Crownring",
@@ -4929,6 +5106,7 @@ import {
       rotation: -0.44
     };
     game.exploration.biomes.push(mountain, desert, swamp);
+    setupExplorationFlatZones();
     addBiomePatch(group, desert, seed);
     addBiomePatch(group, mountain, seed);
     addBiomePatch(group, swamp, seed);
@@ -5045,7 +5223,7 @@ import {
 
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
-    const groundGeometry = new THREE.PlaneGeometry(760, 760, 112, 112);
+    const groundGeometry = new THREE.PlaneGeometry(760, 760, 132, 132);
     const pos = groundGeometry.attributes.position;
     for (let i = 0; i < pos.count; i += 1) {
       const x = pos.getX(i);
