@@ -1,6 +1,6 @@
 # Ironhold Active Task Brief
 
-Branch: `codex/exploration-arena-rework`
+Branch: `master` with short-lived `codex/*` feature branches.
 
 This brief converts the current creative direction into implementation tasks. Agents may propose creative details inside their ownership area, but implementation choices must preserve the approved direction below.
 
@@ -68,6 +68,8 @@ Acceptance:
 Primary owner: World & Content Agent
 
 Support: Rendering / Performance Agent, QA / Playtest Agent
+
+Status: First pass shipped. Roads now use deduped junction patches, stronger winding rules, and deterministic roadside supply/decor stops at forks, gates, biome thresholds, villages, and Crownring/Crownford entries.
 
 Tasks:
 - Keep the Exploration road network continuous, aligned to settlement entrances, and clear of major lakes.
@@ -168,6 +170,8 @@ Acceptance:
 Primary owner: Rendering / Performance Agent
 
 Support: World & Content Agent, QA / Playtest Agent
+
+Status: First proportion pass in progress. Friendly NPCs, quest marker height, door sizes, village house scale, city wall height, Crownring houses, dragons, and spider footprint have been normalized against the player scale anchor.
 
 Scale targets:
 - Player body reads as roughly `2.2-2.4` world units tall. Plume/hat may reach about `3.0`.

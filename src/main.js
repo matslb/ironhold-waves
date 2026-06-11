@@ -208,10 +208,10 @@ import {
   };
 
   const modelScale = {
-    npc: 1.04,
+    npc: 1.3,
     barbarianBase: 1.08,
-    dragonBase: 1.32,
-    spiderBase: 1.42
+    dragonBase: 1.18,
+    spiderBase: 1.32
   };
 
   const game = {
@@ -2184,8 +2184,8 @@ import {
     for (const [px, py, pz] of postPositions) {
       stable.add(makeBox(0.18, 1.85, 0.18, materials.wood, px, 0.92 + py, pz));
     }
-    const roofA = makeBox(4.4, 0.26, 1.75, materials.roof, 0, 2.02, -0.52);
-    const roofB = makeBox(4.4, 0.26, 1.75, materials.roof, 0, 2.02, 0.52);
+    const roofA = makeBox(4.8, 0.28, 1.95, materials.roof, 0, 2.34, -0.58);
+    const roofB = makeBox(4.8, 0.28, 1.95, materials.roof, 0, 2.34, 0.58);
     roofA.rotation.x = -0.48;
     roofB.rotation.x = 0.48;
     const railBack = makeBox(3.8, 0.16, 0.14, materials.wood, 0, 0.88, 1.38);
@@ -2323,7 +2323,7 @@ import {
     const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 1.54, -2.42);
     shade.rotation.x = -0.18;
     const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, 2.5, 0.85);
-    const door = makeBox(0.82, 1.25, 0.08, materials.darkLeather, 0, 0.68, -2.16);
+    const door = makeBox(0.92, 1.86, 0.08, materials.darkLeather, 0, 0.98, -2.16);
     house.add(base, back, left, right, frontLeft, frontRight, lintel, flatRoof, shade, dome, door);
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
@@ -2351,7 +2351,7 @@ import {
     roofB.rotation.x = 0.6;
     const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.44, -2.2);
     const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.08, 0.42);
-    const door = makeBox(0.82, 1.34, 0.08, materials.wood, 0, 0.72, -2.25);
+    const door = makeBox(0.92, 1.86, 0.08, materials.wood, 0, 0.98, -2.25);
     house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, beam, chimney, door);
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
@@ -2377,7 +2377,7 @@ import {
     const right = makeBox(0.24, 1.72, 3.7, materials.swampPlank, 2.13, 1.58, 0);
     const frontLeft = makeBox(1.45, 1.72, 0.24, materials.swampPlank, -1.35, 1.58, -1.72);
     const frontRight = makeBox(1.45, 1.72, 0.24, materials.swampPlank, 1.35, 1.58, -1.72);
-    const door = makeBox(0.74, 1.16, 0.08, materials.darkLeather, 0, 1.18, -1.86);
+    const door = makeBox(0.86, 1.72, 0.08, materials.darkLeather, 0, 1.47, -1.86);
     const roof = makeCone(3.72, 1.0, 4, materials.thatch, 0, 2.78, 0);
     roof.rotation.y = Math.PI / 4;
     roof.scale.set(1.2, 0.76, 1.0);
@@ -2421,7 +2421,7 @@ import {
     roofA.rotation.x = -0.5;
     roofB.rotation.x = 0.5;
     const chimney = makeBox(0.44, 0.92, 0.44, materials.darkStone, 1.42, 2.96, 0.65);
-    const door = makeBox(0.86, 1.4, 0.08, materials.wood, 0, 0.76, -2.34);
+    const door = makeBox(0.94, 1.86, 0.08, materials.wood, 0, 0.98, -2.34);
     const windowMat = materials.lightningCore.clone();
     windowMat.color.setHex(0xffd889);
     windowMat.opacity = 0.72;
@@ -2698,7 +2698,7 @@ import {
       const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
       group.add(reedWrap, satchel);
     }
-    const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.02, 0);
+    const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.16, 0);
     questMarker.visible = !!questId;
     group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
     scene.add(group);
@@ -3834,7 +3834,7 @@ import {
       const angle = (i / 5) * TAU + random() * 0.45;
       const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
       const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
-      const houseScale = 0.94 + random() * 0.18;
+      const houseScale = 1.02 + random() * 0.16;
       const house = addExplorationHouse(group, hx, hz, houseScale, i, biome);
       house.rotation.y += angle + Math.PI;
       houses.push({ x: hx, z: hz, rotation: house.rotation.y, scale: houseScale });
@@ -3899,7 +3899,7 @@ import {
     const right = makeBox(0.24, 2.6, 4.0, wall, 2.18, 1.35, 0);
     const frontLeft = makeBox(1.48, 2.6, 0.24, wall, -1.56, 1.35, -1.88);
     const frontRight = makeBox(1.48, 2.6, 0.24, wall, 1.56, 1.35, -1.88);
-    const door = makeBox(0.82, 1.36, 0.08, materials.wood, 0, 0.74, -2.04);
+    const door = makeBox(0.92, 1.82, 0.08, materials.wood, 0, 0.98, -2.04);
     const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, -0.8);
     const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, 0.8);
     roofA.rotation.x = -0.52;
@@ -3958,7 +3958,7 @@ import {
     roofB.rotation.x = 0.62;
     const tower = makeBox(3.0, 6.5, 3.0, materials.cityWall, 0, 3.28, -5.55);
     const spire = makeCone(1.82, 3.95, 24, materials.cityRoof, 0, 8.38, -5.55);
-    const door = makeBox(1.0, 1.7, 0.08, materials.wood, 0, 0.9, -7.1);
+    const door = makeBox(1.08, 1.88, 0.08, materials.wood, 0, 0.99, -7.1);
     const glass = makeBox(0.74, 1.2, 0.08, materials.stainedGlass.clone(), 0, 3.72, -7.12);
     const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, 10.26, -5.55);
     const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, 10.42, -5.55);
@@ -4086,15 +4086,15 @@ import {
       [37, 22, 0.7, 30]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
-      const wall = makeBox(ww, 2.45, wd, materials.cityWall, x + wx, 1.23, z + wz);
+      const wall = makeBox(ww, 3.1, wd, materials.cityWall, x + wx, 1.55, z + wz);
       group.add(wall);
       addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
     }
     for (let i = 0; i < 4; i += 1) {
       const sx = i % 2 ? 37 : -37;
       const sz = i > 1 ? 37 : -37;
-      const tower = makeCylinder(1.05, 1.2, 3.75, 16, materials.cityWall, x + sx, 1.88, z + sz);
-      const roof = makeCone(1.48, 1.55, 16, materials.cityRoof, x + sx, 4.52, z + sz);
+      const tower = makeCylinder(1.05, 1.2, 4.35, 16, materials.cityWall, x + sx, 2.18, z + sz);
+      const roof = makeCone(1.52, 1.7, 16, materials.cityRoof, x + sx, 5.18, z + sz);
       group.add(tower, roof);
       addExplorationCollider(x + sx, z + sz, 1.55, "structure");
     }
@@ -4153,13 +4153,13 @@ import {
       [29, 13, 0.72, 18]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
-      const wall = makeBox(ww, 2.12, wd, materials.cityWall, x + wx, 1.06, z + wz);
+      const wall = makeBox(ww, 2.86, wd, materials.cityWall, x + wx, 1.43, z + wz);
       group.add(wall);
       addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
     }
     for (const [tx, tz] of [[-29, -24], [29, -24], [-29, 24], [29, 24]]) {
-      const tower = makeCylinder(0.85, 1.0, 3.4, 14, materials.cityWall, x + tx, 1.7, z + tz);
-      const cap = makeCone(1.15, 1.25, 14, materials.cityRoof, x + tx, 3.98, z + tz);
+      const tower = makeCylinder(0.9, 1.05, 4.05, 14, materials.cityWall, x + tx, 2.02, z + tz);
+      const cap = makeCone(1.2, 1.42, 14, materials.cityRoof, x + tx, 4.76, z + tz);
       group.add(tower, cap);
       addExplorationCollider(x + tx, z + tz, 1.28, "structure");
     }
@@ -4194,8 +4194,8 @@ import {
       addExplorationLineColliders(x + sx, z + sz, sw, sd, "structure");
     }
 
-    addCityHouse(group, x - 19, z + 12, 0.82, 8, -Math.PI / 2);
-    addCityHouse(group, x + 20, z + 12, 0.86, 9, Math.PI / 2);
+    addCityHouse(group, x - 19, z + 12, 1.0, 8, -Math.PI / 2);
+    addCityHouse(group, x + 20, z + 12, 1.02, 9, Math.PI / 2);
     addStable(group, x - 20, z - 11);
     addBannerPole(group, x - 24, z - 20, 0.16, 0.92);
     addBannerPole(group, x + 24, z - 20, -0.16, 0.92);
@@ -4522,7 +4522,7 @@ import {
       const dragon = createDragon(world.x, world.z, 1 + Math.floor(random() * 2));
       dragon.health *= 0.72;
       dragon.maxHealth = dragon.health;
-      dragon.hoverHeight = 2.75 + random() * 0.45;
+      dragon.hoverHeight = 2.55 + random() * 0.34;
       dragon.desiredRange = 9.2 + random() * 2.0;
       seedExplorationEnemy(dragon, world, random, 18 + random() * 7, 18);
     }
@@ -7094,10 +7094,10 @@ import {
     for (let side = -1; side <= 1; side += 2) {
       for (let i = 0; i < 4; i += 1) {
         const z = -0.46 + i * 0.25;
-        const leg = makeCylinder(0.032, 0.045, 0.95, 7, materials.spiderCarapace.clone(), side * 0.47, 0.42, z);
+        const leg = makeCylinder(0.032, 0.045, 0.78, 7, materials.spiderCarapace.clone(), side * 0.42, 0.42, z);
         leg.rotation.z = side * (Math.PI / 2.35);
         leg.rotation.x = (i - 1.5) * 0.16;
-        const shin = makeCylinder(0.026, 0.036, 0.74, 7, materials.spiderCarapace.clone(), side * 0.96, 0.24, z + (i - 1.5) * 0.1);
+        const shin = makeCylinder(0.026, 0.036, 0.56, 7, materials.spiderCarapace.clone(), side * 0.78, 0.24, z + (i - 1.5) * 0.1);
         shin.rotation.z = side * (Math.PI / 2.7);
         shin.rotation.x = (i - 1.5) * 0.22;
         legs.push(leg, shin);
@@ -7190,7 +7190,7 @@ import {
   }
 
   function createDragon(x, z, wave) {
-    const scale = modelScale.dragonBase + Math.random() * 0.16 + Math.min(wave * 0.012, 0.14);
+    const scale = modelScale.dragonBase + Math.random() * 0.1 + Math.min(wave * 0.01, 0.08);
     const model = createDragonModel(scale);
     const enemy = {
       ...model,
@@ -7199,12 +7199,12 @@ import {
       velocity: new THREE.Vector3(),
       yaw: 0,
       scale,
-      hoverHeight: 2.9 + Math.random() * 0.42,
+      hoverHeight: 2.68 + Math.random() * 0.36,
       desiredRange: 8.8 + Math.random() * 2.2,
       health: 92 + wave * 14,
       maxHealth: 92 + wave * 14,
       speed: 2.8 + Math.min(wave * 0.035, 0.44),
-      radius: 1.5 * scale,
+      radius: 1.38 * scale,
       cooldown: 1.0 + Math.random() * 1.4,
       state: "chase",
       attackTimer: 0,
@@ -7222,7 +7222,7 @@ import {
   }
 
   function createSpider(x, z, wave) {
-    const scale = modelScale.spiderBase + Math.random() * 0.16;
+    const scale = modelScale.spiderBase + Math.random() * 0.12;
     const model = createSpiderModel(scale);
     const enemy = {
       ...model,
@@ -7234,7 +7234,7 @@ import {
       health: 48 + wave * 7,
       maxHealth: 48 + wave * 7,
       speed: 2.9 + Math.random() * 0.45,
-      radius: 0.72 * scale,
+      radius: 0.82 * scale,
       cooldown: 0.45 + Math.random() * 1.0,
       state: "patrol",
       attackTimer: 0,
