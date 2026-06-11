@@ -1,11 +1,15 @@
 export const knightBashGuardCost = 30;
 export const wizardLightningManaCost = 42;
 export const wizardBurstManaCost = 32;
+export const rangerArrowFocusCost = 14;
+export const rangerPierceFocusCost = 34;
+export const rangerRollFocusCost = 22;
 export const progressStorageKey = "ironholdProgressV2";
 
 export const defaultWeaponByCharacter = {
   knight: "knight_arming_sword",
-  wizard: "wizard_oak_staff"
+  wizard: "wizard_oak_staff",
+  ranger: "ranger_ash_bow"
 };
 
 export const equipmentDefs = {
@@ -47,6 +51,21 @@ export const equipmentDefs = {
     name: "Wayfinder Focus",
     tuning: {
       lightningDamageBonus: 2
+    }
+  },
+  ranger_ash_bow: {
+    character: "ranger",
+    name: "Ash Bow",
+    tuning: {}
+  },
+  ranger_crownring_recurve: {
+    character: "ranger",
+    name: "Crownring Recurve",
+    // Sidegrade vs Ash Bow: harder-hitting, costlier arrows.
+    tuning: {
+      arrowDamageBonus: 5,
+      arrowFocusCost: 18,
+      pierceDamageMin: 44
     }
   },
   wizard_stormcall_rod: {
@@ -94,24 +113,40 @@ export const defaultCombatTuning = {
   remoteLightningRange: 14.5,
   burstManaCost: wizardBurstManaCost,
   burstDamageMin: 24,
-  burstDamageSpread: 6
+  burstDamageSpread: 6,
+  arrowFocusCost: rangerArrowFocusCost,
+  arrowDamageMin: 26,
+  arrowDamageSpread: 6,
+  arrowDamageBonus: 0,
+  arrowSpeed: 26,
+  arrowLife: 1.5,
+  pierceFocusCost: rangerPierceFocusCost,
+  pierceDamageMin: 38,
+  pierceDamageSpread: 8,
+  rollFocusCost: rangerRollFocusCost
 };
 
 export const abilityUnlockLevels = {
   slash: 1,
   lightning: 1,
+  arrow: 1,
   block: 1,
+  roll: 1,
   bash: 3,
   burst: 3,
+  pierce: 3,
   potion: 5
 };
 
 export const abilityDisplayNames = {
   slash: "Sword slash",
   lightning: "Lightning ball",
+  arrow: "Arrow shot",
   block: "Shield block",
+  roll: "Tumble roll",
   bash: "Shield bash",
   burst: "Arcane burst",
+  pierce: "Piercing shot",
   potion: "Potion drop"
 };
 

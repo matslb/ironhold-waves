@@ -157,6 +157,16 @@ canvas {
     linear-gradient(135deg, #7ae8ff 0 48%, #274a78 49% 100%);
 }
 
+#hud.ranger-mode #guardFill {
+  background: linear-gradient(90deg, #3f7a3a, #7fce6a, #d9f7c8);
+}
+
+#hud.ranger-mode .crest {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.7) 0 13%, transparent 14%),
+    linear-gradient(135deg, #7fce6a 0 48%, #2c4a2a 49% 100%);
+}
+
 .rightbox {
   padding: 12px 14px;
   min-width: 230px;
