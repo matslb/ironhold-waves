@@ -349,6 +349,21 @@ Acceptance:
 - Active arena waves do not cause obvious frame drops compared with current exploration combat.
 - Host snapshots stay small enough that two-player sessions remain responsive.
 
+## Exploration Terrain Elevation
+
+Primary owner: World Design Agent
+
+Support: Rendering / Performance Agent, QA / Playtest Agent
+
+Status: First visible elevation slice in progress. Exploration terrain now uses a shared sampler for rolling meadow ground, raised Dragonspine mountain mass, subtle dunes, and lower swamp pockets. Roads, biome patches, common props, NPCs, enemies, potions, horses, and remote player visuals are being grounded against the same terrain height while gameplay collision remains stable and mostly horizontal.
+
+Acceptance:
+- Exploration starts from the menu with no console errors.
+- The starter area, roads, props, NPCs, player, horse, potions, and enemies do not obviously float or sink.
+- Mountain and biome regions read as terrain, not only decorative objects.
+- Multiplayer visuals derive height deterministically from the shared world seed and `x/z` positions.
+- Local desktop traversal remains smooth from the default camera.
+
 ## Verification Plan
 
 - `node --check` on the module script.
