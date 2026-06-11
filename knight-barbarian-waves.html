@@ -459,6 +459,17 @@
       display: none;
     }
 
+    .name-entry {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
     .online-row {
       display: flex;
       align-items: center;
@@ -501,6 +512,7 @@
       align-items: center;
     }
 
+    .name-input,
     .code-input {
       width: 112px;
       height: 44px;
@@ -516,6 +528,13 @@
       outline: none;
     }
 
+    .name-input {
+      width: 168px;
+      font-size: 15px;
+      text-transform: none;
+    }
+
+    .name-input:focus,
     .code-input:focus {
       border-color: rgba(122, 232, 255, 0.58);
     }
@@ -588,6 +607,92 @@
     .touch-pad .down { grid-column: 2; grid-row: 3; }
     .touch-pad .right { grid-column: 3; grid-row: 2; }
     .touch-actions { grid-auto-flow: column; }
+
+    .talk-prompt {
+      position: absolute;
+      left: 50%;
+      bottom: 106px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 900;
+      pointer-events: none;
+    }
+
+    .talk-prompt[hidden] {
+      display: none;
+    }
+
+    .talk-key {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(122, 232, 255, 0.44);
+      border-radius: 8px;
+      background: rgba(6, 10, 12, 0.84);
+      color: #7ae8ff;
+    }
+
+    .quest-dialog {
+      position: absolute;
+      left: 50%;
+      bottom: 26px;
+      transform: translateX(-50%);
+      width: min(460px, calc(100vw - 32px));
+      display: grid;
+      gap: 10px;
+      z-index: 5;
+      pointer-events: auto;
+    }
+
+    .quest-dialog[hidden],
+    .quest-log[hidden] {
+      display: none;
+    }
+
+    .quest-dialog h2 {
+      margin: 0;
+      color: #f7df9a;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .quest-dialog p {
+      margin: 0;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .quest-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: end;
+      flex-wrap: wrap;
+    }
+
+    .quest-log {
+      position: absolute;
+      left: 18px;
+      bottom: 24px;
+      width: min(300px, calc(100vw - 36px));
+      display: grid;
+      gap: 5px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+      pointer-events: none;
+    }
+
+    .quest-log strong {
+      color: #f7df9a;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
 
     @media (max-width: 720px) {
       .topbar {
@@ -663,6 +768,28 @@
 
     <div class="reticle"></div>
 
+    <div class="talk-prompt panel" id="talkPrompt" hidden>
+      <span class="talk-key">E</span>
+      <span>Talk</span>
+      <strong id="talkTarget"></strong>
+    </div>
+
+    <section class="quest-dialog panel" id="questDialog" hidden aria-label="Conversation">
+      <h2 id="questDialogTitle">Villager</h2>
+      <p id="questDialogBody"></p>
+      <p id="questDialogStatus"></p>
+      <div class="quest-actions">
+        <button id="questAcceptButton" class="secondary" type="button">Accept</button>
+        <button id="questClaimButton" type="button">Claim Reward</button>
+        <button id="questCloseButton" class="secondary" type="button">Close</button>
+      </div>
+    </section>
+
+    <section class="quest-log panel" id="questLog" hidden aria-label="Active quests">
+      <strong>Quests</strong>
+      <div id="questLogItems"></div>
+    </section>
+
     <div class="action-dock" aria-hidden="true">
       <div class="action" id="attackIcon">
         <svg viewBox="0 0 32 32"><path d="M22 4l6 6M18 8l6 6M4 28l6-2 15-15-4-4L6 22zM6 22l4 4"/></svg>
@@ -728,6 +855,10 @@
         </button>
       </div>
       <div class="online-panel" id="onlinePanel" hidden>
+        <div class="name-entry">
+          <label for="playerNameInput">Name</label>
+          <input class="name-input" id="playerNameInput" maxlength="14" autocomplete="nickname" aria-label="Player name" placeholder="Player">
+        </div>
         <div class="room-code-card" id="roomCodeCard" hidden>
           <span>Room Code</span>
           <strong id="roomCodeText">----</strong>
@@ -782,10 +913,22 @@
       const onlinePanel = document.getElementById("onlinePanel");
       const hostButton = document.getElementById("hostButton");
       const joinButton = document.getElementById("joinButton");
+      const playerNameInput = document.getElementById("playerNameInput");
       const roomCodeCard = document.getElementById("roomCodeCard");
       const roomCodeText = document.getElementById("roomCodeText");
       const roomCodeInput = document.getElementById("roomCodeInput");
       const onlineStatus = document.getElementById("onlineStatus");
+      const talkPrompt = document.getElementById("talkPrompt");
+      const talkTarget = document.getElementById("talkTarget");
+      const questDialog = document.getElementById("questDialog");
+      const questDialogTitle = document.getElementById("questDialogTitle");
+      const questDialogBody = document.getElementById("questDialogBody");
+      const questDialogStatus = document.getElementById("questDialogStatus");
+      const questAcceptButton = document.getElementById("questAcceptButton");
+      const questClaimButton = document.getElementById("questClaimButton");
+      const questCloseButton = document.getElementById("questCloseButton");
+      const questLog = document.getElementById("questLog");
+      const questLogItems = document.getElementById("questLogItems");
       const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
       const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
@@ -817,7 +960,7 @@
       scene.background = new THREE.Color(0x82bee8);
       scene.fog = new THREE.FogExp2(0x9ac7e8, 0.018);
 
-      const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 220);
+      const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 520);
       camera.position.set(0, 6, 10);
 
       const materials = {
@@ -862,6 +1005,7 @@
         plaster: new THREE.MeshStandardMaterial({ color: 0xd0bc91, roughness: 0.9 }),
         npcCloth: new THREE.MeshStandardMaterial({ color: 0x7d6cb0, roughness: 0.82 }),
         flower: new THREE.MeshBasicMaterial({ color: 0xffe28a }),
+        questGlow: new THREE.MeshBasicMaterial({ color: 0x9fffd1, transparent: true, opacity: 0.86 }),
         cloud: new THREE.MeshBasicMaterial({ color: 0xf7fbff, transparent: true, opacity: 0.94, fog: false }),
         sunDisc: new THREE.MeshBasicMaterial({ color: 0xffdf7f, fog: false }),
         danger: new THREE.MeshBasicMaterial({ color: 0xff542e, transparent: true, opacity: 0.36, depthWrite: false }),
@@ -900,9 +1044,13 @@
         mode: "solo",
         explorationGroup: null,
         npcs: [],
+        questItems: [],
+        quests: [],
+        activeNpc: null,
+        dialogNpc: null,
         exploration: {
           origin: new THREE.Vector3(180, 0, 0),
-          radius: 78,
+          radius: 190,
           seed: "",
           lakes: [],
           villages: [],
@@ -945,6 +1093,7 @@
         yaw: 0,
         health: 100,
         maxHealth: 100,
+        name: "Player",
         guard: 100,
         maxGuard: 100,
         mana: 100,
@@ -964,6 +1113,29 @@
         hurtTimer: 0,
         walkTime: 0
       };
+
+      try {
+        player.name = sanitizePlayerName(localStorage.getItem("ironholdPlayerName") || "");
+      } catch (error) {
+        player.name = "Player";
+      }
+      playerNameInput.value = player.name;
+
+      function sanitizePlayerName(value) {
+        const cleaned = (value || "").replace(/[^a-zA-Z0-9 _-]/g, "").replace(/\s+/g, " ").trim().slice(0, 14);
+        return cleaned || "Player";
+      }
+
+      function syncPlayerName() {
+        player.name = sanitizePlayerName(playerNameInput.value);
+        playerNameInput.value = player.name;
+        try {
+          localStorage.setItem("ironholdPlayerName", player.name);
+        } catch (error) {
+          // Storage can be unavailable in private or embedded browser contexts.
+        }
+        sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+      }
 
       function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
@@ -1082,7 +1254,7 @@
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(10, 10);
+        texture.repeat.set(22, 22);
         return texture;
       }
 
@@ -1102,11 +1274,20 @@
         for (const npc of game.npcs) {
           scene.remove(npc.group);
         }
+        for (const item of game.questItems) {
+          scene.remove(item.group);
+        }
         game.npcs.length = 0;
+        game.questItems.length = 0;
+        game.quests.length = 0;
+        game.activeNpc = null;
+        game.dialogNpc = null;
         game.exploration.lakes.length = 0;
         game.exploration.villages.length = 0;
         game.exploration.discovered = new Set();
         game.exploration.completed = false;
+        closeQuestDialog();
+        updateQuestLog();
       }
 
       function explorationSeed() {
@@ -1210,7 +1391,7 @@
         });
       }
 
-      function createFriendlyNpc(x, z, random, homeRadius = 5.5) {
+      function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null) {
         const group = new THREE.Group();
         group.position.set(x, 0, z);
         const body = makeCylinder(0.22, 0.28, 0.78, 12, materials.npcCloth.clone(), 0, 0.78, 0);
@@ -1220,10 +1401,15 @@
         const rightLeg = makeBox(0.12, 0.42, 0.14, materials.darkLeather, 0.1, 0.22, 0);
         const leftArm = makeBox(0.1, 0.5, 0.1, materials.skin, -0.27, 0.85, 0);
         const rightArm = makeBox(0.1, 0.5, 0.1, materials.skin, 0.27, 0.85, 0);
-        group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm);
+        const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 1.92, 0);
+        questMarker.visible = !!questId;
+        group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
         scene.add(group);
         return {
           group,
+          name,
+          questId,
+          questMarker,
           leftLeg,
           rightLeg,
           leftArm,
@@ -1238,14 +1424,295 @@
         };
       }
 
+      function createQuest(id, title, giver, body, objective, reward, type, target) {
+        return { id, title, giver, body, objective, reward, type, target, progress: 0, state: "available" };
+      }
+
+      function getQuest(id) {
+        return game.quests.find(quest => quest.id === id) || null;
+      }
+
+      function createQuestItem(group, questId, x, z, random) {
+        const itemGroup = new THREE.Group();
+        itemGroup.position.set(x, 0.12, z);
+        const stem = makeCylinder(0.025, 0.035, 0.35, 8, materials.broadleaf, 0, 0.18, 0);
+        const bloom = makeSphere(0.12, materials.questGlow.clone(), 0, 0.42, 0);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.012, 8, 18), materials.questGlow.clone());
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.08;
+        const light = new THREE.PointLight(0x9fffd1, 0.75, 3.6, 1.8);
+        light.position.y = 0.35;
+        itemGroup.add(stem, bloom, ring, light);
+        itemGroup.visible = false;
+        group.add(itemGroup);
+        game.questItems.push({
+          group: itemGroup,
+          bloom,
+          ring,
+          light,
+          questId,
+          collected: false,
+          position: new THREE.Vector3(game.exploration.origin.x + x, 0, game.exploration.origin.z + z),
+          bobSeed: random() * 10
+        });
+      }
+
+      function addHerbQuestItems(group, random) {
+        for (let i = 0; i < 12; i += 1) {
+          const lake = game.exploration.lakes[i % game.exploration.lakes.length];
+          const localLakeX = lake.x - game.exploration.origin.x;
+          const localLakeZ = lake.z - game.exploration.origin.z;
+          const angle = random() * TAU;
+          const radius = 1.25 + random() * 0.55;
+          createQuestItem(
+            group,
+            "herbs",
+            localLakeX + Math.cos(angle) * lake.rx * radius,
+            localLakeZ + Math.sin(angle) * lake.rz * radius,
+            random
+          );
+        }
+      }
+
+      function updateQuestProgress(id, amount) {
+        const quest = getQuest(id);
+        if (!quest || quest.state !== "active") {
+          return;
+        }
+        quest.progress = Math.min(quest.target, quest.progress + amount);
+        if (quest.progress >= quest.target) {
+          quest.state = "ready";
+          showBanner(quest.title + " complete");
+        }
+        updateQuestLog();
+        if (questDialog.hidden === false && game.dialogNpc && game.dialogNpc.questId === id) {
+          refreshQuestDialog();
+        }
+      }
+
+      function questProgressText(quest) {
+        return quest.objective + " " + Math.min(quest.progress, quest.target) + "/" + quest.target;
+      }
+
+      function updateQuestItems(dt) {
+        for (const item of game.questItems) {
+          if (item.collected) {
+            continue;
+          }
+          item.group.position.y = 0.12 + Math.sin(clock.elapsedTime * 2.8 + item.bobSeed) * 0.06;
+          item.bloom.scale.setScalar(0.9 + Math.sin(clock.elapsedTime * 5.5 + item.bobSeed) * 0.14);
+          item.ring.rotation.z += dt * 1.5;
+          item.light.intensity = 0.58 + Math.sin(clock.elapsedTime * 4.2 + item.bobSeed) * 0.18;
+          const quest = getQuest(item.questId);
+          item.group.visible = !!quest && quest.state === "active";
+          if (!item.group.visible) {
+            continue;
+          }
+          if (player.position.distanceTo(item.position) < 1.25) {
+            item.collected = true;
+            scene.remove(item.group);
+            spawnImpact(item.position, 0x9fffd1, 12);
+            updateQuestProgress(item.questId, 1);
+          }
+        }
+      }
+
+      function nearestNpc(maxDistance = 3.4) {
+        let nearest = null;
+        let nearestDistance = maxDistance;
+        for (const npc of game.npcs) {
+          const distance = Math.hypot(player.position.x - npc.group.position.x, player.position.z - npc.group.position.z);
+          if (distance < nearestDistance) {
+            nearest = npc;
+            nearestDistance = distance;
+          }
+        }
+        return nearest;
+      }
+
+      function updateQuestMarkers() {
+        for (const npc of game.npcs) {
+          if (!npc.questMarker || !npc.questId) {
+            continue;
+          }
+          const quest = getQuest(npc.questId);
+          npc.questMarker.visible = !!quest && quest.state !== "done";
+          if (quest) {
+            npc.questMarker.scale.setScalar(quest.state === "ready" ? 1.45 : 1);
+            npc.questMarker.material.color.setHex(quest.state === "ready" ? 0xffd889 : 0x9fffd1);
+          }
+        }
+      }
+
+      function updateTalkPrompt() {
+        if (game.mode !== "exploration" || game.state !== "playing" || !questDialog.hidden) {
+          talkPrompt.hidden = true;
+          game.activeNpc = null;
+          return;
+        }
+        const npc = nearestNpc();
+        game.activeNpc = npc;
+        talkPrompt.hidden = !npc;
+        if (npc) {
+          talkTarget.textContent = npc.name;
+        }
+      }
+
+      function openNpcDialog(npc) {
+        if (!npc) {
+          return;
+        }
+        game.dialogNpc = npc;
+        keys.clear();
+        player.blockHeld = false;
+        if (document.exitPointerLock && document.pointerLockElement === document.body) {
+          document.exitPointerLock();
+        }
+        refreshQuestDialog();
+        questDialog.hidden = false;
+        talkPrompt.hidden = true;
+      }
+
+      function closeQuestDialog() {
+        questDialog.hidden = true;
+        game.dialogNpc = null;
+      }
+
+      function refreshQuestDialog() {
+        const npc = game.dialogNpc;
+        if (!npc) {
+          return;
+        }
+        const quest = npc.questId ? getQuest(npc.questId) : null;
+        questDialogTitle.textContent = npc.name;
+        questAcceptButton.hidden = true;
+        questClaimButton.hidden = true;
+
+        if (!quest) {
+          questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
+          questDialogStatus.textContent = "Nearby villagers can mend small wounds when you stand close.";
+          return;
+        }
+
+        questDialogTitle.textContent = quest.giver + " - " + quest.title;
+        questDialogBody.textContent = quest.body;
+        if (quest.state === "available") {
+          questDialogStatus.textContent = quest.objective + ". Reward: " + quest.reward + ".";
+          questAcceptButton.hidden = false;
+        } else if (quest.state === "active") {
+          questDialogStatus.textContent = questProgressText(quest);
+        } else if (quest.state === "ready") {
+          questDialogStatus.textContent = "Objective complete. Reward: " + quest.reward + ".";
+          questClaimButton.hidden = false;
+        } else {
+          questDialogStatus.textContent = "Reward claimed. The valley already feels a little friendlier.";
+        }
+      }
+
+      function acceptCurrentQuest() {
+        const npc = game.dialogNpc;
+        const quest = npc && npc.questId ? getQuest(npc.questId) : null;
+        if (!quest || quest.state !== "available") {
+          return;
+        }
+        quest.state = "active";
+        showBanner("Quest started");
+        updateQuestLog();
+        updateQuestMarkers();
+        refreshQuestDialog();
+      }
+
+      function claimCurrentQuest() {
+        const npc = game.dialogNpc;
+        const quest = npc && npc.questId ? getQuest(npc.questId) : null;
+        if (!quest || quest.state !== "ready") {
+          return;
+        }
+        grantQuestReward(quest);
+        quest.state = "done";
+        updateQuestLog();
+        updateQuestMarkers();
+        refreshQuestDialog();
+      }
+
+      function grantQuestReward(quest) {
+        if (quest.id === "herbs") {
+          player.maxHealth += 20;
+          player.health = player.maxHealth;
+        } else if (quest.id === "raiders") {
+          player.maxGuard += 15;
+          player.guard = player.maxGuard;
+          player.maxMana += 15;
+          player.mana = player.maxMana;
+        } else if (quest.id === "villages") {
+          player.health = player.maxHealth;
+          player.guard = player.maxGuard;
+          player.mana = player.maxMana;
+          player.potionCooldownMax = Math.max(10, player.potionCooldownMax - 4);
+          game.potions.push(createHealthPotion(player.position.x + 1.8, player.position.z + 1.2, { kind: "full" }));
+          trimPotionDrops();
+        }
+        spawnImpact(player.position, 0xffd889, 24);
+        showBanner("Reward claimed");
+        updateHud();
+      }
+
+      function updateQuestLog() {
+        questLogItems.replaceChildren();
+        const visibleQuests = game.quests.filter(quest => quest.state === "active" || quest.state === "ready");
+        questLog.hidden = game.mode !== "exploration" || visibleQuests.length === 0;
+        for (const quest of visibleQuests) {
+          const row = document.createElement("div");
+          row.textContent = quest.state === "ready"
+            ? quest.title + ": return to " + quest.giver
+            : quest.title + ": " + questProgressText(quest);
+          questLogItems.appendChild(row);
+        }
+      }
+
+      function setupExplorationQuests() {
+        game.quests.push(
+          createQuest(
+            "herbs",
+            "Greenfire Remedies",
+            "Mira",
+            "Greenfire grows beside the cold lakes. Bring enough back and I can brew something stronger than ordinary field medicine.",
+            "Gather greenfire herbs",
+            "+20 max health and a full heal",
+            "collect",
+            6
+          ),
+          createQuest(
+            "raiders",
+            "Quiet the Road",
+            "Torren",
+            "The tracks are full of raiders. Thin them out and the villages can trade again without carrying axes in both hands.",
+            "Defeat roaming raiders",
+            "+15 max guard and +15 max magica",
+            "hunt",
+            8
+          ),
+          createQuest(
+            "villages",
+            "Map the Hearths",
+            "Sella",
+            "There are more settlements beyond the old hills. Find them, mark the routes, and the whole valley gets smaller.",
+            "Discover villages",
+            "A full recovery potion and faster potion cooldown",
+            "discover",
+            3
+          )
+        );
+      }
+
       function addExplorationVillage(group, x, z, random, index) {
-        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: 13.5 };
+        const village = { id: "village-" + index, x: game.exploration.origin.x + x, z: game.exploration.origin.z + z, radius: 15.5 };
         game.exploration.villages.push(village);
-        addExplorationPath(group, 0, 0, x, z, 2.6);
-        for (let i = 0; i < 4; i += 1) {
-          const angle = (i / 4) * TAU + random() * 0.45;
-          const hx = x + Math.cos(angle) * (4.6 + random() * 3.2);
-          const hz = z + Math.sin(angle) * (4.6 + random() * 3.2);
+        addExplorationPath(group, 0, 0, x, z, 2.8);
+        for (let i = 0; i < 5; i += 1) {
+          const angle = (i / 5) * TAU + random() * 0.45;
+          const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
+          const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
           const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i);
           house.rotation.y += angle + Math.PI;
         }
@@ -1254,13 +1721,18 @@
         const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, 0.75, z);
         const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, 0.75, z);
         group.add(well, beam, postA, postB);
+        const names = ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
         for (let i = 0; i < 3; i += 1) {
           const angle = random() * TAU;
+          const questId = index === 0 && i === 0 ? "villages" : null;
+          const name = questId ? "Sella" : names[(index * 3 + i) % names.length];
           game.npcs.push(createFriendlyNpc(
             game.exploration.origin.x + x + Math.cos(angle) * (2.5 + random() * 5),
             game.exploration.origin.z + z + Math.sin(angle) * (2.5 + random() * 5),
             random,
-            8.5
+            8.5,
+            name,
+            questId
           ));
         }
       }
@@ -1311,14 +1783,14 @@
 
         const groundMaterial = materials.meadow.clone();
         groundMaterial.map = createExplorationTexture(seed);
-        const groundGeometry = new THREE.PlaneGeometry(170, 170, 54, 54);
+        const groundGeometry = new THREE.PlaneGeometry(420, 420, 92, 92);
         const pos = groundGeometry.attributes.position;
         for (let i = 0; i < pos.count; i += 1) {
           const x = pos.getX(i);
           const y = pos.getY(i);
           const distance = Math.hypot(x, y);
           const roll = Math.sin(x * 0.13 + hashString(seed) * 0.0001) * 0.08 + Math.cos(y * 0.11) * 0.07;
-          pos.setZ(i, distance > 60 ? roll + (distance - 60) * 0.018 : roll);
+          pos.setZ(i, distance > 145 ? roll + (distance - 145) * 0.014 : roll);
         }
         groundGeometry.computeVertexNormals();
         const ground = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -1326,19 +1798,28 @@
         ground.receiveShadow = true;
         group.add(ground);
 
+        setupExplorationQuests();
         addExplorationHouse(group, 0, 0, 1.05, 0);
         addExplorationPath(group, 0, -2.4, 0, -15, 3.0);
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 2.2, game.exploration.origin.z - 3.4, random, 6));
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.6, game.exploration.origin.z - 3.0, random, 6));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 1.8, game.exploration.origin.z - 1.0, random, 4.5, "Mira", "herbs"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 1.8, game.exploration.origin.z - 1.2, random, 4.5, "Torren", "raiders"));
 
-        addExplorationLake(group, 24 + random() * 5, 31 + random() * 4, 9.5, 6.2, random);
-        addExplorationLake(group, -34 - random() * 5, -24 - random() * 7, 7.4, 5.4, random);
-        addExplorationVillage(group, 48 + random() * 8, -34 - random() * 6, random, 0);
-        addExplorationVillage(group, -52 - random() * 7, 42 + random() * 6, random, 1);
+        addExplorationLake(group, 42 + random() * 8, 58 + random() * 7, 15, 9, random);
+        addExplorationLake(group, -74 - random() * 8, -52 - random() * 7, 12, 8, random);
+        addExplorationLake(group, 112 + random() * 10, -96 - random() * 8, 14, 7.5, random);
+        addExplorationLake(group, -130 - random() * 8, 86 + random() * 9, 13, 8.5, random);
+        addExplorationLake(group, 8 + random() * 10, -142 - random() * 8, 10, 6.8, random);
+        addHerbQuestItems(group, random);
 
-        for (let i = 0; i < 26; i += 1) {
-          const angle = (i / 26) * TAU + (random() - 0.5) * 0.18;
-          const radius = 72 + random() * 11;
+        addExplorationVillage(group, 82 + random() * 12, -62 - random() * 10, random, 0);
+        addExplorationVillage(group, -104 - random() * 12, 82 + random() * 10, random, 1);
+        addExplorationVillage(group, 132 + random() * 12, 82 + random() * 12, random, 2);
+        addExplorationVillage(group, -142 - random() * 10, -104 - random() * 12, random, 3);
+        addExplorationVillage(group, 10 + random() * 12, 150 + random() * 10, random, 4);
+
+        for (let i = 0; i < 54; i += 1) {
+          const angle = (i / 54) * TAU + (random() - 0.5) * 0.16;
+          const radius = 178 + random() * 32;
           const mountain = makeCone(4.2 + random() * 5.6, 7.5 + random() * 10, 7 + Math.floor(random() * 3), materials.darkStone, Math.cos(angle) * radius, 3.8 + random() * 3.6, Math.sin(angle) * radius);
           mountain.rotation.y = random() * TAU;
           mountain.scale.x *= 0.82 + random() * 0.6;
@@ -1348,23 +1829,23 @@
           }
         }
 
-        for (let i = 0; i < 92; i += 1) {
-          const point = randomExplorationPoint(random, 15, 68);
+        for (let i = 0; i < 260; i += 1) {
+          const point = randomExplorationPoint(random, 16, 174);
           addExplorationTree(group, point.x, point.z, random);
         }
-        for (let i = 0; i < 56; i += 1) {
-          const point = randomExplorationPoint(random, 12, 72);
+        for (let i = 0; i < 160; i += 1) {
+          const point = randomExplorationPoint(random, 13, 178);
           addExplorationRock(group, point.x, point.z, random, random() > 0.82);
         }
-        for (let i = 0; i < 34; i += 1) {
-          const point = randomExplorationPoint(random, 8, 58);
+        for (let i = 0; i < 120; i += 1) {
+          const point = randomExplorationPoint(random, 9, 165);
           const flower = makeSphere(0.08 + random() * 0.04, materials.flower.clone(), point.x, 0.16, point.z);
           group.add(flower);
         }
 
-        const mobCount = 15;
+        const mobCount = 42;
         for (let i = 0; i < mobCount; i += 1) {
-          const point = randomExplorationPoint(random, 24, 69);
+          const point = randomExplorationPoint(random, 35, 176);
           const world = explorationToWorld(point.x, point.z);
           const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
           mob.exploration = true;
@@ -1377,6 +1858,8 @@
           mob.maxHealth = mob.health;
           game.enemies.push(mob);
         }
+        updateQuestMarkers();
+        updateQuestLog();
       }
 
       function setupLighting() {
@@ -1388,11 +1871,11 @@
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.camera.near = 1;
-        sun.shadow.camera.far = 340;
-        sun.shadow.camera.left = -150;
-        sun.shadow.camera.right = 260;
-        sun.shadow.camera.top = 150;
-        sun.shadow.camera.bottom = -150;
+        sun.shadow.camera.far = 620;
+        sun.shadow.camera.left = -320;
+        sun.shadow.camera.right = 520;
+        sun.shadow.camera.top = 320;
+        sun.shadow.camera.bottom = -320;
         sun.shadow.bias = -0.00025;
         scene.add(sun);
 
@@ -2137,6 +2620,7 @@
           id: online.localId,
           mode: game.mode,
           character: player.character,
+          name: player.name,
           health: player.health,
           maxHealth: player.maxHealth,
           x: player.position.x,
@@ -2233,9 +2717,60 @@
           shield.rotation.x = Math.PI / 2;
           group.add(helm, sword, shield);
         }
-        group.add(marker, body, head, leftLeg, rightLeg, leftArm, rightArm);
+        const nameTag = createNameTag("", allyMode ? 0x7ae8ff : 0xffd889);
+        nameTag.sprite.position.set(0, 2.42, 0);
+        group.add(marker, body, head, leftLeg, rightLeg, leftArm, rightArm, nameTag.sprite);
         scene.add(group);
-        return { group, marker, leftLeg, rightLeg, targetPosition: new THREE.Vector3(), lastPosition: new THREE.Vector3(), health: 100, maxHealth: 100, walkTime: 0 };
+        return { group, marker, nameTag, leftLeg, rightLeg, targetPosition: new THREE.Vector3(), lastPosition: new THREE.Vector3(), health: 100, maxHealth: 100, walkTime: 0 };
+      }
+
+      function createNameTag(text, color) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 64;
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+        sprite.scale.set(2.8, 0.7, 1);
+        const tag = { canvas, texture, sprite, text: "", color };
+        updateNameTag(tag, text);
+        return tag;
+      }
+
+      function updateNameTag(tag, text) {
+        const label = sanitizePlayerName(text);
+        if (tag.text === label) {
+          return;
+        }
+        tag.text = label;
+        const ctx = tag.canvas.getContext("2d");
+        ctx.clearRect(0, 0, tag.canvas.width, tag.canvas.height);
+        ctx.fillStyle = "rgba(5, 9, 11, 0.68)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+        ctx.lineWidth = 3;
+        roundRect(ctx, 14, 10, 228, 42, 12);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#" + tag.color.toString(16).padStart(6, "0");
+        ctx.font = "900 23px system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, 128, 32, 206);
+        tag.texture.needsUpdate = true;
+      }
+
+      function roundRect(ctx, x, y, width, height, radius) {
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
       }
 
       function upsertRemotePlayer(state) {
@@ -2247,6 +2782,9 @@
           remote.targetPosition.copy(remote.group.position);
         }
         remote.character = state.character || remote.character || "knight";
+        if (remote.nameTag) {
+          updateNameTag(remote.nameTag, state.name || "Player");
+        }
         remote.health = state.health ?? remote.health;
         remote.maxHealth = state.maxHealth ?? remote.maxHealth;
         remote.targetPosition.set(state.x || 0, 0, state.z || 0);
@@ -2709,10 +3247,12 @@
         game.cameraYaw = 0;
         game.startedOnce = true;
         if (game.mode === "exploration") {
+          scene.fog.density = 0.0065;
           setupExplorationWorld();
           player.position.copy(game.exploration.spawn);
           game.cameraYaw = Math.PI;
         } else {
+          scene.fog.density = 0.018;
           clearExplorationWorld();
           player.position.set(0, 0, 0);
         }
@@ -2825,7 +3365,7 @@
       }
 
       function dropWizardHealthPotion() {
-        if (game.state !== "playing" || player.character !== "wizard" || player.potionCooldown > 0) {
+        if (game.state !== "playing" || !questDialog.hidden || player.character !== "wizard" || player.potionCooldown > 0) {
           return false;
         }
         const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
@@ -3072,7 +3612,7 @@
       }
 
       function startAttack() {
-        if (game.state !== "playing" || player.attacking || player.attackCooldown > 0 || player.blocking) {
+        if (game.state !== "playing" || !questDialog.hidden || player.attacking || player.attackCooldown > 0 || player.blocking) {
           return;
         }
         if (player.character === "wizard") {
@@ -3096,6 +3636,9 @@
       }
 
       function startSecondaryAbility() {
+        if (!questDialog.hidden) {
+          return;
+        }
         if (player.character === "knight") {
           player.blockHeld = true;
           return;
@@ -3315,6 +3858,9 @@
           }
           scene.remove(enemy.group);
           game.kills += 1;
+          if (game.mode === "exploration" && enemy.exploration) {
+            updateQuestProgress("raiders", 1);
+          }
         }
       }
 
@@ -3382,6 +3928,7 @@
             game.exploration.discovered.add(village.id);
             spawnImpact(new THREE.Vector3(village.x, 0, village.z), 0xffd889, 24);
             showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
+            updateQuestProgress("villages", 1);
           }
         }
 
@@ -3936,6 +4483,10 @@
           updatePlayerProjectiles(dt);
           updateFireballs(dt);
           updatePotions(dt);
+          if (game.mode === "exploration") {
+            updateQuestItems(dt);
+            updateTalkPrompt();
+          }
           updateParticles(dt);
           updateOnline(dt);
           updateCamera(dt);
@@ -3947,6 +4498,7 @@
             }
           }
         } else {
+          talkPrompt.hidden = true;
           updateParticles(dt);
           updateCamera(dt);
         }
@@ -3955,6 +4507,7 @@
       }
 
       function beginPlay() {
+        syncPlayerName();
         requestGamePointerLock();
         resetGame();
       }
@@ -3976,6 +4529,22 @@
       function setupInput() {
         window.addEventListener("keydown", event => {
           if (event.repeat && event.code !== "Space") return;
+          if (event.code === "Escape" && !questDialog.hidden) {
+            event.preventDefault();
+            closeQuestDialog();
+            return;
+          }
+          if (event.code === "KeyE" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
+            const npc = nearestNpc();
+            if (npc) {
+              event.preventDefault();
+              openNpcDialog(npc);
+              return;
+            }
+          }
+          if (!questDialog.hidden) {
+            return;
+          }
           keys.add(event.code);
           if (event.code === "Space" || event.code === "KeyJ") {
             event.preventDefault();
@@ -3999,7 +4568,7 @@
         });
 
         window.addEventListener("mousedown", event => {
-          if (game.state !== "playing") return;
+          if (game.state !== "playing" || !questDialog.hidden) return;
           if (event.button === 0) {
             startAttack();
           }
@@ -4088,6 +4657,17 @@
         joinButton.addEventListener("click", () => {
           joinOnlineGame().catch(error => updateOnlineStatus(error.message || "Join failed"));
         });
+
+        playerNameInput.addEventListener("input", () => {
+          playerNameInput.value = playerNameInput.value.replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 14);
+          player.name = sanitizePlayerName(playerNameInput.value);
+        });
+
+        playerNameInput.addEventListener("change", syncPlayerName);
+        playerNameInput.addEventListener("blur", syncPlayerName);
+        questAcceptButton.addEventListener("click", acceptCurrentQuest);
+        questClaimButton.addEventListener("click", claimCurrentQuest);
+        questCloseButton.addEventListener("click", closeQuestDialog);
 
         roomCodeInput.addEventListener("input", () => {
           roomCodeInput.value = normalizeRoomCode(roomCodeInput.value);
