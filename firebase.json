@@ -8,6 +8,8 @@
       ".firebase/**",
       ".git/**",
       ".gitignore",
+      "_config.yml",
+      "docs/**",
       "node_modules/**",
       "package.json",
       "package-lock.json"

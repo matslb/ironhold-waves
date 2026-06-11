@@ -1,0 +1,6 @@
+exclude:
+  - docs
+  - firebase.json
+  - package.json
+  - package-lock.json
+  - node_modules
