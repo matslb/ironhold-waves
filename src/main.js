@@ -113,6 +113,160 @@ import {
   renderer.toneMappingExposure = 1.05;
   root.appendChild(renderer.domElement);
 
+  const audio = {
+    context: null,
+    master: null,
+    noise: null,
+    muted: localStorage.getItem("ironhold-audio-muted") === "true",
+    lastPlayed: new Map()
+  };
+
+  function ensureAudio() {
+    if (audio.muted) {
+      return null;
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      return null;
+    }
+    if (!audio.context) {
+      audio.context = new AudioContextClass();
+      audio.master = audio.context.createGain();
+      audio.master.gain.value = 0.18;
+      audio.master.connect(audio.context.destination);
+    }
+    if (audio.context.state === "suspended") {
+      audio.context.resume().catch(() => {});
+    }
+    return audio.context;
+  }
+
+  function unlockAudio() {
+    ensureAudio();
+  }
+
+  function setAudioMuted(muted) {
+    audio.muted = muted;
+    localStorage.setItem("ironhold-audio-muted", muted ? "true" : "false");
+    if (audio.master) {
+      audio.master.gain.setTargetAtTime(muted ? 0 : 0.18, audio.context.currentTime, 0.02);
+    }
+    showBanner(muted ? "Sound muted" : "Sound on", 1.5);
+  }
+
+  function soundRecentlyPlayed(name, interval = 0.04) {
+    const ctx = ensureAudio();
+    if (!ctx) {
+      return true;
+    }
+    const last = audio.lastPlayed.get(name) || -Infinity;
+    if (ctx.currentTime - last < interval) {
+      return true;
+    }
+    audio.lastPlayed.set(name, ctx.currentTime);
+    return false;
+  }
+
+  function playTone(frequency, duration, options = {}) {
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master) {
+      return;
+    }
+    const start = ctx.currentTime + (options.delay || 0);
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = options.type || "sine";
+    oscillator.frequency.setValueAtTime(Math.max(1, frequency), start);
+    if (options.endFrequency) {
+      oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, options.endFrequency), start + duration);
+    }
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, options.gain || 0.07), start + (options.attack || 0.012));
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain);
+    gain.connect(audio.master);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.03);
+  }
+
+  function noiseBuffer(ctx) {
+    if (audio.noise) {
+      return audio.noise;
+    }
+    const length = Math.floor(ctx.sampleRate * 0.36);
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < length; i += 1) {
+      channel[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    }
+    audio.noise = buffer;
+    return buffer;
+  }
+
+  function playNoise(duration, options = {}) {
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master) {
+      return;
+    }
+    const start = ctx.currentTime + (options.delay || 0);
+    const source = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    source.buffer = noiseBuffer(ctx);
+    filter.type = options.filterType || "bandpass";
+    filter.frequency.setValueAtTime(options.frequency || 900, start);
+    filter.Q.value = options.q || 1.2;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, options.gain || 0.05), start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(audio.master);
+    source.start(start);
+    source.stop(start + duration + 0.03);
+  }
+
+  function playSfx(name, intensity = 1) {
+    const amount = clamp(intensity, 0.35, 1.8);
+    if (soundRecentlyPlayed(name, name === "enemyHit" ? 0.055 : name === "hit" ? 0.08 : 0.035)) {
+      return;
+    }
+    if (name === "slash") {
+      playNoise(0.14, { frequency: 1450, gain: 0.035 * amount, q: 0.7 });
+      playTone(220, 0.08, { type: "triangle", endFrequency: 95, gain: 0.035 * amount, delay: 0.035 });
+    } else if (name === "lightning") {
+      playTone(760, 0.16, { type: "sawtooth", endFrequency: 1260, gain: 0.045 * amount });
+      playTone(1880, 0.08, { type: "square", endFrequency: 520, gain: 0.02 * amount, delay: 0.035 });
+    } else if (name === "burst") {
+      playTone(170, 0.22, { type: "sine", endFrequency: 92, gain: 0.07 * amount });
+      playNoise(0.18, { frequency: 620, gain: 0.035 * amount, q: 0.9 });
+    } else if (name === "bash") {
+      playNoise(0.13, { filterType: "lowpass", frequency: 520, gain: 0.07 * amount });
+      playTone(94, 0.13, { type: "triangle", endFrequency: 58, gain: 0.065 * amount });
+    } else if (name === "enemyHit") {
+      playNoise(0.1, { frequency: 850, gain: 0.04 * amount });
+      playTone(180, 0.08, { type: "triangle", endFrequency: 118, gain: 0.035 * amount });
+    } else if (name === "hit") {
+      playNoise(0.12, { frequency: 650, gain: 0.052 * amount });
+      playTone(122, 0.13, { type: "sawtooth", endFrequency: 72, gain: 0.035 * amount });
+    } else if (name === "block") {
+      playTone(520, 0.12, { type: "square", endFrequency: 330, gain: 0.045 * amount });
+      playTone(910, 0.09, { type: "triangle", endFrequency: 420, gain: 0.025 * amount, delay: 0.02 });
+    } else if (name === "potion") {
+      playTone(420, 0.1, { type: "sine", endFrequency: 640, gain: 0.04 * amount });
+      playTone(700, 0.14, { type: "sine", endFrequency: 980, gain: 0.035 * amount, delay: 0.07 });
+    } else if (name === "quest") {
+      playTone(520, 0.1, { type: "triangle", gain: 0.04 * amount });
+      playTone(780, 0.12, { type: "triangle", gain: 0.035 * amount, delay: 0.08 });
+    } else if (name === "level") {
+      playTone(392, 0.12, { type: "triangle", gain: 0.045 * amount });
+      playTone(523, 0.14, { type: "triangle", gain: 0.04 * amount, delay: 0.1 });
+      playTone(784, 0.2, { type: "triangle", gain: 0.04 * amount, delay: 0.22 });
+    } else if (name === "ui") {
+      playTone(360, 0.055, { type: "triangle", endFrequency: 460, gain: 0.025 * amount });
+    }
+  }
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x82bee8);
   scene.fog = new THREE.FogExp2(0x9ac7e8, 0.018);
@@ -1498,6 +1652,7 @@ import {
       applyProgressionStats(true);
       showBanner("Level " + afterLevel + " reached - " + levelRewardText(afterLevel), 3);
       spawnImpact(player.position, 0x7ae8ff, 24);
+      playSfx("level", 1.2);
     }
     saveProgress();
     updateHud();
@@ -3085,6 +3240,7 @@ import {
     if (quest.progress >= quest.target) {
       quest.state = "ready";
       showBanner(quest.title + " complete");
+      playSfx("quest", 1);
     }
     saveProgress();
     updateQuestLog();
@@ -3185,6 +3341,7 @@ import {
         item.visibleActive = false;
         item.group.visible = false;
         spawnImpact(item.position, item.color || 0x9fffd1, 12);
+        playSfx("quest", 0.7);
         awardExplorationXp(5);
         updateQuestProgress(item.questId, 1);
       }
@@ -3266,6 +3423,7 @@ import {
     game.dialogNpc = npc;
     keys.clear();
     player.blockHeld = false;
+    playSfx("ui", 0.7);
     refreshQuestDialog();
     questDialog.hidden = false;
     actionDock.hidden = true;
@@ -3428,6 +3586,7 @@ import {
     quest.state = "active";
     reconcileQuestProgress(quest, { silent: true });
     showBanner(quest.state === "ready" ? quest.title + " complete" : "Quest started");
+    playSfx(quest.state === "ready" ? "quest" : "ui", 0.9);
     saveProgress();
     updateQuestLog();
     updateQuestMarkers();
@@ -3505,6 +3664,7 @@ import {
     awardExplorationXp(quest.rewardXp);
     spawnImpact(player.position, 0xffd889, 24);
     showBanner(unlocks.length ? "Unlocked " + unlocks.join(" and ") : "Reward claimed");
+    playSfx("quest", 1.15);
     updateHud();
   }
 
@@ -6182,6 +6342,7 @@ import {
       activityId: inArena ? game.exploration.arenaActivity.activityId : ""
     }));
     trimPotionDrops();
+    playSfx("potion", 0.85);
     broadcastOnlineEffect({ type: "impact", ownerId: message.id, x, y: 0, z, color: 0x7ae8ff, count: 12 });
     sendWorldSnapshot(true);
   }
@@ -7602,6 +7763,7 @@ import {
       activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
     }));
     trimPotionDrops();
+    playSfx("potion", 1);
   }
 
   function dropDragonHealthPotion(enemy) {
@@ -7619,6 +7781,7 @@ import {
       activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
     }));
     trimPotionDrops();
+    playSfx("potion", 0.8);
   }
 
   function dropWizardHealthPotion() {
@@ -7650,6 +7813,7 @@ import {
       player.potionCooldown = player.potionCooldownMax;
       spawnImpact(dropPosition, 0x7ae8ff, 12);
       showBanner("Potion dropped");
+      playSfx("potion", 0.85);
       return true;
     }
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
@@ -7663,6 +7827,7 @@ import {
     spawnImpact(dropPosition, 0x7ae8ff, 12);
     broadcastOnlineEffect({ type: "impact", x: dropPosition.x, y: 0, z: dropPosition.z, color: 0x7ae8ff, count: 12 });
     showBanner("Potion dropped");
+    playSfx("potion", 0.85);
     return true;
   }
 
@@ -8002,10 +8167,12 @@ import {
       player.attackKind = "lightning";
       player.attackDuration = 0.46;
       player.attackCooldown = 0.52;
+      playSfx("lightning", 0.95);
     } else {
       player.attackKind = "slash";
       player.attackDuration = 0.42;
       player.attackCooldown = 0.54;
+      playSfx("slash", 0.9);
     }
     player.attacking = true;
     player.attackTimer = 0;
@@ -8041,6 +8208,7 @@ import {
     player.attackHitDone = false;
     player.attackCooldown = Math.max(player.attackCooldown, 0.25);
     player.secondaryCooldown = 1.15;
+    playSfx("burst", 1.05);
     sendOnlineAction("burst");
   }
 
@@ -8066,6 +8234,7 @@ import {
     player.attackDuration = 0.5;
     player.attackCooldown = 0.72;
     player.attackHitDone = false;
+    playSfx("bash", 1.05);
     sendOnlineAction("bash");
     return true;
   }
@@ -8326,6 +8495,7 @@ import {
     const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.position;
     const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : 0xffd19b;
     spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
+    playSfx("enemyHit", enemy.type === "dragon" ? 1.2 : 0.9);
     broadcastOnlineEffect({
       type: "impact",
       x: impactPosition.x,
@@ -9065,8 +9235,10 @@ import {
       player.guard = Math.max(0, player.guard - guardDamage);
       finalDamage = Math.ceil(damage * (player.guard <= 0 ? 0.55 : 0.18));
       spawnImpact(player.position, 0x99ddff, 8);
+      playSfx("block", 1);
     } else {
       spawnImpact(player.position, 0xff6350, 12);
+      playSfx("hit", 1);
     }
 
     player.health = Math.max(0, player.health - finalDamage);
@@ -9190,6 +9362,7 @@ import {
         player.health = potion.fullHeal ? player.maxHealth : Math.min(player.maxHealth, player.health + potion.healAmount);
         const healed = Math.ceil(player.health - beforeHeal);
         spawnImpact(player.position, 0xff7f96, 18);
+        playSfx("potion", potion.fullHeal ? 1.25 : 0.95);
         broadcastOnlineEffect({ type: "impact", x: player.position.x, y: 0, z: player.position.z, color: 0xff7f96, count: 18 });
         showBanner(potion.fullHeal ? "Fully recovered" : "Recovered +" + healed);
         scene.remove(potion.group);
@@ -9371,6 +9544,8 @@ import {
   }
 
   function setupInput() {
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
     window.addEventListener("keydown", event => {
       if (event.repeat && event.code !== "Space" && questDialog.hidden) return;
       if (!questDialog.hidden) {
@@ -9387,6 +9562,11 @@ import {
         return;
       }
       if (game.state !== "playing") {
+        return;
+      }
+      if (event.code === "KeyV") {
+        event.preventDefault();
+        setAudioMuted(!audio.muted);
         return;
       }
       if (event.code === "KeyY" && localPlayerInArenaActivity()) {
