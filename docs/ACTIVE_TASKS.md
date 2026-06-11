@@ -293,6 +293,8 @@ Performance does not need to become a separate decision-making agent yet, but it
 
 Specialist owner: Rendering / Performance Agent
 
+Status: First structural pass shipped. Exploration colliders now register into a spatial grid so player, horse, and procedural placement checks query nearby obstacles instead of scanning every tree, rock, structure, and decor item.
+
 Feature owner duties:
 - Call out expected performance impact before implementation.
 - Prefer pooled/reused objects for projectiles, particles, potions, markers, and short-lived effects.
