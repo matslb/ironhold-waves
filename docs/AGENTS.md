@@ -145,10 +145,11 @@ Definition of done:
 
 ### Rendering / Performance Agent
 
-Owns visual polish, Three.js performance, object pooling, draw calls, shadows, particle budgets, and visual bug fixes.
+Owns visual polish, textures/materials, Three.js performance, object pooling, draw calls, shadows, particle budgets, and visual bug fixes.
 
 Responsibilities:
 - Preserve fidelity while improving frame rate.
+- Apply `docs/ASSET_POLICY.md` when adding generated or external textures.
 - Profile exploration traversal, villages, waves, particles, shadows, and online sessions.
 - Review performance risk for any feature that adds repeated world objects, enemies, particles, lights, audio instances, network traffic, or per-frame logic.
 - Maintain practical budgets for draw calls, shadow casters, active enemies, projectiles, particles, foliage, lights, audio voices, and world snapshot size.

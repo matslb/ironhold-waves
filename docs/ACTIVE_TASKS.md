@@ -169,6 +169,31 @@ Acceptance:
 - Spiders remain giant/man-sized, not tiny pests.
 - Collision still feels fair around trees, rocks, houses, and city structures.
 
+## Phase 5B: Texture And Material Pass
+
+Primary owner: Rendering / Performance Agent
+
+Support: World & Content Agent, Sound Design / Audio Agent, QA / Playtest Agent
+
+Policy:
+- Follow `docs/ASSET_POLICY.md`.
+- Prefer procedural or generated stylized textures first.
+- Use external free textures only when the license is clear and the visual gain is worth the asset cost.
+- CC0 sources are preferred. Mixed-license libraries require per-asset checks.
+
+Tasks:
+- Add a focused Crownford material pass after scale/proportion cleanup.
+- Prioritize stone, roof tile, timber, banners, roads, arena sand, church/castle accents, and shield/cape detail.
+- Add character/enemy texture details only where they improve recognition from the default third-person camera.
+- Track any committed external asset source, license, and attribution requirement.
+- Keep texture sizes small and reuse atlases/materials where practical.
+
+Acceptance:
+- Textures improve readability without pushing the game toward photorealism.
+- Firebase load remains quick.
+- Crownford and arena waves remain smooth.
+- Every external asset has documented licensing.
+
 ## Phase 6: UI, Audio, And QA Polish
 
 Primary owner: UI / UX Agent
@@ -208,6 +233,7 @@ Feature owner duties:
 - Prefer pooled/reused objects for projectiles, particles, potions, markers, and short-lived effects.
 - Avoid adding per-frame scans over large arrays unless the list is bounded or spatially filtered.
 - Keep lights, shadow casters, particles, and animated props intentional in Crownford and the Crownring.
+- Keep texture count, resolution, and material variety intentional.
 - Keep multiplayer snapshots compact when adding arena activity state.
 - Preserve low-poly procedural style before adding geometry detail.
 

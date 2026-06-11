@@ -72,6 +72,14 @@ Priority POIs:
 - Cave or dungeon micro-zone with wave-style room locks.
 - Mount corral and mounted traversal challenge.
 
+### Texture And Asset Pipeline
+
+- Use `docs/ASSET_POLICY.md` for generated and external assets.
+- Prefer procedural/generated stylized textures before external downloads.
+- Use CC0-first external sources only when they clearly improve the game.
+- Start with Crownford materials, arena sand, banners, stone, timber, roofs, shields, capes, dragon scales, and spider markings.
+- Keep textures lightweight enough for Firebase-hosted browser play.
+
 ### Systems Refactor
 
 - Define a single combat event pipeline:
@@ -176,6 +184,7 @@ Phase 3, Bounded Generated Dialogue:
 - Check each biome at common desktop sizes: 1366x768, 1440x900, 1920x1080, ultrawide.
 - Confirm roofs, horns, collision, terrain blending, water, fog, and shadows.
 - Confirm NPC, player, house, dragon, spider, and barbarian proportions follow the scale targets in `docs/ACTIVE_TASKS.md`.
+- Confirm generated or external textures follow `docs/ASSET_POLICY.md`.
 - Screenshot pass for villages, POIs, arena, mount state, and quest panel.
 
 ### Performance Gate
