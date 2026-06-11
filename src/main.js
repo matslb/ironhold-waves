@@ -1053,6 +1053,24 @@ import {
     return validEquipmentForCharacter(key, weapon) ? weapon : defaultWeaponByCharacter[key];
   }
 
+  function cycleEquippedWeapon() {
+    const key = player.character === "wizard" ? "wizard" : "knight";
+    const progress = getCharacterProgress(key);
+    const unlocked = (progress.unlockedEquipment || []).filter(id => validEquipmentForCharacter(key, id));
+    if (unlocked.length < 2) {
+      showBanner("No other kit unlocked yet", 1.8);
+      return false;
+    }
+    const index = unlocked.indexOf(equippedWeapon(key));
+    progress.equipment.weapon = unlocked[(index + 1) % unlocked.length];
+    playSfx("ui", 1);
+    showBanner("Kit: " + equipmentDefs[progress.equipment.weapon].name + " - G to swap", 2.2);
+    saveProgress();
+    sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+    updateHud();
+    return true;
+  }
+
   function hasPerk(id, character = player.character) {
     return (getCharacterProgress(character).perks || []).includes(id);
   }
@@ -1145,6 +1163,16 @@ import {
       for (const message of [
         grantPerkToCharacter("knight", "crownford_drill"),
         grantPerkToCharacter("wizard", "crownford_drill")
+      ]) {
+        if (message) {
+          unlocked.push(message);
+        }
+      }
+    } else if (questId === "crownringTrial") {
+      // Sidegrade kits: unlock without auto-equip so switching stays a choice.
+      for (const message of [
+        grantEquipmentToCharacter("knight", "knight_crownring_maul", false),
+        grantEquipmentToCharacter("wizard", "wizard_stormcall_rod", false)
       ]) {
         if (message) {
           unlocked.push(message);
@@ -10530,6 +10558,11 @@ import {
       if (event.code === "KeyY" && localPlayerInArenaActivity()) {
         event.preventDefault();
         endCrownringArenaActivity("yield");
+        return;
+      }
+      if (event.code === "KeyG" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
+        event.preventDefault();
+        cycleEquippedWeapon();
         return;
       }
       if (event.code === "KeyR" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
