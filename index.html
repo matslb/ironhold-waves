@@ -46,12 +46,15 @@
         <section class="quest-log" id="questLog" hidden aria-label="Active quests">
           <strong>Quests</strong>
           <div id="questLogItems"></div>
-          <canvas class="quest-map" id="questMap" width="176" height="176" hidden aria-label="Quest area map"></canvas>
         </section>
       </section>
     </div>
 
     <div class="reticle"></div>
+
+    <div class="minimap-panel" id="minimapPanel" hidden aria-label="World map">
+      <canvas class="minimap-canvas" id="questMap" width="352" height="352" aria-label="World minimap with compass"></canvas>
+    </div>
 
     <div class="talk-prompt panel" id="talkPrompt" hidden>
       <span class="talk-key" id="talkKey">E</span>

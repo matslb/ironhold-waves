@@ -87,6 +87,18 @@ Scope:
 - Add explicit master/SFX/ambience volume controls before adding many new loops.
 - Add one lightweight settlement ambience and one wilderness ambience prototype with hard limits on concurrent voices.
 
+Done evidence:
+- Audio now routes through master, SFX, ambience, and music buses.
+- Procedural ambience uses persistent bounded layers for meadow/wind/desert/swamp/water/settlement/arena beds.
+- Procedural music, player/remote footsteps, horse hooves, enemy movement, enemy attack tells, fireballs, and remote potion/impact cues are in `src/main.js`.
+- User feedback pass: ambience/noise beds were too loud, so ambience bus and all ambience layer targets were pulled down substantially. Walking and hit effects are in a good range; keep them stable unless playtesting says otherwise.
+- Music direction updated toward medieval/modal travel music: D/A drones with short plucked Dorian-style phrases instead of long synth swells.
+- Second ambience feedback pass: continuous ambience was still too loud and engine-like. Ambience bus is now very low, continuous beds are longer high/band-passed wind textures, and birds are sparse tonal one-shots in exploration instead of another constant noise layer.
+
+Remaining work:
+- Add visible master/SFX/ambience/music controls.
+- Playtest and tune mix levels against real combat encounters.
+
 Acceptance:
 - Mute and volume changes work before and during gameplay.
 - Combat-critical SFX remain audible over ambience.
@@ -189,6 +201,39 @@ Acceptance:
 - The overlay can be enabled without changing gameplay.
 - It helps compare Crownford traversal, mounted exploration, and active Crownring waves.
 - It does not create meaningful overhead when hidden.
+
+### T-009: AI-Assisted NPC Communication (Phase 1 Canon + Phase 2/3 Scaffolding)
+
+Primary owner: Creative / Narrative Agent (Claude session)
+
+Reviewer: Game Director / Integrator
+
+Status: `[~] Active`
+
+Done evidence:
+- `src/content/dialogue.js` ships Phase 1 scripted canon: NPC voice sheets for all 14 named NPCs, a machine-readable lore bible with factions, authored dialogue packs (available/active/ready/done + status lines + `conversationTags`) for the nine quests that lacked dialogue states (`herbs`, `raiders`, `spiders`, `dragons`, `wisps`, `bogRelics`, `horse`, `cityWrits`, `citySanctuary`), tagged ambient barks per biome/mood/availability, and deterministic fallback lines for every quest state.
+- Phase 2/3 scaffolding: `buildLorePacket()` (bounded packets, secrets excluded), `validateAssistedLine()` (canon/mechanics/meta guardrails with deterministic fallback), and a bounded `logAssistedConversation()` review log. No live generation is wired in.
+- `docs/LORE_BIBLE.md` documents canon, voice sheets, tagging scheme, hard content rules, and the Phase 2 review workflow / Phase 3 preconditions.
+- Verified with `node --check` plus a module smoke test covering pack completeness, merge precedence, deterministic bark selection, packet secrecy, validation failures, and log bounds.
+- Existing authored dialogue in `src/main.js` (`villages`, Roadwarden Tack, `crownringTrial`) is untouched and always wins over pack lines via `mergeQuestDialogueOptions()`.
+
+Integration status: the three `src/main.js` hooks landed once the arena netcode (50e3361) and weapon kit (ac0a627) slices were committed and the file was free:
+1. `import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js";` added to the imports.
+2. `createQuest()` now calls `options = mergeQuestDialogueOptions(id, options);` first, so the nine quests pick up their authored dialogue states and tags. Call-site authored dialogue always wins.
+3. `refreshQuestDialog()` now uses `ambientLineFor({ npcName: npc.name, biome: npc.biome })` for quest-less NPCs. The previous per-biome lines are preserved verbatim in the bark pool, and selection is deterministic per NPC.
+
+Remaining work:
+- Quest-state-aware barks (`when: "questActive"`) are authored but not yet driven by live quest state in `refreshQuestDialog()`.
+- Phase 2 assisted authoring has not produced its first reviewed batch yet; the workflow is documented in `docs/LORE_BIBLE.md`.
+- Phase 3 bounded generation stays disabled until the Game Director signs off the preconditions in `docs/LORE_BIBLE.md`.
+
+COORDINATION NOTE for Codex and Cursor: `src/content/dialogue.js` and `docs/LORE_BIBLE.md` are owned by the Creative / Narrative (Claude) session — please keep them out of your write scopes and route canon/dialogue changes through that ownership. The `src/main.js` hooks in this slice touch only the `createQuest` options line, one import line, and the quest-less NPC branch of `refreshQuestDialog`; they do not overlap with the netcode or weapon-kit changes. Nothing in this slice touches `src/content/rpg.js` or networking.
+
+Acceptance:
+- Every quest has authored lines for available, active, ready, and done flows with deterministic fallbacks, plus prerequisite-unavailable handling.
+- Dialogue is tagged by NPC, biome, quest state, faction, mood, and availability.
+- Future assisted/generated dialogue can only consume lore packets, must pass validation, falls back deterministically, and is logged for review.
+- No AI generation runs in the shipped game until Phase 3 preconditions in `docs/LORE_BIBLE.md` are signed off.
 
 ## Phase 1: Remove Arena As A Top-Level Mode
 
@@ -501,6 +546,33 @@ Acceptance:
 - Crownford and arena waves remain smooth.
 - Every external asset has documented licensing.
 
+## New Class: Ranger
+
+Primary owner: Gameplay Systems Agent (Cursor agent)
+
+Support: RPG Mechanics / Economy Agent, Rendering / Performance Agent, Multiplayer / Netcode Agent
+
+Status: `[~] Active`
+
+Class identity (approved direction):
+- Knight: melee tank. Top health plus guard, shield block/bash, holds the line in coop.
+- Wizard: AoE caster and support. Homing lightning, arcane burst, drops potions the whole room shares.
+- Ranger: precision skirmisher. Fast straight-flying arrows (skill shots, cheaper and quicker than lightning but no homing), a Tumble Roll instead of a block, and a level-3 Piercing Shot that punches through a line of enemies. Mid health, fast-regenerating small Focus pool, no heals, no block: strongest at range and mobility, weakest when swarmed in melee.
+
+Balance targets (tuning knobs in `src/content/rpg.js`):
+- Health 68 +5/level (knight 78 +6, wizard 62 +5). Focus 64 +6/level, regen ~18/s.
+- Arrow: 14 focus, 26+1d6 damage, straight, fast. Lightning stays the heavier homing option at 42 mana.
+- Piercing Shot: 34 focus, 38+1d8 to everything along the line. Tumble Roll: 22 focus dash.
+
+Done so far:
+- `src/content/rpg.js`: ranger weapon defs (Ash Bow default, Crownring Recurve sidegrade), combat tuning, focus costs, ability unlocks (arrow/roll at 1, pierce at 3), display names.
+- `index.html`: Ranger character card. `styles/app.css`: ranger HUD tint.
+
+Remaining work (write scope: `src/main.js`):
+- COORDINATION NOTE for Codex: this slice needs sweeping `src/main.js` edits across character-conditional code (player model, combat, HUD labels, progression defaults, remote player rendering). I will only start once your current dialogue/lore slice is committed or main.js goes idle. Please commit your slice when it is coherent, and avoid expanding into character/class-conditional code (`setPlayerCharacter`, `createKnight`/`createWizard`, `updateCharacterUi`, `progressionStatsFor`, combat ability functions) until this section is marked done.
+- createRanger model, focus resource, arrow/roll/pierce abilities, progression migration for saved profiles, remote ranger rendering, bow audio cue.
+- Expanded scope (user request): improve character models for all three classes — geometry silhouettes and procedural texture detail (cloth/leather/metal via the shared `createMaterialDetailTexture` system) on both local and remote player models. Follows `docs/ASSET_POLICY.md`: procedural CanvasTexture only, small sizes, shared materials, no external assets.
+
 ## RPG Mechanics Backlog
 
 Primary owner: RPG Mechanics / Economy Agent
@@ -563,10 +635,12 @@ Done evidence:
 - Keyboard-first quest/dialogue controls exist.
 - Procedural Web Audio covers player attacks, blocks, hits, potions, quest moments, level-ups, louder master mix, and light compression.
 - In the current worktree, additional arena/dialogue cues cover Crownring open, wave entering, wave clear, every-third-wave milestone fanfare, yield, infirmary defeat, dialogue selection movement, and dialogue cancel/close.
+- Current audio pass adds bounded biome/city/water/arena ambience, procedural background music, footsteps/hooves, enemy movement sounds, enemy attack tells, fireball launch/impact cues, and remote potion/impact sounds.
+- Latest mix note: ambience should sit far below footsteps, hits, and music. Favor quiet wind and occasional birds; avoid loud broadband noise, low steady rumble, or synth-pad dominance. Music should stay medieval/modal and lightly plucked.
 
 Remaining work:
 - Add actual master/SFX/ambience volume controls.
-- Add crowd/city/biome ambience loops with voice limits.
+- Playtest ambience/music levels across exploration biomes, villages, and Crownring encounters.
 - Confirm arena status belongs in quest tracker, wave pill, or both.
 
 Task checklist:

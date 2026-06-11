@@ -10,6 +10,7 @@ import {
   progressStorageKey,
   xpForLevel
 } from "./content/rpg.js";
+import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js";
 
 (() => {
   "use strict";
@@ -79,6 +80,7 @@ import {
   const questLogItems = document.getElementById("questLogItems");
   const questMap = document.getElementById("questMap");
   const questMapCtx = questMap.getContext("2d");
+  const minimapPanel = document.getElementById("minimapPanel");
   const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
   const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
@@ -99,7 +101,12 @@ import {
   const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
   const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
   const QUEST_MAP_UPDATE_INTERVAL = 0.16;
+  const MINIMAP_LOGICAL_SIZE = 176;
+  const MINIMAP_DPR = 2;
   const AUDIO_MASTER_VOLUME = 1.0;
+  const AUDIO_SFX_VOLUME = 1.0;
+  const AUDIO_AMBIENCE_VOLUME = 0.22;
+  const AUDIO_MUSIC_VOLUME = 0.64;
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
@@ -120,10 +127,18 @@ import {
   const audio = {
     context: null,
     master: null,
+    sfx: null,
+    ambience: null,
+    music: null,
     compressor: null,
     noise: null,
+    ambientState: null,
+    musicState: null,
     muted: localStorage.getItem("ironhold-audio-muted") === "true",
-    lastPlayed: new Map()
+    lastPlayed: new Map(),
+    playerStepDistance: 0,
+    playerLastSurface: "grass",
+    remoteStepDistance: new Map()
   };
 
   function ensureAudio() {
@@ -137,6 +152,9 @@ import {
     if (!audio.context) {
       audio.context = new AudioContextClass();
       audio.master = audio.context.createGain();
+      audio.sfx = audio.context.createGain();
+      audio.ambience = audio.context.createGain();
+      audio.music = audio.context.createGain();
       audio.compressor = audio.context.createDynamicsCompressor();
       audio.compressor.threshold.value = -10;
       audio.compressor.knee.value = 14;
@@ -144,12 +162,20 @@ import {
       audio.compressor.attack.value = 0.004;
       audio.compressor.release.value = 0.18;
       audio.master.gain.value = AUDIO_MASTER_VOLUME;
+      audio.sfx.gain.value = AUDIO_SFX_VOLUME;
+      audio.ambience.gain.value = AUDIO_AMBIENCE_VOLUME;
+      audio.music.gain.value = AUDIO_MUSIC_VOLUME;
+      audio.sfx.connect(audio.master);
+      audio.ambience.connect(audio.master);
+      audio.music.connect(audio.master);
       audio.master.connect(audio.compressor);
       audio.compressor.connect(audio.context.destination);
     }
     if (audio.context.state === "suspended") {
       audio.context.resume().catch(() => {});
     }
+    startAmbientAudio();
+    startMusicAudio();
     return audio.context;
   }
 
@@ -160,6 +186,9 @@ import {
   function setAudioMuted(muted) {
     audio.muted = muted;
     localStorage.setItem("ironhold-audio-muted", muted ? "true" : "false");
+    if (!muted) {
+      ensureAudio();
+    }
     if (audio.master) {
       audio.master.gain.setTargetAtTime(muted ? 0 : AUDIO_MASTER_VOLUME, audio.context.currentTime, 0.02);
     }
@@ -179,6 +208,16 @@ import {
     return false;
   }
 
+  function audioBus(bus) {
+    if (bus === "ambience") {
+      return audio.ambience || audio.master;
+    }
+    if (bus === "music") {
+      return audio.music || audio.master;
+    }
+    return audio.sfx || audio.master;
+  }
+
   function playTone(frequency, duration, options = {}) {
     const ctx = ensureAudio();
     if (!ctx || !audio.master) {
@@ -196,7 +235,7 @@ import {
     gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, options.gain || 0.07), start + (options.attack || 0.012));
     gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     oscillator.connect(gain);
-    gain.connect(audio.master);
+    gain.connect(audioBus(options.bus));
     oscillator.start(start);
     oscillator.stop(start + duration + 0.03);
   }
@@ -233,13 +272,336 @@ import {
     gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(audio.master);
+    gain.connect(audioBus(options.bus));
     source.start(start);
     source.stop(start + duration + 0.03);
   }
 
+  function makeDroneLayer(ctx, frequency, type = "sine") {
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = type;
+    oscillator.frequency.value = frequency;
+    gain.gain.value = 0.0001;
+    oscillator.connect(gain);
+    gain.connect(audioBus("music"));
+    oscillator.start();
+    return { oscillator, gain };
+  }
+
+  function setAudioGain(gain, value, lag = 0.45) {
+    if (!gain || !audio.context) {
+      return;
+    }
+    gain.gain.setTargetAtTime(Math.max(0.0001, value), audio.context.currentTime, lag);
+  }
+
+  function startAmbientAudio() {
+    const ctx = audio.context;
+    if (!ctx || audio.ambientState) {
+      return;
+    }
+    audio.ambientState = {
+      nextBirdAt: ctx.currentTime + 2 + Math.random() * 5
+    };
+  }
+
+  function startMusicAudio() {
+    const ctx = audio.context;
+    if (!ctx || audio.musicState) {
+      return;
+    }
+    audio.musicState = {
+      low: makeDroneLayer(ctx, 73.42, "triangle"),
+      fifth: makeDroneLayer(ctx, 110, "sine"),
+      high: makeDroneLayer(ctx, 146.83, "triangle"),
+      nextNoteAt: ctx.currentTime + 1.8,
+      noteIndex: 0
+    };
+  }
+
+  function audioPositionIntensity(position, maxDistance = 42, floor = 0) {
+    if (!position) {
+      return 1;
+    }
+    const listener = player.group ? player.group.position : player.position;
+    const dx = (position.x || 0) - listener.x;
+    const dz = (position.z || 0) - listener.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance >= maxDistance) {
+      return 0;
+    }
+    const falloff = 1 - smoothstep(maxDistance * 0.18, maxDistance, distance);
+    return clamp(falloff, floor, 1);
+  }
+
+  function playPositionalSfx(name, position, intensity = 1, maxDistance = 42) {
+    const amount = audioPositionIntensity(position, maxDistance) * intensity;
+    if (amount < 0.04) {
+      return;
+    }
+    playSfx(name, amount);
+  }
+
+  function currentPlayerSurface() {
+    if (isPlayerMounted()) {
+      return "horse";
+    }
+    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+      return "sand";
+    }
+    const local = explorationLocalPosition(player.position, tmpVec);
+    const biome = biomeAt(local.x, local.z);
+    if (biome === "desert") {
+      return "sand";
+    }
+    if (biome === "mountain") {
+      return "stone";
+    }
+    if (biome === "swamp") {
+      return "mud";
+    }
+    return "grass";
+  }
+
+  function playFootstep(surface, intensity = 1, busName = "player") {
+    const throttleName = "step-" + busName + "-" + surface;
+    if (soundRecentlyPlayed(throttleName, surface === "horse" ? 0.08 : 0.055)) {
+      return;
+    }
+    const amount = clamp(intensity, 0.08, 1.35);
+    if (surface === "horse") {
+      playNoise(0.07, { filterType: "lowpass", frequency: 420, gain: 0.055 * amount, q: 0.7 });
+      playTone(96, 0.055, { type: "triangle", endFrequency: 64, gain: 0.032 * amount, delay: 0.01 });
+    } else if (surface === "sand") {
+      playNoise(0.09, { filterType: "bandpass", frequency: 940, gain: 0.033 * amount, q: 0.55 });
+    } else if (surface === "stone") {
+      playNoise(0.045, { filterType: "highpass", frequency: 1280, gain: 0.026 * amount, q: 0.8 });
+      playTone(185, 0.04, { type: "triangle", endFrequency: 130, gain: 0.018 * amount });
+    } else if (surface === "mud") {
+      playNoise(0.1, { filterType: "lowpass", frequency: 360, gain: 0.038 * amount, q: 0.8 });
+    } else {
+      playNoise(0.075, { filterType: "bandpass", frequency: 1250, gain: 0.026 * amount, q: 0.65 });
+    }
+  }
+
+  function playBirdChirp(biome) {
+    const base = biome === "mountain" ? 1760 : biome === "swamp" ? 1240 : 1520;
+    const variation = 0.88 + Math.random() * 0.28;
+    const first = base * variation;
+    const second = first * (1.18 + Math.random() * 0.16);
+    const third = first * (0.92 + Math.random() * 0.08);
+    playTone(first, 0.085, { type: "sine", endFrequency: second, gain: 0.024, attack: 0.006, bus: "ambience" });
+    playTone(second, 0.07, { type: "sine", endFrequency: third, gain: 0.018, attack: 0.006, delay: 0.095, bus: "ambience" });
+    if (Math.random() < 0.42) {
+      playTone(third * 1.12, 0.06, { type: "triangle", endFrequency: third * 0.96, gain: 0.012, attack: 0.005, delay: 0.19, bus: "ambience" });
+    }
+  }
+
+  function updateAmbienceAndMusic(dt) {
+    const ctx = ensureAudio();
+    if (!ctx || !audio.ambientState || !audio.musicState) {
+      return;
+    }
+    const active = game.state === "playing";
+    const paused = game.state === "paused";
+    const inArena = localPlayerInArenaActivity() || (game.mode !== "exploration" && active);
+    let biome = "meadow";
+    if (game.mode === "exploration") {
+      const local = explorationLocalPosition(player.position, tmpVec);
+      biome = biomeAt(local.x, local.z);
+    }
+    if (active && game.mode === "exploration" && !inArena && ctx.currentTime >= audio.ambientState.nextBirdAt) {
+      if (biome !== "desert" && Math.random() < (biome === "swamp" ? 0.38 : 0.72)) {
+        playBirdChirp(biome);
+      }
+      audio.ambientState.nextBirdAt = ctx.currentTime + (biome === "swamp" ? 9 : 6) + Math.random() * 10;
+    }
+
+    const music = audio.musicState;
+    const danger = inArena || game.enemies.some(enemy => !enemy.dead && enemy.position.distanceTo(player.position) < 18);
+    setAudioGain(music.low.gain, active ? (danger ? 0.034 : 0.024) : 0.012, 1.2);
+    setAudioGain(music.fifth.gain, active ? (danger ? 0.022 : 0.016) : 0.008, 1.4);
+    setAudioGain(music.high.gain, active && !danger ? 0.005 : 0.0001, 1.5);
+    if (ctx.currentTime >= music.nextNoteAt) {
+      const explorationScale = biome === "desert"
+        ? [110, 116.54, 130.81, 146.83, 164.81, 196, 220]
+        : biome === "mountain"
+          ? [146.83, 174.61, 196, 220, 261.63, 293.66, 349.23]
+          : biome === "swamp"
+            ? [146.83, 164.81, 196, 220, 246.94, 293.66, 329.63]
+            : [146.83, 164.81, 174.61, 196, 220, 246.94, 293.66];
+      const arenaScale = [73.42, 110, 146.83, 174.61, 196, 220, 293.66];
+      const scale = danger ? arenaScale : explorationScale;
+      const note = scale[music.noteIndex % scale.length];
+      music.noteIndex += 1 + Math.floor(Math.random() * 2);
+      playTone(note, danger ? 0.5 : 0.58, {
+        type: "triangle",
+        gain: danger ? 0.02 : 0.017,
+        attack: 0.01,
+        bus: "music"
+      });
+      playTone(note * 2, 0.18, {
+        type: "square",
+        gain: danger ? 0.0045 : 0.0035,
+        attack: 0.006,
+        delay: 0.025,
+        bus: "music"
+      });
+      if (!danger && Math.random() < 0.58) {
+        playTone(note * 1.5, 0.42, {
+          type: "triangle",
+          gain: 0.009,
+          attack: 0.012,
+          delay: 0.16,
+          bus: "music"
+        });
+      }
+      music.nextNoteAt = ctx.currentTime + (danger ? 2.2 + Math.random() * 1.6 : 3.2 + Math.random() * 2.4);
+    }
+  }
+
+  function updatePlayerMovementAudio(dt) {
+    if (game.state !== "playing" || !questDialog.hidden) {
+      audio.playerStepDistance = 0;
+      return;
+    }
+    const speed = Math.hypot(player.velocity.x, player.velocity.z);
+    if (speed < 0.55) {
+      audio.playerStepDistance = Math.min(audio.playerStepDistance, 0.45);
+      return;
+    }
+    const surface = currentPlayerSurface();
+    audio.playerLastSurface = surface;
+    const stride = surface === "horse" ? 1.7 : surface === "mud" ? 0.95 : 1.08;
+    audio.playerStepDistance += speed * dt;
+    if (audio.playerStepDistance >= stride) {
+      audio.playerStepDistance %= stride;
+      playFootstep(surface, clamp(speed / (surface === "horse" ? 9.4 : 5.8), 0.45, 1.2), "player");
+    }
+  }
+
+  function enemySurface(enemy) {
+    if (enemy.type === "dragon" || enemy.type === "wisp") {
+      return "";
+    }
+    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+      return "sand";
+    }
+    const local = explorationLocalPosition(enemy.position, tmpVec);
+    const biome = biomeAt(local.x, local.z);
+    if (biome === "desert") {
+      return "sand";
+    }
+    if (biome === "mountain") {
+      return "stone";
+    }
+    if (biome === "swamp") {
+      return "mud";
+    }
+    return "grass";
+  }
+
+  function updateEnemyMovementAudio(enemy, dt) {
+    if (!enemy || enemy.dead || enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse") {
+      return;
+    }
+    if (enemy.type === "dragon") {
+      const distanceGain = audioPositionIntensity(enemy.group ? enemy.group.position : enemy.position, 58);
+      if (distanceGain > 0.05) {
+        enemy.audioFlapTimer = (enemy.audioFlapTimer || Math.random() * 0.25) - dt;
+        if (enemy.audioFlapTimer <= 0) {
+          enemy.audioFlapTimer = enemy.state === "fire" ? 0.28 : 0.42 + Math.random() * 0.18;
+          playPositionalSfx("dragonFlap", enemy.group ? enemy.group.position : enemy.position, 0.45 + distanceGain * 0.55, 58);
+        }
+      }
+      return;
+    }
+    if (enemy.type === "wisp") {
+      enemy.audioHumTimer = (enemy.audioHumTimer || 0.8 + Math.random() * 1.2) - dt;
+      if (enemy.audioHumTimer <= 0) {
+        enemy.audioHumTimer = 1.2 + Math.random() * 1.8;
+        playPositionalSfx("wispHum", enemy.position, 0.58, 26);
+      }
+      return;
+    }
+    const speed = Math.hypot(enemy.velocity.x, enemy.velocity.z);
+    if (speed < 0.45 || audioPositionIntensity(enemy.position, 30) <= 0) {
+      return;
+    }
+    const surface = enemySurface(enemy);
+    const stride = enemy.type === "spider" ? 0.72 : surface === "mud" ? 0.95 : 1.08;
+    enemy.audioStepDistance = (enemy.audioStepDistance || Math.random() * stride) + speed * dt;
+    if (enemy.audioStepDistance >= stride) {
+      enemy.audioStepDistance %= stride;
+      playPositionalSfx(enemy.type === "spider" ? "spiderStep" : "enemyFoot", enemy.position, clamp(speed / 4.8, 0.35, 1.0), 30);
+    }
+  }
+
+  function remotePlayerSurface(remote) {
+    if (remote.mounted) {
+      return "horse";
+    }
+    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+      return "sand";
+    }
+    const local = explorationLocalPosition(remote.group.position, tmpVec);
+    const biome = biomeAt(local.x, local.z);
+    if (biome === "desert") {
+      return "sand";
+    }
+    if (biome === "mountain") {
+      return "stone";
+    }
+    if (biome === "swamp") {
+      return "mud";
+    }
+    return "grass";
+  }
+
+  function updateRemoteMovementAudio(remote, id, speed, dt) {
+    const distanceGain = remote ? audioPositionIntensity(remote.group.position, 34) : 0;
+    if (!remote || !remote.playing || speed < 0.45 || distanceGain <= 0) {
+      audio.remoteStepDistance.set(id, 0);
+      return;
+    }
+    const surface = remotePlayerSurface(remote);
+    const stride = surface === "horse" ? 1.75 : surface === "mud" ? 1.0 : 1.13;
+    const current = (audio.remoteStepDistance.get(id) || 0) + speed * dt;
+    if (current >= stride) {
+      audio.remoteStepDistance.set(id, current % stride);
+      playFootstep(surface, clamp(speed / (surface === "horse" ? 9.4 : 5.8), 0.32, 0.78) * distanceGain, "remote-" + id);
+      return;
+    }
+    audio.remoteStepDistance.set(id, current);
+  }
+
+  function playEnemyStateSound(enemy, previousState, previousAttackType) {
+    if (!enemy || enemy.dead || previousState === enemy.state && previousAttackType === enemy.attackType) {
+      return;
+    }
+    const position = enemy.group ? enemy.group.position : enemy.position;
+    if (enemy.type === "dragon" && previousState !== "fire" && enemy.state === "fire") {
+      playPositionalSfx("dragonRoar", position, 1.0, 72);
+    } else if (enemy.type === "spider" && previousState !== "lunge" && enemy.state === "lunge") {
+      playPositionalSfx("spiderLunge", position, 0.95, 38);
+    } else if (enemy.type === "wisp" && previousState !== "pulse" && enemy.state === "pulse") {
+      playPositionalSfx("wispPulse", position, 0.9, 42);
+    } else if (enemy.type === "barbarian" && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
+      playPositionalSfx(enemy.attackType === "heavy" ? "barbarianHeavy" : "barbarianAttack", position, 0.9, 36);
+    }
+  }
+
+  function updateAudio(dt) {
+    if (!audio.context || audio.muted) {
+      return;
+    }
+    updateAmbienceAndMusic(dt);
+    updatePlayerMovementAudio(dt);
+  }
+
   function playSfx(name, intensity = 1) {
-    const amount = clamp(intensity, 0.35, 1.8);
+    const amount = clamp(intensity, 0.05, 1.8);
     if (soundRecentlyPlayed(name, name === "enemyHit" ? 0.055 : name === "hit" ? 0.08 : 0.035)) {
       return;
     }
@@ -302,6 +664,42 @@ import {
     } else if (name === "arenaDefeat") {
       playTone(220, 0.32, { type: "sawtooth", endFrequency: 88, gain: 0.042 * amount });
       playNoise(0.3, { filterType: "lowpass", frequency: 300, gain: 0.048 * amount, delay: 0.05 });
+    } else if (name === "enemyFoot") {
+      playNoise(0.075, { filterType: "lowpass", frequency: 560, gain: 0.028 * amount, q: 0.7 });
+      playTone(110, 0.045, { type: "triangle", endFrequency: 82, gain: 0.014 * amount });
+    } else if (name === "spiderStep") {
+      playNoise(0.045, { filterType: "bandpass", frequency: 1850, gain: 0.026 * amount, q: 1.35 });
+      playTone(155, 0.035, { type: "square", endFrequency: 118, gain: 0.008 * amount });
+    } else if (name === "dragonFlap") {
+      playNoise(0.18, { filterType: "lowpass", frequency: 330, gain: 0.04 * amount, q: 0.55 });
+      playTone(74, 0.12, { type: "triangle", endFrequency: 52, gain: 0.018 * amount });
+    } else if (name === "dragonRoar") {
+      playTone(92, 0.46, { type: "sawtooth", endFrequency: 54, gain: 0.052 * amount, attack: 0.035 });
+      playNoise(0.5, { filterType: "lowpass", frequency: 420, gain: 0.048 * amount, q: 0.6, delay: 0.03 });
+    } else if (name === "dragonFire") {
+      playNoise(0.28, { filterType: "bandpass", frequency: 780, gain: 0.055 * amount, q: 0.8 });
+      playTone(138, 0.22, { type: "sawtooth", endFrequency: 220, gain: 0.028 * amount });
+    } else if (name === "fireballImpact") {
+      playNoise(0.2, { filterType: "lowpass", frequency: 520, gain: 0.058 * amount, q: 0.7 });
+      playTone(116, 0.16, { type: "triangle", endFrequency: 64, gain: 0.042 * amount });
+    } else if (name === "barbarianAttack") {
+      playTone(150, 0.16, { type: "sawtooth", endFrequency: 102, gain: 0.036 * amount, attack: 0.018 });
+      playNoise(0.1, { filterType: "bandpass", frequency: 760, gain: 0.025 * amount, q: 0.8, delay: 0.03 });
+    } else if (name === "barbarianHeavy") {
+      playTone(112, 0.3, { type: "sawtooth", endFrequency: 64, gain: 0.048 * amount, attack: 0.025 });
+      playNoise(0.16, { filterType: "lowpass", frequency: 420, gain: 0.04 * amount, q: 0.72, delay: 0.08 });
+    } else if (name === "spiderLunge") {
+      playNoise(0.16, { filterType: "bandpass", frequency: 2100, gain: 0.038 * amount, q: 1.4 });
+      playTone(190, 0.09, { type: "square", endFrequency: 122, gain: 0.016 * amount });
+    } else if (name === "wispPulse") {
+      playTone(520, 0.18, { type: "sine", endFrequency: 860, gain: 0.034 * amount, attack: 0.04 });
+      playTone(1040, 0.16, { type: "triangle", endFrequency: 620, gain: 0.018 * amount, delay: 0.05 });
+    } else if (name === "wispHum") {
+      playTone(392, 0.38, { type: "sine", endFrequency: 415, gain: 0.014 * amount, attack: 0.08 });
+      playTone(784, 0.22, { type: "sine", endFrequency: 740, gain: 0.008 * amount, delay: 0.04 });
+    } else if (name === "remoteImpact") {
+      playNoise(0.12, { filterType: "bandpass", frequency: 720, gain: 0.032 * amount, q: 0.7 });
+      playTone(165, 0.08, { type: "triangle", endFrequency: 92, gain: 0.022 * amount });
     }
   }
 
@@ -3132,6 +3530,8 @@ import {
     return texture;
   }
 
+  const BIOME_PATCH_LIFT = 0.09;
+
   function createBiomePatchGeometry(biome, seed) {
     const random = seededRandom(seed + "-patch-" + biome.id);
     const phaseA = random() * TAU;
@@ -3139,26 +3539,49 @@ import {
     const rotation = biome.rotation || 0;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    const positions = [0, explorationGroundLocalY(biome.x, biome.z, 0.026), 0];
+    const positions = [0, explorationGroundLocalY(biome.x, biome.z, BIOME_PATCH_LIFT), 0];
     const uvs = [0.5, 0.5];
     const indices = [];
-    const steps = 112;
-    for (let i = 0; i <= steps; i += 1) {
-      const angle = (i / steps) * TAU;
-      const wobble = 1
+    const rings = 10;
+    const segments = 112;
+    const boundaryWobbles = [];
+    for (let i = 0; i < segments; i += 1) {
+      const angle = (i / segments) * TAU;
+      boundaryWobbles.push(1
         + Math.sin(angle * 3 + phaseA) * 0.045
         + Math.sin(angle * 5 + phaseB) * 0.03
-        + (random() - 0.5) * 0.018;
-      const x = Math.cos(angle) * biome.rx * wobble;
-      const z = Math.sin(angle) * biome.rz * wobble;
-      const localX = x * cos - z * sin;
-      const localZ = x * sin + z * cos;
-      const worldLocalX = biome.x + localX;
-      const worldLocalZ = biome.z + localZ;
-      positions.push(localX, explorationGroundLocalY(worldLocalX, worldLocalZ, 0.028), localZ);
-      uvs.push(0.5 + Math.cos(angle) * 0.5, 0.5 + Math.sin(angle) * 0.5);
-      if (i > 0) {
-        indices.push(0, i, i + 1);
+        + (random() - 0.5) * 0.018);
+    }
+    const vertexIndex = (ring, segment) => 1 + (ring - 1) * segments + (segment % segments);
+    for (let ring = 1; ring <= rings; ring += 1) {
+      const radial = ring / rings;
+      const edgeBlend = smoothstep(0.25, 1, radial);
+      for (let i = 0; i < segments; i += 1) {
+        const angle = (i / segments) * TAU;
+        const wobble = lerp(1, boundaryWobbles[i], edgeBlend);
+        const x = Math.cos(angle) * biome.rx * radial * wobble;
+        const z = Math.sin(angle) * biome.rz * radial * wobble;
+        const localX = x * cos - z * sin;
+        const localZ = x * sin + z * cos;
+        const worldLocalX = biome.x + localX;
+        const worldLocalZ = biome.z + localZ;
+        positions.push(localX, explorationGroundLocalY(worldLocalX, worldLocalZ, BIOME_PATCH_LIFT), localZ);
+        uvs.push(0.5 + Math.cos(angle) * 0.5 * radial, 0.5 + Math.sin(angle) * 0.5 * radial);
+      }
+    }
+    for (let i = 0; i < segments; i += 1) {
+      const next = (i + 1) % segments;
+      indices.push(0, vertexIndex(1, next), vertexIndex(1, i));
+    }
+    for (let ring = 1; ring < rings; ring += 1) {
+      for (let i = 0; i < segments; i += 1) {
+        const next = (i + 1) % segments;
+        const inner = vertexIndex(ring, i);
+        const innerNext = vertexIndex(ring, next);
+        const outer = vertexIndex(ring + 1, i);
+        const outerNext = vertexIndex(ring + 1, next);
+        indices.push(inner, innerNext, outer);
+        indices.push(innerNext, outerNext, outer);
       }
     }
     const geometry = new THREE.BufferGeometry();
@@ -3166,6 +3589,7 @@ import {
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
     return geometry;
   }
 
@@ -3173,8 +3597,12 @@ import {
     const baseMaterial = biome.id === "desert" ? materials.desert : biome.id === "swamp" ? materials.swampGround : materials.mountainGround;
     const material = baseMaterial.clone();
     material.map = createBiomeTexture(seed, biome.id);
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = -2;
+    material.polygonOffsetUnits = -6;
     const patch = new THREE.Mesh(createBiomePatchGeometry(biome, seed), material);
     patch.position.set(biome.x, 0, biome.z);
+    patch.renderOrder = 2;
     patch.receiveShadow = true;
     group.add(patch);
   }
@@ -3597,6 +4025,7 @@ import {
   }
 
   function createQuest(id, title, giver, body, objective, reward, type, target, options = {}) {
+    options = mergeQuestDialogueOptions(id, options);
     return {
       id,
       title,
@@ -4317,16 +4746,8 @@ import {
         questDialogStatus.textContent = arenaActivityActive() ? "The Crownring is already active." : "Press Enter on the service button to enter the Crownring.";
         questServiceButton.hidden = arenaActivityActive();
         questServiceButton.textContent = "Enter Crownring";
-      } else if (npc.biome === "desert") {
-        questDialogBody.textContent = "The dunes shift by the hour. Walk near the cactus shade and listen for legs under the sand.";
-      } else if (npc.biome === "mountain") {
-        questDialogBody.textContent = "Smoke over the ridges means dragons are awake. Keep low when the wind goes warm.";
-      } else if (npc.biome === "city") {
-        questDialogBody.textContent = "Keep to the paved streets near the ring. The castle bells make it easy to find your way back.";
-      } else if (npc.biome === "swamp") {
-        questDialogBody.textContent = "Mistfen paths are safest on the planks. If a pale light drifts against the wind, keep your weapon ready.";
       } else {
-        questDialogBody.textContent = "The road is long today. Keep an eye on the tree line and come back if you need a friendly face.";
+        questDialogBody.textContent = ambientLineFor({ npcName: npc.name, biome: npc.biome });
       }
       questDialogStatus.textContent = "Nearby villagers can mend small wounds when you stand close.";
       updateDialogSelection(0);
@@ -4647,50 +5068,198 @@ import {
     ctx.restore();
   }
 
-  function updateQuestMap() {
-    const visibleQuests = game.quests.filter(quest => quest.state === "active" || quest.state === "ready");
-    const visible = game.mode === "exploration" && visibleQuests.length > 0;
-    questMap.hidden = !visible;
-    if (!visible) {
-      return;
+  const minimapBase = { key: "", canvas: null };
+
+  function minimapWorldKey() {
+    return game.exploration.seed + ":" + game.exploration.roads.length + ":" + game.exploration.villages.length + ":" + game.exploration.discovered.size;
+  }
+
+  // Static world layer (terrain, lakes, roads, discovered settlements) cached
+  // offscreen so the 0.16s refresh only blits and draws dynamic markers.
+  function buildMinimapBaseLayer(size, center, mapRadius, scale) {
+    if (!minimapBase.canvas) {
+      minimapBase.canvas = document.createElement("canvas");
+      minimapBase.canvas.width = size * MINIMAP_DPR;
+      minimapBase.canvas.height = size * MINIMAP_DPR;
     }
-    const ctx = questMapCtx;
-    const size = questMap.width;
-    const center = size / 2;
-    const mapRadius = size * 0.43;
-    const scale = mapRadius / game.exploration.radius;
+    const ctx = minimapBase.canvas.getContext("2d");
+    const originX = game.exploration.origin.x;
+    const originZ = game.exploration.origin.z;
+    const localPoint = (localX, localZ) => ({ x: center + localX * scale, y: center + localZ * scale });
+    ctx.setTransform(MINIMAP_DPR, 0, 0, MINIMAP_DPR, 0, 0);
     ctx.clearRect(0, 0, size, size);
     ctx.save();
     ctx.beginPath();
-    ctx.arc(center, center, mapRadius + 8, 0, TAU);
+    ctx.arc(center, center, mapRadius + 6, 0, TAU);
     ctx.clip();
-    ctx.fillStyle = "rgba(6, 12, 13, 0.82)";
+    ctx.fillStyle = "rgba(24, 38, 28, 0.94)";
     ctx.fillRect(0, 0, size, size);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+    const biomeFills = {
+      desert: "rgba(208, 174, 110, 0.55)",
+      mountain: "rgba(142, 146, 158, 0.6)",
+      swamp: "rgba(58, 86, 66, 0.78)"
+    };
+    for (const biome of game.exploration.biomes) {
+      const fill = biomeFills[biome.id];
+      if (!fill) {
+        continue;
+      }
+      const point = localPoint(biome.x, biome.z);
+      ctx.beginPath();
+      ctx.ellipse(point.x, point.y, Math.max(4, biome.rx * scale), Math.max(4, biome.rz * scale), biome.rotation || 0, 0, TAU);
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    for (const lake of game.exploration.lakes) {
+      const point = localPoint(lake.x - originX, lake.z - originZ);
+      ctx.beginPath();
+      ctx.ellipse(point.x, point.y, Math.max(2.4, lake.rx * scale), Math.max(2.4, lake.rz * scale), 0, 0, TAU);
+      ctx.fillStyle = "rgba(88, 154, 196, 0.8)";
+      ctx.fill();
+    }
+    ctx.strokeStyle = "rgba(206, 184, 138, 0.5)";
+    ctx.lineWidth = 1.1;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    for (const road of game.exploration.roads) {
+      const from = localPoint(road.fromX, road.fromZ);
+      const to = localPoint(road.toX, road.toZ);
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+    }
+    ctx.stroke();
+    for (const village of game.exploration.villages) {
+      if (!game.exploration.discovered.has(village.id)) {
+        continue;
+      }
+      const point = localPoint(village.x - originX, village.z - originZ);
+      if (village.id === "crownford") {
+        ctx.fillStyle = "#f7df9a";
+        ctx.strokeStyle = "rgba(5, 9, 10, 0.85)";
+        ctx.lineWidth = 1;
+        ctx.fillRect(point.x - 3.4, point.y - 3.4, 6.8, 6.8);
+        ctx.strokeRect(point.x - 3.4, point.y - 3.4, 6.8, 6.8);
+      } else if (village.id === "crownring") {
+        ctx.strokeStyle = "#ffd889";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 3.6, 0, TAU);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = "rgba(244, 239, 228, 0.9)";
+        ctx.strokeStyle = "rgba(5, 9, 10, 0.85)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 2.6, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    const home = localPoint(game.exploration.spawn.x - originX, game.exploration.spawn.z - originZ);
+    ctx.fillStyle = "#9fffd1";
+    ctx.strokeStyle = "rgba(5, 9, 10, 0.85)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(home.x, home.y - 4);
+    ctx.lineTo(home.x + 3.2, home.y - 0.6);
+    ctx.lineTo(home.x + 2, home.y - 0.6);
+    ctx.lineTo(home.x + 2, home.y + 3);
+    ctx.lineTo(home.x - 2, home.y + 3);
+    ctx.lineTo(home.x - 2, home.y - 0.6);
+    ctx.lineTo(home.x - 3.2, home.y - 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(center, center, mapRadius, 0, TAU);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawMinimapCompass(ctx, center, mapRadius) {
+    const labelRadius = mapRadius + 6.5;
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (i / 8) * TAU;
+      const isCardinal = i % 2 === 0;
+      if (isCardinal) {
+        continue;
+      }
+      const inner = mapRadius - 1;
+      const outer = mapRadius + 3;
+      ctx.strokeStyle = "rgba(244, 239, 228, 0.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(center + Math.sin(angle) * inner, center - Math.cos(angle) * inner);
+      ctx.lineTo(center + Math.sin(angle) * outer, center - Math.cos(angle) * outer);
+      ctx.stroke();
+    }
+    const labels = [
+      { text: "N", x: center, y: center - labelRadius, color: "#f7df9a" },
+      { text: "E", x: center + labelRadius, y: center, color: "rgba(244, 239, 228, 0.78)" },
+      { text: "S", x: center, y: center + labelRadius, color: "rgba(244, 239, 228, 0.78)" },
+      { text: "W", x: center - labelRadius, y: center, color: "rgba(244, 239, 228, 0.78)" }
+    ];
+    ctx.font = "800 9px 'Avenir Next', 'Segoe UI', system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const label of labels) {
+      ctx.strokeStyle = "rgba(5, 9, 10, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.strokeText(label.text, label.x, label.y);
+      ctx.fillStyle = label.color;
+      ctx.fillText(label.text, label.x, label.y);
+    }
+  }
+
+  function updateQuestMap() {
+    const visible = game.mode === "exploration"
+      && (game.state === "playing" || game.state === "paused")
+      && !!game.exploration.seed;
+    minimapPanel.hidden = !visible;
+    if (!visible) {
+      return;
+    }
+    const ctx = questMapCtx;
+    const size = MINIMAP_LOGICAL_SIZE;
+    const center = size / 2;
+    const mapRadius = size / 2 - 12;
+    const scale = mapRadius / game.exploration.radius;
+    const worldKey = minimapWorldKey();
+    if (minimapBase.key !== worldKey) {
+      buildMinimapBaseLayer(size, center, mapRadius, scale);
+      minimapBase.key = worldKey;
+    }
+    ctx.setTransform(MINIMAP_DPR, 0, 0, MINIMAP_DPR, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(minimapBase.canvas, 0, 0, size, size);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(center, center, mapRadius + 6, 0, TAU);
+    ctx.clip();
+    const visibleQuests = game.quests.filter(quest => quest.state === "active" || quest.state === "ready");
     for (const quest of visibleQuests) {
       for (const area of questMapAreas(quest)) {
         drawQuestMapArea(ctx, area, size, center, scale);
       }
     }
     const playerPoint = projectQuestMapPoint(player.position.x, player.position.z, size, center, scale);
+    ctx.translate(playerPoint.x, playerPoint.y);
+    ctx.rotate(-player.yaw);
     ctx.fillStyle = "#f4efe4";
     ctx.strokeStyle = "rgba(5, 9, 10, 0.9)";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(playerPoint.x, playerPoint.y, 4.2, 0, TAU);
-    ctx.stroke();
+    ctx.moveTo(0, -6.2);
+    ctx.lineTo(4.2, 4.6);
+    ctx.lineTo(0, 2.4);
+    ctx.lineTo(-4.2, 4.6);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = "#f4efe4";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(playerPoint.x, playerPoint.y);
-    ctx.lineTo(playerPoint.x - Math.sin(player.yaw) * 10, playerPoint.y - Math.cos(player.yaw) * 10);
     ctx.stroke();
     ctx.restore();
+    drawMinimapCompass(ctx, center, mapRadius);
   }
 
   function setupExplorationQuests() {
@@ -6454,6 +7023,7 @@ import {
     player.blocking = false;
     overlay.classList.remove("hidden");
     document.exitPointerLock?.();
+    updateQuestMap();
     setMenuPhase("landing");
     if (message) {
       updateOnlineStatus(message);
@@ -6916,6 +7486,8 @@ import {
 
   function applyEnemySnapshot(enemy, state, firstSeen = false) {
     enemy.remoteControlled = true;
+    const previousState = enemy.state;
+    const previousAttackType = enemy.attackType;
     enemy.networkTargetPosition = enemy.networkTargetPosition || new THREE.Vector3();
     enemy.networkTargetPosition.set(state.x || 0, 0, state.z || 0);
     enemy.networkTargetY = state.y || 0;
@@ -6949,6 +7521,9 @@ import {
         enemy.group.position.set(state.x || 0, state.y || 0, state.z || 0);
         enemy.group.rotation.y = enemy.yaw;
       }
+    }
+    if (!firstSeen) {
+      playEnemyStateSound(enemy, previousState, previousAttackType);
     }
   }
 
@@ -7000,6 +7575,7 @@ import {
     if (!fireball) {
       fireball = createFireballVisual(state);
       game.fireballs.push(fireball);
+      playPositionalSfx("dragonFire", fireball.group.position, 0.75, 70);
     }
     fireball.remoteControlled = true;
     fireball.networkTargetPosition = fireball.networkTargetPosition || new THREE.Vector3();
@@ -7132,6 +7708,7 @@ import {
         }
       }
       enemy.group.rotation.y = enemy.yaw;
+      updateEnemyMovementAudio(enemy, dt);
     }
 
     for (const fireball of game.fireballs) {
@@ -7167,7 +7744,9 @@ import {
       return;
     }
     if (effect.type === "impact") {
-      spawnImpact(new THREE.Vector3(effect.x || 0, effect.y || 0, effect.z || 0), effect.color || 0xffffff, effect.count || 10);
+      const position = new THREE.Vector3(effect.x || 0, effect.y || 0, effect.z || 0);
+      spawnImpact(position, effect.color || 0xffffff, effect.count || 10);
+      playPositionalSfx(effect.sfx || "remoteImpact", position, effect.sfxIntensity || 0.8, effect.sfxDistance || 42);
       return;
     }
     if (effect.type === "action" && effect.state) {
@@ -7208,7 +7787,7 @@ import {
       healAmount: potion.healAmount,
       fullHeal: potion.fullHeal
     });
-    broadcastOnlineEffect({ type: "impact", x: potion.position.x, y: 0, z: potion.position.z, color: 0xff7f96, count: 16 });
+    broadcastOnlineEffect({ type: "impact", x: potion.position.x, y: 0, z: potion.position.z, color: 0xff7f96, count: 16, sfx: "potion", sfxIntensity: 0.9, sfxDistance: 36 });
   }
 
   function handleRemotePotionDrop(message) {
@@ -7237,7 +7816,7 @@ import {
     }));
     trimPotionDrops();
     playSfx("potion", 0.85);
-    broadcastOnlineEffect({ type: "impact", ownerId: message.id, x, y: 0, z, color: 0x7ae8ff, count: 12 });
+    broadcastOnlineEffect({ type: "impact", ownerId: message.id, x, y: 0, z, color: 0x7ae8ff, count: 12, sfx: "potion", sfxIntensity: 0.85, sfxDistance: 36 });
     sendWorldSnapshot(true);
   }
 
@@ -7253,6 +7832,7 @@ import {
     player.health = message.fullHeal ? player.maxHealth : Math.min(player.maxHealth, player.health + (message.healAmount || 0));
     const healed = Math.ceil(player.health - beforeHeal);
     spawnImpact(player.position, 0xff7f96, 18);
+    playSfx("potion", message.fullHeal ? 1.15 : 0.9);
     showBanner(message.fullHeal ? "Fully recovered" : "Recovered +" + healed);
   }
 
@@ -7819,6 +8399,8 @@ import {
       remote.group.position.y = explorationGroundWorldY(remote.group.position.x, remote.group.position.z);
       remote.group.rotation.y = lerp(remote.group.rotation.y, remote.targetYaw || 0, 1 - Math.pow(0.00005, dt));
       const moved = remote.group.position.distanceTo(before);
+      const remoteSpeed = moved / Math.max(0.001, dt);
+      updateRemoteMovementAudio(remote, id, remoteSpeed, dt);
       remote.walkTime += moved * 2.8;
       const riderEase = 1 - Math.pow(0.0001, dt);
       if (remote.rider) {
@@ -7900,6 +8482,15 @@ import {
     const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
     const actionColor = action === "bash" ? 0xffd889 : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
     spawnImpact(source, actionColor, action === "burst" ? 18 : action === "bash" ? 14 : 10);
+    if (action === "lightning") {
+      playPositionalSfx("lightning", source, 0.82, 42);
+    } else if (action === "burst") {
+      playPositionalSfx("burst", source, 0.82, 36);
+    } else if (action === "bash") {
+      playPositionalSfx("bash", source, 0.82, 32);
+    } else {
+      playPositionalSfx("slash", source, 0.78, 30);
+    }
     if (action === "lightning") {
       spawnRemoteLightningVisual(source, state.yaw || 0);
     }
@@ -8787,7 +9378,7 @@ import {
     trimPotionDrops();
     player.potionCooldown = player.potionCooldownMax;
     spawnImpact(dropPosition, 0x7ae8ff, 12);
-    broadcastOnlineEffect({ type: "impact", x: dropPosition.x, y: 0, z: dropPosition.z, color: 0x7ae8ff, count: 12 });
+    broadcastOnlineEffect({ type: "impact", x: dropPosition.x, y: 0, z: dropPosition.z, color: 0x7ae8ff, count: 12, sfx: "potion", sfxIntensity: 0.85, sfxDistance: 36 });
     showBanner("Potion dropped");
     playSfx("potion", 0.85);
     return true;
@@ -9531,6 +10122,7 @@ import {
       );
       enemy.group.rotation.y = enemy.yaw;
       updateDragonAnimation(enemy, dt);
+      updateEnemyMovementAudio(enemy, dt);
       return;
     }
     const active = playerDistance < enemy.awareness || ((enemy.state === "chase" || enemy.state === "fire") && playerDistance < enemy.awareness * 1.75);
@@ -9561,6 +10153,7 @@ import {
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z, hover), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateDragonAnimation(enemy, dt);
+    updateEnemyMovementAudio(enemy, dt);
   }
 
   function beginSpiderAttack(enemy) {
@@ -9570,6 +10163,7 @@ import {
     enemy.attackDuration = 0.58;
     enemy.telegraph.visible = true;
     enemy.telegraph.material.opacity = 0.42;
+    playPositionalSfx("spiderLunge", enemy.position, 0.95, 38);
   }
 
   function updateSpiderAttack(enemy, dt, playerDistance, playerDirection) {
@@ -9647,6 +10241,7 @@ import {
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateSpiderAnimation(enemy, dt);
+    updateEnemyMovementAudio(enemy, dt);
   }
 
   function beginWispAttack(enemy) {
@@ -9658,6 +10253,7 @@ import {
     enemy.telegraph.visible = true;
     enemy.telegraph.material.opacity = 0.38;
     enemy.telegraph.scale.setScalar(0.82);
+    playPositionalSfx("wispPulse", enemy.position, 0.9, 42);
   }
 
   function updateWispAttack(enemy, dt, playerDistance, playerDirection) {
@@ -9748,6 +10344,7 @@ import {
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
     enemy.group.rotation.y = enemy.yaw;
     updateWispAnimation(enemy, dt);
+    updateEnemyMovementAudio(enemy, dt);
   }
 
   function updateExplorationNpcs(dt) {
@@ -9923,6 +10520,7 @@ import {
       enemy.leftLeg.rotation.x = legSwing;
       enemy.rightLeg.rotation.x = -legSwing;
       enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+      updateEnemyMovementAudio(enemy, dt);
     }
 
     game.enemies = game.enemies.filter(enemy => !enemy.dead);
@@ -10011,6 +10609,7 @@ import {
         enemy.rightLeg.rotation.x = -legSwing;
         enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
       }
+      updateEnemyMovementAudio(enemy, dt);
     }
 
     game.enemies = game.enemies.filter(enemy => !enemy.dead);
@@ -10092,6 +10691,7 @@ import {
     enemy.attackHitDone = false;
     enemy.attackDuration = 1.18;
     enemy.velocity.multiplyScalar(0.22);
+    playPositionalSfx("dragonRoar", enemy.group ? enemy.group.position : enemy.position, 1.0, 72);
   }
 
   function updateDragonAttack(enemy, dt, distance, direction) {
@@ -10137,6 +10737,7 @@ import {
     }
     fireball.remoteControlled = false;
     game.fireballs.push(fireball);
+    playPositionalSfx("dragonFire", source, 1.0, 70);
   }
 
   function beginEnemyAttack(enemy, type) {
@@ -10149,6 +10750,7 @@ import {
     enemy.telegraph.visible = true;
     enemy.telegraph.material = type === "heavy" ? materials.heavyDanger.clone() : materials.danger.clone();
     enemy.telegraph.scale.setScalar(type === "heavy" ? 1.45 : 1.05);
+    playPositionalSfx(type === "heavy" ? "barbarianHeavy" : "barbarianAttack", enemy.position, 0.9, 36);
   }
 
   function updateEnemyAttack(enemy, dt, distance, direction) {
@@ -10295,7 +10897,8 @@ import {
         }
         applyCombatTargetDamage(targetInfo, fireball.damage, fireball.guardDamage, hitDirection, 0.16);
         spawnImpact(fireball.group.position, 0xff7b2e, 18);
-        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff7b2e, count: 18 });
+        playPositionalSfx("fireballImpact", fireball.group.position, 1.0, 70);
+        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff7b2e, count: 18, sfx: "fireballImpact", sfxIntensity: 1.0, sfxDistance: 70 });
         scene.remove(fireball.group);
         game.fireballs.splice(i, 1);
         continue;
@@ -10303,7 +10906,8 @@ import {
 
       if (fireball.life <= 0 || fireball.group.position.y < 0.16) {
         spawnImpact(fireball.group.position, 0xff9f42, 10);
-        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff9f42, count: 10 });
+        playPositionalSfx("fireballImpact", fireball.group.position, 0.7, 58);
+        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff9f42, count: 10, sfx: "fireballImpact", sfxIntensity: 0.7, sfxDistance: 58 });
         scene.remove(fireball.group);
         game.fireballs.splice(i, 1);
       }
@@ -10359,6 +10963,7 @@ import {
     restartButton.hidden = false;
     overlay.classList.remove("hidden");
     document.exitPointerLock?.();
+    updateQuestMap();
   }
 
   function updateParticles(dt) {
@@ -10471,13 +11076,13 @@ import {
           updateQuestItems(dt);
           updateHorse(dt);
           updateTalkPrompt();
-          game.questMapTimer -= dt;
-          if (game.questMapTimer <= 0) {
-            game.questMapTimer = QUEST_MAP_UPDATE_INTERVAL;
-            updateQuestMap();
-          }
         } else {
           talkPrompt.hidden = true;
+        }
+        game.questMapTimer -= dt;
+        if (game.questMapTimer <= 0) {
+          game.questMapTimer = QUEST_MAP_UPDATE_INTERVAL;
+          updateQuestMap();
         }
         game.saveTimer += dt;
         if (game.saveTimer >= 4) {
@@ -10487,6 +11092,7 @@ import {
       }
       updateParticles(dt);
       updateOnline(dt);
+      updateAudio(dt);
       updateCamera(dt);
       updateHud();
       if (game.bannerTime > 0) {
@@ -10498,6 +11104,7 @@ import {
     } else {
       talkPrompt.hidden = true;
       updateParticles(dt);
+      updateAudio(dt);
       updateCamera(dt);
     }
     updateLights(dt, elapsed);
