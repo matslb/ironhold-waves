@@ -259,10 +259,11 @@ Primary owner: UI / UX Agent
 
 Support: Sound Design / Audio Agent, QA / Playtest Agent
 
+Status: Desktop-first pass active. Touch/handheld support is deferred for now. A first procedural Web Audio SFX pass now covers player attacks, blocks, hits, potions, quest moments, and level-ups with autoplay-safe fallback behavior.
+
 Tasks:
-- Keep desktop controls first-class, but make handheld/touch play a supported control surface.
-- Require landscape mode on small touch devices and show a clear orientation notice in portrait.
-- Ensure touch movement, camera control, attack, secondary ability, potion/bash, interact, mount, yield, and pause have usable controls.
+- Keep desktop controls first-class.
+- Defer handheld/touch play, landscape enforcement, and portrait notices until the project returns to small-screen support.
 - Add keyboard-first arena service dialogue:
   - `E` interact/advance
   - `Up/Down` or `W/S` select
@@ -275,17 +276,14 @@ Tasks:
   - `Enter Select`
 - During arena activity, temporarily show arena wave/status in the quest tracker area.
 - Keep ability boxes and desktop key labels visible.
-- Add future audio hooks for arena start, wave clear, yield, defeat, victory, crowd ambience, city ambience, UI selection, and confirm/cancel.
-- Ensure audio hooks respect future mute/volume settings.
+- Extend procedural audio toward arena start, wave clear, yield, defeat, victory, crowd ambience, city ambience, UI selection, and confirm/cancel.
+- Ensure audio hooks respect mute/volume settings.
 
 Acceptance:
 - Dialogue can be completed without mouse interaction.
-- Core Exploration and Crownring arena play can be completed on a landscape touch device.
-- Portrait mode on handheld devices shows a clear landscape-required notice instead of a cramped broken game.
-- Touch controls do not overlap critical HUD, quest tracker, arena status, or ability boxes.
 - Escape closes the correct layer in dialogue, arena, pause, and normal exploration.
 - Arena status is visible without hiding core health/resource information.
-- Sound hooks are named and ready even if full audio implementation lands later.
+- Desktop SFX works after a user gesture and fails silently when muted or unsupported.
 
 ## Performance Stewardship
 
@@ -328,7 +326,7 @@ Acceptance:
 - Die in arena and confirm infirmary recovery.
 - Host/join smoke: both players see same arena enemies, fireballs, effects, and wizard potions.
 - Visual screenshots: starter house, Crownford street, Crownring, infirmary, NPC beside player, meadow village, desert spider, mountain dragon.
-- Touch/handheld checks: landscape phone-sized viewport, landscape tablet-sized viewport, portrait orientation notice, touch movement/camera/attack/interact/pause.
+- Touch/handheld checks are deferred until small-screen support returns to scope.
 - Performance check during Crownford traversal and active arena waves.
 
 ## Implementation Policy
