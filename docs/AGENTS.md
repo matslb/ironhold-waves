@@ -9,7 +9,7 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 - Agents should work in narrow, named areas to reduce conflicts, especially while `index.html` remains large.
 - Agents must not revert work they did not make. If another change affects their task, they adapt or escalate.
 - Multiplayer, saves, quests, and rewards should be treated as shared systems, not one-off feature patches.
-- Firebase Hosting is the primary deployment target. GitHub Pages may remain as a mirror during transition.
+- Firebase Hosting is the only supported deployment target.
 
 ## Core Agents
 
@@ -195,19 +195,19 @@ Definition of done:
 
 ### Release Agent
 
-Owns git hygiene, Firebase deploys, GitHub Pages mirror checks, release notes, and final live URL verification.
+Owns git hygiene, Firebase deploys, release notes, and final live URL verification.
 
 Responsibilities:
 - Ensure a clean worktree before and after release.
 - Commit with scoped messages.
 - Deploy to Firebase Hosting.
-- Verify live Firebase URL and mirror URL when applicable.
+- Verify the live Firebase URL.
 - Record warnings separately from failures.
 
 Definition of done:
 - Commit is pushed.
 - Firebase deploy succeeds.
-- Live URL returns 200 and expected title.
+- Live Firebase URL returns 200 and expected title.
 - Final summary includes commit, checks, and deployment URL.
 
 ## Delegation Checklist

@@ -196,11 +196,9 @@ Phase 3, Bounded Generated Dialogue:
 - Browser smoke test without console errors.
 - Firebase deploy succeeds.
 - Live Firebase URL returns 200 and expected title.
-- GitHub Pages mirror checked while it remains enabled.
 
 ## Current Deployment
 
-- Primary: `https://ironhold-game.web.app/`
-- Mirror: `https://matslb.github.io/ironhold-waves/`
+- Production: `https://ironhold-game.web.app/`
 - Internal Firebase project: `ironhold-waves`
 - Public game name: `Ironhold`
