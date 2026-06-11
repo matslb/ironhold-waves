@@ -2190,8 +2190,75 @@
         return routed;
       }
 
-      function addExplorationRoad(group, points, width = 2.8) {
-        const routed = routeRoadAroundLakes(points, width);
+      function roadWindingSettings(style = "wild") {
+        if (style === "formal") {
+          return { spacing: 46, maxOffset: 1.05, strength: 0.045 };
+        }
+        if (style === "lane") {
+          return { spacing: 24, maxOffset: 2.2, strength: 0.09 };
+        }
+        if (style === "mountain") {
+          return { spacing: 24, maxOffset: 6.4, strength: 0.2 };
+        }
+        if (style === "desert") {
+          return { spacing: 34, maxOffset: 5.6, strength: 0.17 };
+        }
+        if (style === "swamp") {
+          return { spacing: 20, maxOffset: 6.0, strength: 0.22 };
+        }
+        return { spacing: 30, maxOffset: 4.8, strength: 0.15 };
+      }
+
+      function roadWindingKey(a, b, style, index) {
+        return [
+          game.exploration.seed || "explore-local",
+          style,
+          index,
+          Math.round(a.x * 10),
+          Math.round(a.z * 10),
+          Math.round(b.x * 10),
+          Math.round(b.z * 10)
+        ].join(":");
+      }
+
+      function addWindingRoadPoints(points, style = "wild") {
+        if (points.length < 2) {
+          return points.slice();
+        }
+        const settings = roadWindingSettings(style);
+        const result = [points[0]];
+        for (let i = 0; i < points.length - 1; i += 1) {
+          const a = points[i];
+          const b = points[i + 1];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const length = Math.hypot(dx, dz);
+          const steps = Math.max(0, Math.floor(length / settings.spacing));
+          const nx = length > 0.001 ? -dz / length : 0;
+          const nz = length > 0.001 ? dx / length : 0;
+          const random = seededRandom(roadWindingKey(a, b, style, i));
+          const phase = random() * TAU;
+          const drift = (random() - 0.5) * 2;
+          const segmentOffset = Math.min(settings.maxOffset, length * settings.strength);
+          for (let step = 1; step <= steps; step += 1) {
+            const t = step / (steps + 1);
+            const ease = Math.sin(t * Math.PI);
+            const wave = Math.sin(t * Math.PI * (1.35 + random() * 0.55) + phase);
+            const smallTurn = (random() - 0.5) * 0.75;
+            const offset = (wave * 0.62 + drift * 0.28 + smallTurn * 0.2) * segmentOffset * ease;
+            result.push({
+              x: a.x + dx * t + nx * offset,
+              z: a.z + dz * t + nz * offset
+            });
+          }
+          result.push(b);
+        }
+        return result;
+      }
+
+      function addExplorationRoad(group, points, width = 2.8, style = "wild") {
+        const winding = addWindingRoadPoints(points, style);
+        const routed = routeRoadAroundLakes(winding, width);
         for (let i = 0; i < routed.length - 1; i += 1) {
           addExplorationPath(group, routed[i].x, routed[i].z, routed[i + 1].x, routed[i + 1].z, width);
         }
@@ -2223,12 +2290,12 @@
         const desertFork = { x: -58, z: -74 };
         const swampFork = { x: -92, z: 128 };
 
-        addExplorationRoad(group, [homeDoor, homeJunction, { x: 0, z: 36 }, northFork], 3.15);
+        addExplorationRoad(group, [homeDoor, homeJunction, { x: -4, z: 31 }, { x: 6, z: 58 }, northFork], 3.15, "wild");
 
         const city = game.exploration.city;
         if (city) {
           const cityGate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
-          addExplorationRoad(group, [northFork, { x: cityGate.x, z: northFork.z }, cityGate], 3.25);
+          addExplorationRoad(group, [northFork, { x: cityGate.x * 0.35, z: northFork.z + 15 }, { x: cityGate.x, z: cityGate.z - 20 }, cityGate], 3.25, "formal");
         }
 
         for (const village of game.exploration.villages) {
@@ -2240,21 +2307,21 @@
           let entrance;
           if (village.biome === "mountain") {
             entrance = roadEntranceForVillage(village, mountainFork);
-            addExplorationRoad(group, [northFork, mountainFork, entrance], 2.85);
+            addExplorationRoad(group, [northFork, { x: mountainFork.x * 0.48, z: mountainFork.z - 4 }, mountainFork, entrance], 2.85, "mountain");
           } else if (village.biome === "desert") {
             entrance = roadEntranceForVillage(village, desertFork);
-            addExplorationRoad(group, [homeJunction, desertFork, entrance], 2.75);
+            addExplorationRoad(group, [homeJunction, { x: -20, z: -45 }, desertFork, entrance], 2.75, "desert");
           } else if (village.biome === "swamp") {
             entrance = roadEntranceForVillage(village, swampFork);
-            addExplorationRoad(group, [northFork, swampFork, entrance], 2.65);
+            addExplorationRoad(group, [northFork, { x: -38, z: 106 }, swampFork, entrance], 2.65, "swamp");
           } else if (localX >= 0) {
             entrance = roadEntranceForVillage(village, meadowEastFork);
-            addExplorationRoad(group, [homeJunction, meadowEastFork, entrance], 2.75);
+            addExplorationRoad(group, [homeJunction, { x: 22, z: -38 }, meadowEastFork, entrance], 2.75, "wild");
           } else {
             entrance = roadEntranceForVillage(village, meadowWestFork);
-            addExplorationRoad(group, [homeJunction, meadowWestFork, entrance], 2.75);
+            addExplorationRoad(group, [homeJunction, { x: -28, z: 15 }, meadowWestFork, entrance], 2.75, "wild");
           }
-          addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2);
+          addExplorationRoad(group, [entrance, { x: localX, z: localZ }], 2.2, "lane");
         }
       }
 
