@@ -214,18 +214,37 @@ canvas {
   bottom: 18px;
   z-index: 5;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  gap: 2px;
   padding: 10px 14px;
-  pointer-events: none;
+  /* Hoverable so the title tooltip with exact kit numbers works; combat
+     mouse input is bound on window, so this does not swallow attacks. */
+  pointer-events: auto;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
+.kit-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .kit-panel strong {
   color: var(--ink);
   font-size: 15px;
+}
+
+.kit-stats {
+  color: rgba(244, 239, 228, 0.62);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.kit-stats[hidden] {
+  display: none;
 }
 
 .kit-panel[hidden] {

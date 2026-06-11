@@ -35,6 +35,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const xpFill = document.getElementById("xpFill");
   const kitReadout = document.getElementById("kitReadout");
   const kitText = document.getElementById("kitText");
+  const kitStats = document.getElementById("kitStats");
   const saveHint = document.getElementById("saveHint");
   const attackIcon = document.getElementById("attackIcon");
   const blockIcon = document.getElementById("blockIcon");
@@ -1511,6 +1512,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     leftLeg: null,
     rightLeg: null,
     swordBlade: null,
+    weaponGroup: null,
     slashArc: null,
     burstRing: null,
     castGlow: null,
@@ -1895,6 +1897,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     progress.equipment.weapon = unlocked[(index + 1) % unlocked.length];
     playSfx("ui", 1);
     showBanner("Kit: " + equipmentDefs[progress.equipment.weapon].name + " - G to swap", 2.2);
+    applyProgressionStats(false);
+    refreshLocalWeaponModel();
     saveProgress();
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     updateHud();
@@ -2024,6 +2028,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         }
       }
     }
+    if (unlocked.length) {
+      // Auto-equipped rewards change the held weapon and kit stats.
+      applyProgressionStats(false);
+      refreshLocalWeaponModel();
+    }
     return unlocked;
   }
 
@@ -2037,6 +2046,18 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       .join(" + ");
     const tackName = hasRoadwardenTack() ? " + Tack" : "";
     return (weapon ? weapon.name : "Starter Kit") + (perkName ? " + " + perkName : "") + tackName;
+  }
+
+  function currentKitTooltip() {
+    const definition = equipmentDefs[equippedWeapon()];
+    if (!definition) {
+      return "";
+    }
+    const lines = Object.entries(definition.tuning || {}).map(([key, value]) => {
+      const base = defaultCombatTuning[key];
+      return key + ": " + value + (base !== undefined && base !== value ? " (base " + base + ")" : "");
+    });
+    return definition.name + (lines.length ? "\n" + lines.join("\n") : "\nStandard tuning");
   }
 
   function defaultProgression() {
@@ -2266,32 +2287,44 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const level = getCharacterLevel(character);
     const steps = Math.max(0, level - 1);
     const boons = progression.exploration.boons || { health: 0, guard: 0, mana: 0 };
+    const kit = combatTuningFor(character);
+    let stats;
     if (character === "wizard") {
-      return {
+      stats = {
         maxHealth: 62 + steps * 5 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 72 + steps * 8 + (boons.mana || 0),
         manaRegen: 16.5 + steps * 0.65,
         potionCooldownMax: Math.max(10, 18 - (progression.exploration.potionCooldownBonus || 0))
       };
-    }
-    if (character === "ranger") {
+    } else if (character === "ranger") {
       // Focus reuses the mana fields: small pool, fast regen.
-      return {
+      stats = {
         maxHealth: 68 + steps * 5 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 64 + steps * 6 + (boons.mana || 0),
         manaRegen: 13.5 + steps * 0.5,
         potionCooldownMax: 18
       };
+    } else {
+      stats = {
+        maxHealth: 78 + steps * 6 + (boons.health || 0),
+        maxGuard: 68 + steps * 7 + (boons.guard || 0),
+        maxMana: 0,
+        manaRegen: 0,
+        potionCooldownMax: 18
+      };
     }
-    return {
-      maxHealth: 78 + steps * 6 + (boons.health || 0),
-      maxGuard: 68 + steps * 7 + (boons.guard || 0),
-      maxMana: 0,
-      manaRegen: 0,
-      potionCooldownMax: 18
-    };
+    // Equipped-kit stat identity (small sidegrade modifiers).
+    stats.maxHealth += kit.kitHealthBonus || 0;
+    if (stats.maxGuard > 0) {
+      stats.maxGuard += kit.kitGuardBonus || 0;
+    }
+    if (stats.maxMana > 0) {
+      stats.maxMana += kit.kitManaBonus || 0;
+      stats.manaRegen *= kit.kitManaRegenMul || 1;
+    }
+    return stats;
   }
 
   function applyProgressionStats(resetVitals = false) {
@@ -2299,6 +2332,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const healthRatio = player.maxHealth > 0 ? clamp(player.health / player.maxHealth, 0, 1) : 1;
     const guardRatio = player.maxGuard > 0 ? clamp(player.guard / player.maxGuard, 0, 1) : 1;
     const manaRatio = player.maxMana > 0 ? clamp(player.mana / player.maxMana, 0, 1) : 1;
+    player.kitMoveSpeedMul = combatTuningFor(player.character).kitMoveSpeedMul || 1;
     player.maxHealth = stats.maxHealth;
     player.maxGuard = stats.maxGuard;
     player.maxMana = stats.maxMana;
@@ -3047,7 +3081,6 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
     const briar = game.exploration.biomes.find(biome => biome.id === "briar");
-    const briar = game.exploration.biomes.find(biome => biome.id === "briar");
     const mountainInfluence = biomeTerrainInfluence(mountain, localX, localZ);
     if (mountainInfluence > 0) {
       const ridge = Math.sin(localX * 0.052 + localZ * 0.018 + seedPhase) * 0.48
@@ -3142,6 +3175,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
+    const briar = game.exploration.biomes.find(biome => biome.id === "briar");
     const zones = [];
     const landmarkZones = [
       { x: -game.exploration.origin.x, z: -game.exploration.origin.z, radius: arenaRadius + 24, blend: 18, height: 0, strength: 1.0 },
@@ -6645,17 +6679,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.speed *= dread ? 1.22 : 1.12;
     enemy.damageMul = dread ? 1.85 : 1.4;
     enemy.xpMul = dread ? 2.4 : 1.6;
-    enemy.radius *= dread ? 1.16 : 1.08;
+    enemy.tierScale = dread ? 1.16 : 1.08;
+    enemy.radius *= enemy.tierScale;
     applyEnemyTierVisual(enemy);
   }
 
   function applyEnemyTierVisual(enemy) {
-    if (enemy.tierVisualApplied || !enemy.tier || enemy.tier < 2) {
+    if (!enemy.tier || enemy.tier < 2) {
       return;
     }
     enemy.tierVisualApplied = true;
     const dread = enemy.tier === 3;
-    enemy.group.scale.multiplyScalar(dread ? 1.16 : 1.08);
+    enemy.tierScale = dread ? 1.16 : 1.08;
+    if (enemy.group) {
+      enemy.group.scale.setScalar((enemy.scale || 1) * enemy.tierScale);
+    }
     if (enemy.hpFill && enemy.hpFill.material) {
       enemy.hpFill.material.color.setHex(dread ? 0xff705c : 0xffd166);
     }
@@ -7262,6 +7300,183 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Kit weapon factory. Builds the held weapon mesh for a given equipment id
+  // in pivot-local space (knight: blade toward -Z; wizard: shaft along +Y;
+  // ranger: stave plane Y-Z, string toward +Z). Used by the local player and
+  // remote player models so equipped kits are visible to everyone.
+  // ---------------------------------------------------------------------
+  function buildSwordTip(radiusAcrossFlats, bladeEndZ, material) {
+    // 4-sided cone whose square base matches the blade cross-section and
+    // whose apex points away from the hilt, joined flush at bladeEndZ.
+    const tip = makeCylinder(0.0, radiusAcrossFlats * Math.SQRT2, 0.24, 4, material, 0, 0, bladeEndZ - 0.12);
+    tip.rotation.x = -Math.PI / 2;
+    tip.rotation.y = Math.PI / 4;
+    return tip;
+  }
+
+  function buildKnightWeapon(weaponId) {
+    const weapon = new THREE.Group();
+    if (weaponId === "knight_crownring_maul") {
+      const haft = makeCylinder(0.05, 0.055, 1.5, 8, materials.wood, 0, 0, -0.55);
+      haft.rotation.x = Math.PI / 2;
+      const head = makeBox(0.3, 0.3, 0.42, materials.iron, 0, 0, -1.42);
+      const bandFront = makeBox(0.33, 0.33, 0.06, materials.gold, 0, 0, -1.58);
+      const bandBack = makeBox(0.33, 0.33, 0.06, materials.gold, 0, 0, -1.26);
+      const stud = makeCylinder(0.0, 0.09, 0.16, 4, materials.steel.clone(), 0, 0, -1.71);
+      stud.rotation.x = -Math.PI / 2;
+      stud.rotation.y = Math.PI / 4;
+      const pommel = makeSphere(0.08, materials.iron, 0, 0, 0.17);
+      weapon.add(haft, head, bandFront, bandBack, stud, pommel);
+      return weapon;
+    }
+    if (weaponId === "knight_roadwarden_blade") {
+      const grip = makeCylinder(0.05, 0.05, 0.45, 8, materials.darkLeather, 0, 0, -0.1);
+      grip.rotation.x = Math.PI / 2;
+      const blade = makeBox(0.085, 0.085, 1.7, materials.steel, 0, 0, -0.95);
+      const fuller = makeBox(0.022, 0.015, 1.2, materials.blue, 0, 0.05, -0.92);
+      const tip = buildSwordTip(0.0425, -1.8, materials.steel);
+      const guard = makeBox(0.5, 0.075, 0.075, materials.gold, 0, 0, -0.26);
+      const pommel = makeSphere(0.085, materials.gold, 0, 0, 0.17);
+      weapon.add(grip, blade, fuller, tip, guard, pommel);
+      return weapon;
+    }
+    if (weaponId === "knight_briarfall_hookblade") {
+      const grip = makeCylinder(0.052, 0.052, 0.45, 8, materials.leather, 0, 0, -0.1);
+      grip.rotation.x = Math.PI / 2;
+      const blade = makeBox(0.08, 0.08, 1.25, materials.steel, 0, 0, -0.73);
+      const tip = buildSwordTip(0.04, -1.355, materials.steel);
+      const hook = makeBox(0.07, 0.26, 0.09, materials.steel.clone(), 0, 0.14, -1.24);
+      hook.rotation.x = -0.55;
+      const guard = makeBox(0.44, 0.075, 0.075, materials.cactus, 0, 0, -0.26);
+      const pommel = makeSphere(0.085, materials.cactus, 0, 0, 0.17);
+      weapon.add(grip, blade, tip, hook, guard, pommel);
+      return weapon;
+    }
+    // knight_arming_sword (default)
+    const grip = makeCylinder(0.055, 0.055, 0.45, 8, materials.wood, 0, 0, -0.1);
+    grip.rotation.x = Math.PI / 2;
+    const blade = makeBox(0.09, 0.09, 1.55, materials.steel, 0, 0, -0.88);
+    const fuller = makeBox(0.025, 0.015, 1.04, materials.iron, 0, 0.052, -0.86);
+    const tip = buildSwordTip(0.045, -1.655, materials.steel);
+    const guard = makeBox(0.46, 0.08, 0.08, materials.gold, 0, 0, -0.26);
+    const pommel = makeSphere(0.09, materials.gold, 0, 0, 0.17);
+    weapon.add(grip, blade, fuller, tip, guard, pommel);
+    return weapon;
+  }
+
+  function buildWizardWeapon(weaponId) {
+    const weapon = new THREE.Group();
+    if (weaponId === "wizard_stormcall_rod") {
+      const shaft = makeCylinder(0.05, 0.06, 1.35, 10, materials.iron, 0, 0.1, 0);
+      const cap = makeCylinder(0.13, 0.09, 0.16, 12, materials.gold, 0, 0.82, 0);
+      const orb = makeSphere(0.21, materials.lightningCore.clone(), 0, 1.02, 0);
+      for (let i = 0; i < 4; i += 1) {
+        const angle = (i / 4) * TAU;
+        const spike = makeCylinder(0.0, 0.04, 0.22, 5, materials.iron, Math.cos(angle) * 0.2, 1.06, Math.sin(angle) * 0.2);
+        spike.rotation.z = Math.cos(angle) * -0.9;
+        spike.rotation.x = Math.sin(angle) * 0.9;
+        weapon.add(spike);
+      }
+      const glow = new THREE.PointLight(0x9fd3ff, 1.8, 7, 1.7);
+      glow.position.set(0, 1.02, 0);
+      weapon.add(shaft, cap, orb, glow);
+      return weapon;
+    }
+    if (weaponId === "wizard_wayfinder_focus") {
+      const shaft = makeCylinder(0.042, 0.052, 1.86, 10, materials.paleWood, 0, 0.24, 0);
+      const cap = makeCylinder(0.14, 0.09, 0.18, 12, materials.gold, 0, 1.2, 0);
+      const ringA = makeCylinder(0.21, 0.21, 0.03, 18, materials.gold, 0, 1.3, 0);
+      ringA.rotation.x = Math.PI / 2;
+      const ringB = makeCylinder(0.15, 0.15, 0.025, 16, materials.wizardTrim.clone(), 0, 1.42, 0);
+      ringB.rotation.x = Math.PI / 2;
+      const crystal = makeSphere(0.13, materials.lightningCore.clone(), 0, 1.42, 0);
+      const glow = new THREE.PointLight(0xffd166, 1.3, 6, 1.8);
+      glow.position.set(0, 1.42, 0);
+      weapon.add(shaft, cap, ringA, ringB, crystal, glow);
+      return weapon;
+    }
+    if (weaponId === "wizard_briar_focus") {
+      const shaft = makeCylinder(0.045, 0.058, 1.7, 9, materials.wood, 0, 0.18, 0);
+      const orb = makeSphere(0.16, materials.wisp.clone(), 0, 1.26, 0);
+      const core = makeSphere(0.07, materials.wispCore.clone(), 0, 1.26, 0);
+      for (let i = 0; i < 3; i += 1) {
+        const angle = (i / 3) * TAU + 0.5;
+        const thorn = makeCylinder(0.0, 0.035, 0.2, 5, materials.wood, Math.cos(angle) * 0.16, 1.14, Math.sin(angle) * 0.16);
+        thorn.rotation.z = Math.cos(angle) * -0.85;
+        thorn.rotation.x = Math.sin(angle) * 0.85;
+        weapon.add(thorn);
+      }
+      const glow = new THREE.PointLight(0x5effbd, 1.3, 6, 1.8);
+      glow.position.set(0, 1.26, 0);
+      weapon.add(shaft, orb, core, glow);
+      return weapon;
+    }
+    // wizard_oak_staff (default)
+    const shaft = makeCylinder(0.045, 0.055, 1.86, 10, materials.wood, 0, 0.24, 0);
+    const cap = makeCylinder(0.16, 0.1, 0.2, 12, materials.gold, 0, 1.2, 0);
+    const crystal = makeSphere(0.18, materials.lightningCore.clone(), 0, 1.38, 0);
+    const crystalRing = makeCylinder(0.22, 0.22, 0.035, 18, materials.wizardTrim.clone(), 0, 1.26, 0);
+    crystalRing.rotation.x = Math.PI / 2;
+    const glow = new THREE.PointLight(0x7ae8ff, 1.35, 6, 1.8);
+    glow.position.set(0, 1.38, 0);
+    weapon.add(shaft, cap, crystal, crystalRing, glow);
+    return weapon;
+  }
+
+  function buildRangerWeapon(weaponId) {
+    const weapon = new THREE.Group();
+    const recurve = weaponId === "ranger_crownring_recurve";
+    const briar = weaponId === "ranger_briarstring_bow";
+    const staveMaterial = recurve ? materials.wood : briar ? materials.cactus : materials.paleWood;
+    const tipMaterial = recurve ? materials.gold : materials.rangerTrim.clone();
+    const stave = new THREE.Mesh(new THREE.TorusGeometry(0.58, recurve ? 0.042 : 0.035, 8, 20, Math.PI * 0.62), staveMaterial);
+    stave.rotation.set(0, Math.PI / 2, -Math.PI * 0.31);
+    stave.position.z = 0.48;
+    addShadow(stave);
+    const grip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
+    const string = makeBox(0.012, 0.96, 0.012, briar ? materials.rope : materials.bone, 0, 0, 0.15);
+    const upperTip = makeSphere(recurve ? 0.055 : 0.045, tipMaterial, 0, 0.48, 0.15);
+    const lowerTip = makeSphere(recurve ? 0.055 : 0.045, tipMaterial, 0, -0.48, 0.15);
+    weapon.add(stave, grip, string, upperTip, lowerTip);
+    if (briar) {
+      for (const y of [0.3, -0.3]) {
+        const thorn = makeCylinder(0.0, 0.028, 0.12, 5, materials.wood, 0, y, 0.02);
+        thorn.rotation.x = -Math.PI / 2;
+        weapon.add(thorn);
+      }
+    }
+    return weapon;
+  }
+
+  function buildWeaponModel(weaponId) {
+    const definition = equipmentDefs[weaponId];
+    const character = definition ? definition.character : "knight";
+    if (character === "wizard") {
+      return buildWizardWeapon(weaponId);
+    }
+    if (character === "ranger") {
+      return buildRangerWeapon(weaponId);
+    }
+    return buildKnightWeapon(weaponId);
+  }
+
+  function localWeaponPivot() {
+    return player.swordPivot || player.staffPivot || player.bowPivot;
+  }
+
+  function refreshLocalWeaponModel() {
+    const pivot = localWeaponPivot();
+    if (!pivot) {
+      return;
+    }
+    if (player.weaponGroup) {
+      pivot.remove(player.weaponGroup);
+    }
+    player.weaponGroup = buildWeaponModel(equippedWeapon());
+    pivot.add(player.weaponGroup);
+  }
+
   function createKnight() {
     const group = new THREE.Group();
     group.position.copy(player.position);
@@ -7310,16 +7525,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const swordPivot = new THREE.Group();
     swordPivot.position.set(0.7, 1.27, -0.05);
-    const grip = makeCylinder(0.055, 0.055, 0.45, 8, materials.wood, 0, 0, -0.1);
-    grip.rotation.x = Math.PI / 2;
-    const blade = makeBox(0.09, 0.09, 1.55, materials.steel, 0, 0, -0.88);
-    const bladeFuller = makeBox(0.025, 0.015, 1.04, materials.iron, 0, 0.052, -0.86);
-    const bladeTip = makeCylinder(0.0, 0.075, 0.24, 4, materials.steel, 0, 0, -1.78);
-    bladeTip.rotation.x = Math.PI / 2;
-    bladeTip.rotation.z = Math.PI / 4;
-    const guard = makeBox(0.46, 0.08, 0.08, materials.gold, 0, 0, -0.26);
-    const pommel = makeSphere(0.09, materials.gold, 0, 0, 0.17);
-    swordPivot.add(grip, blade, bladeFuller, bladeTip, guard, pommel);
+    player.weaponGroup = buildWeaponModel(equippedWeapon("knight"));
+    swordPivot.add(player.weaponGroup);
     swordPivot.rotation.set(-0.22, -0.24, -0.42);
 
     const shieldPivot = new THREE.Group();
@@ -7367,7 +7574,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     player.rightArm = rightArm;
     player.leftLeg = leftLeg;
     player.rightLeg = rightLeg;
-    player.swordBlade = blade;
+    player.swordBlade = null;
     player.slashArc = slashArc;
     player.burstRing = null;
     player.castGlow = null;
@@ -7413,14 +7620,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
-    const staffShaft = makeCylinder(0.045, 0.055, 1.86, 10, materials.wood, 0, 0.24, 0);
-    const staffCap = makeCylinder(0.16, 0.1, 0.2, 12, materials.gold, 0, 1.2, 0);
-    const crystal = makeSphere(0.18, materials.lightningCore.clone(), 0, 1.38, 0);
-    const crystalRing = makeCylinder(0.22, 0.22, 0.035, 18, materials.wizardTrim.clone(), 0, 1.26, 0);
-    crystalRing.rotation.x = Math.PI / 2;
-    const staffGlow = new THREE.PointLight(0x7ae8ff, 1.35, 6, 1.8);
-    staffGlow.position.set(0, 1.38, 0);
-    staffPivot.add(staffShaft, staffCap, crystal, crystalRing, staffGlow);
+    player.weaponGroup = buildWeaponModel(equippedWeapon("wizard"));
+    staffPivot.add(player.weaponGroup);
     staffPivot.rotation.set(0.08, 0, -0.16);
 
     const castGlow = makeSphere(0.13, materials.lightningCore.clone(), -0.52, 1.05, -0.18);
@@ -7514,19 +7715,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
 
     // Recurve bow held vertically in the left hand, stave bulging toward -Z.
+    // (Torus arc lives in XY; Rz centers it on +X, then Ry(90deg) maps it into
+    // the Y-Z plane so the limbs sweep up/down and the belly points forward.)
     const bowPivot = new THREE.Group();
     bowPivot.position.set(-0.56, 1.0, -0.08);
-    // Torus arc lives in XY; Rz centers it on +X, then Ry(90deg) maps it into the
-    // Y-Z plane so the limbs sweep up/down and the belly points forward (-Z).
-    const bowStave = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 8, 20, Math.PI * 0.62), materials.paleWood);
-    bowStave.rotation.set(0, Math.PI / 2, -Math.PI * 0.31);
-    bowStave.position.z = 0.48;
-    addShadow(bowStave);
-    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
-    const bowString = makeBox(0.012, 0.96, 0.012, materials.bone, 0, 0, 0.15);
-    const upperTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, 0.48, 0.15);
-    const lowerTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, -0.48, 0.15);
-    bowPivot.add(bowStave, bowGrip, bowString, upperTip, lowerTip);
+    player.weaponGroup = buildWeaponModel(equippedWeapon("ranger"));
+    bowPivot.add(player.weaponGroup);
     bowPivot.rotation.set(0, -0.3, -0.06);
 
     const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
@@ -7860,7 +8054,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         .filter(([, def]) => def && def.character === entry.character && def.name)
         .map(([id, def]) => ({
           label: def.name,
-          text: defaultWeaponByCharacter[entry.character] === id ? "starting kit." : "earned in the world."
+          text: (def.summary ? def.summary + " - " : "")
+            + (defaultWeaponByCharacter[entry.character] === id ? "starting kit." : "earned in the world.")
         }));
       if (kitItems.length > 0) {
         helpParagraph(kits, characterDisplayName(entry.character) + " kits:");
@@ -8589,16 +8784,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.hoverHeight = state.hoverHeight || enemy.hoverHeight || 0;
     enemy.desiredRange = state.desiredRange || enemy.desiredRange || 0;
     enemy.exploration = !!state.exploration;
-    if ((state.tier || 1) > (enemy.tier || 1)) {
-      enemy.tier = state.tier;
-      applyEnemyTierVisual(enemy);
-    }
+    enemy.tier = state.tier || enemy.tier || 1;
     enemy.activityType = state.activityType || "";
     enemy.activityId = state.activityId || "";
     enemy.lastWorldSeen = clock.elapsedTime;
     if (enemy.group) {
       enemy.group.scale.setScalar(enemy.scale);
     }
+    applyEnemyTierVisual(enemy);
     if (firstSeen) {
       enemy.position.copy(enemy.networkTargetPosition);
       enemy.yaw = enemy.networkTargetYaw;
@@ -9201,16 +9394,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const swordPivot = new THREE.Group();
     swordPivot.position.set(0.7, 1.27, -0.05);
-    const grip = makeCylinder(0.055, 0.055, 0.45, 8, materials.wood, 0, 0, -0.1);
-    grip.rotation.x = Math.PI / 2;
-    const blade = makeBox(0.09, 0.09, 1.55, materials.steel.clone(), 0, 0, -0.88);
-    const bladeFuller = makeBox(0.025, 0.015, 1.04, materials.iron, 0, 0.052, -0.86);
-    const bladeTip = makeCylinder(0.0, 0.075, 0.24, 4, materials.steel.clone(), 0, 0, -1.78);
-    bladeTip.rotation.x = Math.PI / 2;
-    bladeTip.rotation.z = Math.PI / 4;
-    const guard = makeBox(0.46, 0.08, 0.08, trim, 0, 0, -0.26);
-    const pommel = makeSphere(0.09, trim, 0, 0, 0.17);
-    swordPivot.add(grip, blade, bladeFuller, bladeTip, guard, pommel);
+    swordPivot.add(buildWeaponModel(defaultWeaponByCharacter.knight));
     swordPivot.rotation.set(-0.22, -0.24, -0.42);
 
     const shieldPivot = new THREE.Group();
@@ -9233,7 +9417,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       leftArm, rightArm, leftPauldron, rightPauldron, leftGauntlet, rightGauntlet,
       swordPivot, shieldPivot
     );
-    return { body: chest, leftLeg, rightLeg, leftArm, rightArm, nameTagY: 3.22 };
+    return { body: chest, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: swordPivot, nameTagY: 3.22 };
   }
 
   function createRemoteWizardDetails(group, palette) {
@@ -9277,14 +9461,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
-    const staffShaft = makeCylinder(0.045, 0.055, 1.86, 10, materials.wood, 0, 0.24, 0);
-    const staffCap = makeCylinder(0.16, 0.1, 0.2, 12, trim, 0, 1.2, 0);
-    const crystal = makeSphere(0.18, glow.clone(), 0, 1.38, 0);
-    const crystalRing = makeCylinder(0.22, 0.22, 0.035, 18, trim, 0, 1.26, 0);
-    crystalRing.rotation.x = Math.PI / 2;
-    const staffGlow = new THREE.PointLight(palette.glow, 1.15, 6, 1.8);
-    staffGlow.position.set(0, 1.38, 0);
-    staffPivot.add(staffShaft, staffCap, crystal, crystalRing, staffGlow);
+    staffPivot.add(buildWeaponModel(defaultWeaponByCharacter.wizard));
     staffPivot.rotation.set(0.08, 0, -0.16);
 
     group.add(
@@ -9294,7 +9471,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       leftArm, rightArm, leftHand, rightHand, leftCuff, rightCuff,
       staffPivot
     );
-    return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, nameTagY: 3.36 };
+    return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: staffPivot, nameTagY: 3.36 };
   }
 
   function createRemoteRangerDetails(group, palette) {
@@ -9348,13 +9525,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const bowPivot = new THREE.Group();
     bowPivot.position.set(-0.56, 1.0, -0.08);
-    const bowStave = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 8, 20, Math.PI * 0.62), materials.paleWood);
-    bowStave.rotation.set(0, Math.PI / 2, -Math.PI * 0.31);
-    bowStave.position.z = 0.48;
-    addShadow(bowStave);
-    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
-    const bowString = makeBox(0.012, 0.96, 0.012, materials.bone, 0, 0, 0.15);
-    bowPivot.add(bowStave, bowGrip, bowString);
+    bowPivot.add(buildWeaponModel(defaultWeaponByCharacter.ranger));
     bowPivot.rotation.set(0, -0.3, -0.06);
 
     group.add(
@@ -9365,7 +9536,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       quiver, bowPivot
     );
 
-    return { leftLeg, rightLeg, leftArm, rightArm, body: chest, nameTagY: 3.0 };
+    return { leftLeg, rightLeg, leftArm, rightArm, body: chest, weaponPivot: bowPivot, nameTagY: 3.0 };
   }
 
   function createRemotePlayerModel(character, id) {
@@ -9404,6 +9575,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       leftArm: details.leftArm,
       rightArm: details.rightArm,
       body: details.body,
+      weaponPivot: details.weaponPivot,
+      renderedWeaponId: defaultWeaponByCharacter[characterKey(character)],
       character,
       modeKey: game.mode,
       targetPosition: new THREE.Vector3(),
@@ -9526,6 +9699,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     remote.combatProfile = claimedProfile;
     remote.weaponId = remote.combatProfile.weaponId;
     remote.perks = remote.combatProfile.perks.slice();
+    if (remote.weaponPivot && remote.renderedWeaponId !== remote.weaponId) {
+      remote.renderedWeaponId = remote.weaponId;
+      remote.weaponPivot.clear();
+      remote.weaponPivot.add(buildWeaponModel(remote.weaponId));
+    }
     remote.targetPosition.set(
       state.x || 0,
       explorationGroundWorldY(state.x || 0, state.z || 0),
@@ -10791,13 +10969,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       tmpVec.addScaledVector(f, -inputZ);
       tmpVec.addScaledVector(r, inputX);
       tmpVec.normalize();
-      const speed = mounted
+      const baseSpeed = mounted
         ? mountedMoveSpeed()
         : player.character === "wizard"
         ? (player.attacking ? 4.45 : 6.65)
         : player.character === "ranger"
         ? (player.attacking ? 4.9 : 6.9)
         : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
+      const speed = mounted ? baseSpeed : baseSpeed * (player.kitMoveSpeedMul || 1);
       player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
       player.velocity.z = lerp(player.velocity.z, tmpVec.z * speed, 1 - Math.pow(0.001, dt));
       player.yaw = yawFromDirection(tmpVec);
@@ -11538,8 +11717,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     group.position.copy(source);
     const shaft = makeCylinder(0.022, 0.022, 0.78, 6, materials.wood, 0, 0, 0);
     shaft.rotation.x = Math.PI / 2;
+    // Apex toward -Z (direction of travel): cylinder +Y maps to -Z with Rx(-90deg).
     const head = makeCylinder(0.0, 0.045, 0.14, 6, materials.steel.clone(), 0, 0, -0.45);
-    head.rotation.x = Math.PI / 2;
+    head.rotation.x = -Math.PI / 2;
     const fletch = makeBox(0.012, 0.09, 0.14, materials.cloth, 0, 0, 0.34);
     group.add(shaft, head, fletch);
     group.rotation.y = Math.atan2(-velocity.x, -velocity.z);
@@ -12772,9 +12952,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       xpFill.style.transform = "scaleX(" + xpPct.toFixed(3) + ")";
       xpReadout.title = xpIntoLevel + " / " + xpSpan + " XP to level " + (level + 1);
       kitText.textContent = currentKitText();
+      const kitDefinition = equipmentDefs[equippedWeapon()];
+      if (kitStats) {
+        kitStats.hidden = !kitDefinition || !kitDefinition.summary;
+        kitStats.textContent = kitDefinition && kitDefinition.summary ? kitDefinition.summary : "";
+      }
+      kitReadout.title = currentKitTooltip();
     } else {
       xpFill.style.transform = "scaleX(0)";
       kitText.textContent = "";
+      if (kitStats) {
+        kitStats.hidden = true;
+        kitStats.textContent = "";
+      }
+      kitReadout.title = "";
     }
     const tuning = combatTuningFor();
     updateAbilityLocks();

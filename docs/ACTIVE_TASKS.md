@@ -633,8 +633,19 @@ Shipped slice: enemy tiers + class kit expansion to 5 abilities (owner: Cursor a
 - Help panel: `helpClassGuide` and the controls list now include the F/C slots (the ability names/levels flow in automatically from `rpg.js`).
 - Design rationale captured by the creative-design pass: each class got one defensive/utility tool and one offensive payoff; the level 1-3 kit stays the bread and butter.
 
+Shipped slice: visible kit identity + sword tip geometry fix (owner: Cursor agent)
+- Every weapon kit now has a distinct held model, built procedurally by a shared factory in `src/main.js` (`buildWeaponModel` -> `buildKnightWeapon` / `buildWizardWeapon` / `buildRangerWeapon`). Local models, remote player models, and kit swaps all use it:
+  - Knight: Arming Sword (classic), Roadwarden Blade (longer slim blade, blue fuller), Crownring Maul (haft + banded iron head), Briarfall Hookblade (short blade with a hook, green fittings).
+  - Wizard: Oak Staff (classic), Wayfinder Focus (pale staff, double gold rings, warm light), Briar Focus (thorned staff with a green wisp orb), Stormcall Rod (short iron rod, storm orb + spikes).
+  - Ranger: Ash Bow (classic), Crownring Recurve (dark thicker limbs, gold tips), Briarstring Bow (green limbs, rope string, thorn studs).
+- Swapping with G rebuilds the local mesh (`refreshLocalWeaponModel`, called from `cycleEquippedWeapon` and auto-equip quest rewards). Remote players swap via the existing `weaponId` in the replicated state (`upsertRemotePlayer` rebuilds `remote.weaponPivot` when it changes); no new message types.
+- Kit stat identity: each non-starter kit carries 1-2 small sidegrade stat modifiers in `src/content/rpg.js` via new tuning keys `kitHealthBonus`, `kitGuardBonus`, `kitManaBonus`, `kitManaRegenMul`, `kitMoveSpeedMul` (defaults in `defaultCombatTuning`). Applied in `progressionStatsFor`/`applyProgressionStats`; move speed multiplier is cached on `player.kitMoveSpeedMul` and skipped while mounted. Numbers are deliberately small (6-10 flat resource, 1.07-1.08x regen, 0.96-1.04x speed).
+- UI: the lower-left kit panel got a second muted line with the kit's `summary` tag string (e.g. "+dmg +HP / -reach -speed") and a hover tooltip listing the kit's exact tuning overrides vs base values. Panel is now hoverable (combat mouse input is on `window`, so it does not eat clicks); still hidden sub-720px. The Help panel kit list shows the same summary tags.
+- Geometry fix: the knight sword `bladeTip` cone was both inverted (apex pointed at the hilt) and mis-rotated 45 degrees off-axis, reading as a floating diamond. `buildSwordTip` now spins the 4-sided cone about its own axis first (`rotation.y = PI/4`), points the apex forward (`rotation.x = -PI/2`), sizes the base to the blade cross-section (radius = halfWidth * sqrt2), and joins flush at the blade end z. Same fix applied to the arrow projectile head, which had the same inversion.
+
 Remaining work:
-- Playtest kit balance (maul vs blade, rod vs focus) in Crownring waves.
+- Playtest kit balance (maul vs blade, rod vs focus) in Crownring waves, now including the new kit stat modifiers.
+- Two-client smoke test: remote weapon model swap when a teammate presses G mid-session.
 - Playtest tier thresholds/multipliers and the six new abilities (especially Frostbind stun duration and Crown of Storms cost) against tier 2/3 packs.
 - Decide and implement the first inventory boundary.
 - Add temporary buffs/debuffs once UI and persistence surfaces are clear.
