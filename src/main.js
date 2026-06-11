@@ -75,6 +75,7 @@ import {
   const questDialogStatus = document.getElementById("questDialogStatus");
   const questAcceptButton = document.getElementById("questAcceptButton");
   const questClaimButton = document.getElementById("questClaimButton");
+  const questServiceButton = document.getElementById("questServiceButton");
   const questCloseButton = document.getElementById("questCloseButton");
   const questLog = document.getElementById("questLog");
   const questLogItems = document.getElementById("questLogItems");
@@ -250,6 +251,7 @@ import {
       horse: null,
       discovered: new Set(),
       completed: false,
+      arenaActivity: defaultArenaActivity(),
       spawn: new THREE.Vector3(180, 0, 1.6)
     }
   };
@@ -934,7 +936,7 @@ import {
       exploration.completed = !!game.exploration.completed;
       exploration.horseUnlocked = exploration.horseUnlocked || !!game.exploration.horse;
     }
-    if (game.mode === "exploration" && game.state === "playing") {
+    if (game.mode === "exploration" && game.state === "playing" && !localPlayerInArenaActivity()) {
       const local = explorationLocalPosition(player.position, new THREE.Vector3());
       exploration.position = {
         x: Math.round(local.x * 100) / 100,
@@ -1019,6 +1021,225 @@ import {
     return "Follow quest markers and return to the giver for rewards.";
   }
 
+  function defaultArenaActivity() {
+    return {
+      active: false,
+      phase: "idle",
+      activityId: "",
+      wave: 0,
+      center: { x: 0, z: 0 },
+      radius: arenaRadius,
+      participants: [],
+      startedBy: "",
+      nextWaveIn: 0,
+      exitOpen: false,
+      endedReason: null,
+      returnPosition: null,
+      infirmaryPosition: null
+    };
+  }
+
+  function arenaActivityActive() {
+    return game.mode === "exploration" && !!game.exploration.arenaActivity.active;
+  }
+
+  function localPlayerInArenaActivity() {
+    const activity = game.exploration.arenaActivity;
+    return arenaActivityActive() && (!activity.participants.length || activity.participants.includes(online.localId));
+  }
+
+  function resetArenaActivityState() {
+    game.exploration.arenaActivity = defaultArenaActivity();
+  }
+
+  function serializeArenaActivityState() {
+    const activity = game.exploration.arenaActivity;
+    return {
+      active: !!activity.active,
+      phase: activity.phase,
+      activityId: activity.activityId,
+      wave: activity.wave,
+      center: activity.center,
+      radius: activity.radius,
+      participants: activity.participants.slice(0, 8),
+      startedBy: activity.startedBy,
+      nextWaveIn: activity.nextWaveIn,
+      exitOpen: !!activity.exitOpen,
+      endedReason: activity.endedReason
+    };
+  }
+
+  function applyArenaActivitySnapshot(snapshot) {
+    if (!snapshot || online.role !== "join") {
+      return;
+    }
+    const activity = game.exploration.arenaActivity;
+    activity.active = !!snapshot.active;
+    activity.phase = snapshot.phase || (activity.active ? "wave" : "idle");
+    activity.activityId = snapshot.activityId || "";
+    activity.wave = Math.max(0, Math.floor(numberOrZero(snapshot.wave)));
+    activity.center = snapshot.center || { x: 0, z: 0 };
+    activity.radius = Math.max(8, numberOrZero(snapshot.radius) || arenaRadius);
+    activity.participants = Array.isArray(snapshot.participants) ? snapshot.participants.slice(0, 8) : [];
+    activity.startedBy = snapshot.startedBy || "";
+    activity.nextWaveIn = Math.max(0, numberOrZero(snapshot.nextWaveIn));
+    activity.exitOpen = !!snapshot.exitOpen;
+    activity.endedReason = snapshot.endedReason || null;
+    setArenaVisible(localPlayerInArenaActivity());
+    if (!localPlayerInArenaActivity() && activity.active) {
+      showBanner("Crownring match in progress", 2.2);
+    }
+  }
+
+  function tagArenaActor(actor) {
+    const activity = game.exploration.arenaActivity;
+    if (!activity.active || !actor) {
+      return actor;
+    }
+    actor.activityType = "arena";
+    actor.activityId = activity.activityId;
+    return actor;
+  }
+
+  function clearPlayerProjectiles() {
+    for (const projectile of game.playerProjectiles) {
+      scene.remove(projectile.group);
+    }
+    game.playerProjectiles.length = 0;
+  }
+
+  function clearArenaActivityActors(activityId = game.exploration.arenaActivity.activityId) {
+    for (const enemy of game.enemies) {
+      if (!activityId || enemy.activityId === activityId) {
+        scene.remove(enemy.group);
+      }
+    }
+    game.enemies = game.enemies.filter(enemy => activityId && enemy.activityId !== activityId);
+
+    for (const fireball of game.fireballs) {
+      if (!activityId || fireball.activityId === activityId) {
+        scene.remove(fireball.group);
+      }
+    }
+    game.fireballs = game.fireballs.filter(fireball => activityId && fireball.activityId !== activityId);
+
+    for (const potion of game.potions) {
+      if (!activityId || potion.activityId === activityId) {
+        scene.remove(potion.group);
+      }
+    }
+    game.potions = game.potions.filter(potion => activityId && potion.activityId !== activityId);
+    clearPlayerProjectiles();
+  }
+
+  function crownfordInfirmaryPosition() {
+    const city = game.exploration.city;
+    if (!city) {
+      return game.exploration.spawn.clone();
+    }
+    return explorationToWorld(city.localX + 25, city.localZ - 12, new THREE.Vector3());
+  }
+
+  function parkHorseNear(position) {
+    const horse = game.exploration.horse;
+    if (!horse) {
+      return;
+    }
+    horse.mounted = false;
+    horse.position.copy(position).add(new THREE.Vector3(2.4, 0, 2.2));
+    horse.velocity.set(0, 0, 0);
+    horse.group.position.copy(horse.position);
+    player.group.visible = true;
+  }
+
+  function startCrownringArenaActivity() {
+    if (game.mode !== "exploration" || game.state !== "playing") {
+      return false;
+    }
+    if (arenaActivityActive()) {
+      showBanner("Crownring already active");
+      return false;
+    }
+    if (isJoinedClient()) {
+      sendOnlineMessage({ kind: "arenaStartRequest", state: serializePlayerState() });
+      showBanner("Ask the host to open the Crownring");
+      closeQuestDialog();
+      return false;
+    }
+
+    saveProgress();
+    const returnPosition = player.position.clone();
+    const infirmaryPosition = crownfordInfirmaryPosition();
+    const activity = game.exploration.arenaActivity;
+    Object.assign(activity, defaultArenaActivity(), {
+      active: true,
+      phase: "starting",
+      activityId: "arena-" + Date.now().toString(36),
+      center: { x: 0, z: 0 },
+      radius: arenaRadius,
+      participants: [online.localId],
+      startedBy: online.localId,
+      returnPosition: { x: returnPosition.x, z: returnPosition.z },
+      infirmaryPosition: { x: infirmaryPosition.x, z: infirmaryPosition.z }
+    });
+
+    closeQuestDialog();
+    parkHorseNear(returnPosition);
+    clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
+    clearPlayerProjectiles();
+    setArenaVisible(true);
+    scene.fog.density = 0.018;
+    game.wave = 0;
+    game.nextWaveIn = 0;
+    player.position.set(0, 0, 0);
+    player.velocity.set(0, 0, 0);
+    player.yaw = 0;
+    player.group.position.copy(player.position);
+    player.group.rotation.y = 0;
+    game.cameraYaw = 0;
+    spawnWave();
+    showBanner("Crownring opened - press Y to yield", 3);
+    sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+    sendWorldSnapshot(true);
+    updateHud();
+    return true;
+  }
+
+  function endCrownringArenaActivity(reason = "yield") {
+    const activity = game.exploration.arenaActivity;
+    if (!arenaActivityActive()) {
+      return false;
+    }
+    const defeated = reason === "defeat";
+    const returnPosition = defeated
+      ? crownfordInfirmaryPosition()
+      : new THREE.Vector3(activity.returnPosition?.x ?? game.exploration.spawn.x, 0, activity.returnPosition?.z ?? game.exploration.spawn.z);
+    clearArenaActivityActors(activity.activityId);
+    resetArenaActivityState();
+    setArenaVisible(false);
+    scene.fog.density = 0.0065;
+    game.wave = 0;
+    game.nextWaveIn = 0;
+    player.position.copy(returnPosition);
+    player.velocity.set(0, 0, 0);
+    player.hurtTimer = 0;
+    if (defeated) {
+      player.health = player.maxHealth;
+      player.guard = player.maxGuard;
+      player.mana = player.maxMana;
+    }
+    player.group.position.copy(player.position);
+    player.group.rotation.y = player.yaw;
+    parkHorseNear(player.position);
+    spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
+    showBanner(defeated ? "Recovered at Crownford infirmary" : "Yielded from the Crownring", 2.6);
+    saveProgress();
+    sendOnlineMessage({ kind: defeated ? "arenaDefeated" : "arenaLeaveRequest", state: serializePlayerState() });
+    sendWorldSnapshot(true);
+    updateHud();
+    return true;
+  }
+
   function clearExplorationWorld() {
     if (game.explorationGroup) {
       scene.remove(game.explorationGroup);
@@ -1049,6 +1270,7 @@ import {
     game.exploration.city = null;
     game.exploration.discovered = new Set();
     game.exploration.completed = false;
+    resetArenaActivityState();
     game.exploration.xp = getCharacterProgress().xp;
     closeQuestDialog();
     updateQuestLog();
@@ -2723,21 +2945,21 @@ import {
   }
 
   function dialogActionButtons() {
-    return [questAcceptButton, questClaimButton, questCloseButton].filter(button => !button.hidden);
+    return [questAcceptButton, questClaimButton, questServiceButton, questCloseButton].filter(button => !button.hidden);
   }
 
   function updateDialogSelection(index = game.dialogActionIndex) {
     const buttons = dialogActionButtons();
     if (!buttons.length) {
       game.dialogActionIndex = 0;
-      for (const button of [questAcceptButton, questClaimButton, questCloseButton]) {
+      for (const button of [questAcceptButton, questClaimButton, questServiceButton, questCloseButton]) {
         button.classList.remove("selected");
         button.setAttribute("tabindex", "-1");
       }
       return;
     }
     game.dialogActionIndex = (index + buttons.length) % buttons.length;
-    for (const button of [questAcceptButton, questClaimButton, questCloseButton]) {
+    for (const button of [questAcceptButton, questClaimButton, questServiceButton, questCloseButton]) {
       const selected = button === buttons[game.dialogActionIndex];
       button.classList.toggle("selected", selected);
       button.setAttribute("aria-current", selected ? "true" : "false");
@@ -2755,6 +2977,8 @@ import {
       acceptCurrentQuest();
     } else if (button === questClaimButton) {
       claimCurrentQuest();
+    } else if (button === questServiceButton) {
+      startCrownringArenaActivity();
     } else {
       closeQuestDialog();
     }
@@ -2817,6 +3041,7 @@ import {
     questDialogTitle.textContent = npc.name;
     questAcceptButton.hidden = true;
     questClaimButton.hidden = true;
+    questServiceButton.hidden = npc.name !== "Marshal Rowan Vale" || arenaActivityActive();
 
     if (!quest) {
       if (npc.biome === "desert") {
@@ -2842,6 +3067,10 @@ import {
       questAcceptButton.hidden = false;
     } else if (quest.state === "ready") {
       questClaimButton.hidden = false;
+    }
+    if (npc.name === "Marshal Rowan Vale" && !arenaActivityActive()) {
+      questServiceButton.hidden = false;
+      questServiceButton.textContent = "Enter Crownring";
     }
     updateDialogSelection(0);
   }
@@ -5087,7 +5316,9 @@ import {
       entering: !!enemy.entering,
       hoverHeight: enemy.hoverHeight || 0,
       desiredRange: enemy.desiredRange || 0,
-      exploration: !!enemy.exploration
+      exploration: !!enemy.exploration,
+      activityType: enemy.activityType || "",
+      activityId: enemy.activityId || ""
     };
   }
 
@@ -5105,7 +5336,9 @@ import {
       life: fireball.life,
       damage: fireball.damage,
       guardDamage: fireball.guardDamage,
-      targetId: fireball.targetId || online.localId
+      targetId: fireball.targetId || online.localId,
+      activityType: fireball.activityType || "",
+      activityId: fireball.activityId || ""
     };
   }
 
@@ -5116,7 +5349,9 @@ import {
       z: potion.position.z,
       kind: potion.kind || (potion.fullHeal ? "full" : "small"),
       healAmount: potion.healAmount,
-      fullHeal: !!potion.fullHeal
+      fullHeal: !!potion.fullHeal,
+      activityType: potion.activityType || "",
+      activityId: potion.activityId || ""
     };
   }
 
@@ -5125,6 +5360,7 @@ import {
       wave: game.wave,
       kills: game.kills,
       nextWaveIn: game.nextWaveIn,
+      arenaActivity: serializeArenaActivityState(),
       enemies: game.enemies.filter(enemy => !enemy.dead).map(serializeEnemyState),
       fireballs: game.fireballs.map(serializeFireballState),
       potions: game.potions.map(serializePotionState)
@@ -5181,6 +5417,8 @@ import {
     enemy.hoverHeight = state.hoverHeight || enemy.hoverHeight || 0;
     enemy.desiredRange = state.desiredRange || enemy.desiredRange || 0;
     enemy.exploration = !!state.exploration;
+    enemy.activityType = state.activityType || "";
+    enemy.activityId = state.activityId || "";
     enemy.lastWorldSeen = clock.elapsedTime;
     if (enemy.group) {
       enemy.group.scale.setScalar(enemy.scale);
@@ -5228,6 +5466,8 @@ import {
       damage: state.damage || 24,
       guardDamage: state.guardDamage || 36,
       targetId: state.targetId || online.localId,
+      activityType: state.activityType || "",
+      activityId: state.activityId || "",
       remoteControlled: true
     }, state.fireballId);
   }
@@ -5252,6 +5492,8 @@ import {
     fireball.damage = state.damage || fireball.damage;
     fireball.guardDamage = state.guardDamage || fireball.guardDamage;
     fireball.targetId = state.targetId || fireball.targetId;
+    fireball.activityType = state.activityType || "";
+    fireball.activityId = state.activityId || "";
     fireball.lastWorldSeen = clock.elapsedTime;
     if (firstSeen) {
       fireball.group.position.copy(fireball.networkTargetPosition);
@@ -5269,7 +5511,9 @@ import {
       potion = createHealthPotion(state.x || 0, state.z || 0, {
         kind,
         healAmount: state.healAmount,
-        netId: state.potionId
+        netId: state.potionId,
+        activityType: state.activityType || "",
+        activityId: state.activityId || ""
       });
       potion.remoteControlled = true;
       game.potions.push(potion);
@@ -5280,6 +5524,8 @@ import {
     potion.healAmount = state.healAmount || potion.healAmount;
     potion.fullHeal = !!state.fullHeal;
     potion.kind = state.kind || potion.kind;
+    potion.activityType = state.activityType || "";
+    potion.activityId = state.activityId || "";
     potion.lastWorldSeen = clock.elapsedTime;
     return potion;
   }
@@ -5302,6 +5548,7 @@ import {
     game.wave = world.wave ?? game.wave;
     game.kills = world.kills ?? 0;
     game.nextWaveIn = world.nextWaveIn ?? 0;
+    applyArenaActivitySnapshot(world.arenaActivity);
 
     const enemyIds = new Set();
     for (const enemyState of world.enemies || []) {
@@ -5459,7 +5706,13 @@ import {
     if (Math.hypot(remotePosition.x - x, remotePosition.z - z) > 4.0) {
       return;
     }
-    game.potions.push(createHealthPotion(x, z, { kind: "wizard", healAmount: 28 }));
+    const inArena = message.activityType === "arena" && arenaActivityActive();
+    game.potions.push(createHealthPotion(x, z, {
+      kind: "wizard",
+      healAmount: 28,
+      activityType: inArena ? "arena" : "",
+      activityId: inArena ? game.exploration.arenaActivity.activityId : ""
+    }));
     trimPotionDrops();
     broadcastOnlineEffect({ type: "impact", ownerId: message.id, x, y: 0, z, color: 0x7ae8ff, count: 12 });
     sendWorldSnapshot(true);
@@ -6639,6 +6892,13 @@ import {
   function spawnWave() {
     game.wave += 1;
     game.nextWaveIn = 0;
+    if (arenaActivityActive()) {
+      const activity = game.exploration.arenaActivity;
+      activity.phase = "wave";
+      activity.wave = game.wave;
+      activity.nextWaveIn = 0;
+      activity.exitOpen = false;
+    }
     const count = Math.min(5 + Math.floor(game.wave * 1.6), 18);
     const dragonCount = Math.min(Math.max(1, Math.floor(game.wave / 2)), Math.floor(count * 0.38));
     for (let i = 0; i < count; i += 1) {
@@ -6646,16 +6906,18 @@ import {
       const delay = (i % 4) * 0.18 + Math.floor(i / 4) * 0.32;
       if (i < dragonCount) {
         const dragon = createDragon(entrance.startX, entrance.startZ, game.wave);
+        tagArenaActor(dragon);
         setEnemyEntrance(dragon, entrance, delay);
         game.enemies.push(dragon);
       } else {
         const offset = i - dragonCount;
         const barbarian = createBarbarian(entrance.startX, entrance.startZ, game.wave);
+        tagArenaActor(barbarian);
         setEnemyEntrance(barbarian, entrance, delay + offset * 0.05);
         game.enemies.push(barbarian);
       }
     }
-    showBanner("Wave " + game.wave + " entering");
+    showBanner(arenaActivityActive() ? "Crownring wave " + game.wave + " entering" : "Wave " + game.wave + " entering");
   }
 
   function updateEnemyEntrance(enemy, dt) {
@@ -6832,6 +7094,8 @@ import {
       kind: options.kind,
       healAmount,
       fullHeal,
+      activityType: options.activityType || "",
+      activityId: options.activityId || "",
       pickupRadius: fullHeal ? 1.25 : 0.9,
       bobSeed: Math.random() * 10
     }, options.netId);
@@ -6844,19 +7108,28 @@ import {
     if (dist > arenaRadius - 2.8) {
       dropPosition.multiplyScalar((arenaRadius - 2.8) / dist);
     }
-    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "full" }));
+    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
+      kind: "full",
+      activityType: arenaActivityActive() ? "arena" : "",
+      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+    }));
     trimPotionDrops();
   }
 
   function dropDragonHealthPotion(enemy) {
     const dropPosition = enemy.position.clone();
-    if (game.mode !== "exploration") {
+    if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
       if (dist > arenaRadius - 2.2) {
         dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
       }
     }
-    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "small", healAmount: 18 }));
+    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
+      kind: "small",
+      healAmount: 18,
+      activityType: arenaActivityActive() ? "arena" : "",
+      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+    }));
     trimPotionDrops();
   }
 
@@ -6870,17 +7143,20 @@ import {
     }
     const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
     const dropPosition = tmpVec2.copy(player.position).add(behind);
-    if (game.mode !== "exploration") {
+    if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
       if (dist > arenaRadius - 2.2) {
         dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
       }
     }
     if (isJoinedClient()) {
+      const inArena = arenaActivityActive();
       sendOnlineMessage({
         kind: "dropPotion",
         x: dropPosition.x,
         z: dropPosition.z,
+        activityType: inArena ? "arena" : "",
+        activityId: inArena ? game.exploration.arenaActivity.activityId : "",
         state: serializePlayerState()
       });
       player.potionCooldown = player.potionCooldownMax;
@@ -6888,7 +7164,12 @@ import {
       showBanner("Potion dropped");
       return true;
     }
-    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, { kind: "wizard", healAmount: 28 }));
+    game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
+      kind: "wizard",
+      healAmount: 28,
+      activityType: arenaActivityActive() ? "arena" : "",
+      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+    }));
     trimPotionDrops();
     player.potionCooldown = player.potionCooldownMax;
     spawnImpact(dropPosition, 0x7ae8ff, 12);
@@ -6975,6 +7256,22 @@ import {
     resolveExplorationColliders();
   }
 
+  function constrainArenaPlayer() {
+    const activity = game.exploration.arenaActivity;
+    const centerX = activity.center?.x || 0;
+    const centerZ = activity.center?.z || 0;
+    const radius = Math.max(8, (activity.radius || arenaRadius) - 1.6);
+    const dx = player.position.x - centerX;
+    const dz = player.position.z - centerZ;
+    const distance = Math.hypot(dx, dz);
+    if (distance > radius) {
+      const scale = radius / Math.max(0.001, distance);
+      player.position.x = centerX + dx * scale;
+      player.position.z = centerZ + dz * scale;
+      player.velocity.multiplyScalar(0.35);
+    }
+  }
+
   function updatePlayer(dt) {
     const mounted = isPlayerMounted();
     player.attackCooldown = Math.max(0, player.attackCooldown - dt);
@@ -7027,7 +7324,9 @@ import {
     }
 
     player.position.addScaledVector(player.velocity, dt);
-    if (game.mode === "exploration") {
+    if (localPlayerInArenaActivity()) {
+      constrainArenaPlayer();
+    } else if (game.mode === "exploration") {
       constrainExplorationPlayer();
     } else {
       const dist = Math.hypot(player.position.x, player.position.z);
@@ -7551,7 +7850,7 @@ import {
       enemy.dead = true;
       if (enemy.type === "dragon") {
         dropDragonHealthPotion(enemy);
-      } else if (game.mode === "exploration" && Math.random() < (enemy.type === "spider" ? 0.2 : enemy.type === "wisp" ? 0.24 : 0.3)) {
+      } else if (game.mode === "exploration" && !arenaActivityActive() && Math.random() < (enemy.type === "spider" ? 0.2 : enemy.type === "wisp" ? 0.24 : 0.3)) {
         game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 18 }));
         trimPotionDrops();
       }
@@ -7858,6 +8157,9 @@ import {
   }
 
   function updateExplorationGoals() {
+    if (arenaActivityActive()) {
+      return;
+    }
     for (const village of game.exploration.villages) {
       if (game.exploration.discovered.has(village.id)) {
         continue;
@@ -7982,7 +8284,7 @@ import {
   }
 
   function updateEnemies(dt) {
-    if (game.mode === "exploration") {
+    if (game.mode === "exploration" && !arenaActivityActive()) {
       updateExplorationEnemies(dt);
       return;
     }
@@ -8069,10 +8371,21 @@ import {
     if (game.enemies.length === 0 && game.state === "playing") {
       if (game.nextWaveIn <= 0) {
         dropWaveHealthPotion();
-        game.nextWaveIn = 4.0;
-        showBanner("Wave " + game.wave + " cleared");
+        game.nextWaveIn = arenaActivityActive() ? 6.0 : 4.0;
+        if (arenaActivityActive()) {
+          const activity = game.exploration.arenaActivity;
+          activity.phase = "intermission";
+          activity.nextWaveIn = game.nextWaveIn;
+          activity.exitOpen = true;
+          showBanner("Crownring wave " + game.wave + " cleared - press Y to yield", 3);
+        } else {
+          showBanner("Wave " + game.wave + " cleared");
+        }
       } else {
         game.nextWaveIn -= dt;
+        if (arenaActivityActive()) {
+          game.exploration.arenaActivity.nextWaveIn = game.nextWaveIn;
+        }
         if (game.nextWaveIn <= 0) {
           spawnWave();
         }
@@ -8168,6 +8481,10 @@ import {
       guardDamage: 36 + Math.min(game.wave * 2, 14),
       targetId: targetInfo.id
     });
+    if (enemy.activityType === "arena") {
+      fireball.activityType = "arena";
+      fireball.activityId = enemy.activityId || game.exploration.arenaActivity.activityId;
+    }
     fireball.remoteControlled = false;
     game.fireballs.push(fireball);
   }
@@ -8259,6 +8576,10 @@ import {
   }
 
   function handlePlayerDefeat() {
+    if (localPlayerInArenaActivity()) {
+      endCrownringArenaActivity("defeat");
+      return;
+    }
     if (game.mode === "exploration" || online.connected) {
       player.health = player.maxHealth;
       player.guard = player.maxGuard;
@@ -8433,7 +8754,9 @@ import {
     guardFill.style.transform = "scaleX(" + guardPct.toFixed(3) + ")";
     healthText.textContent = Math.ceil(player.health);
     guardText.textContent = Math.ceil(resourceValue);
-    waveLabel.textContent = game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
+    waveLabel.textContent = localPlayerInArenaActivity()
+      ? "Crownring " + Math.max(1, game.wave)
+      : game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
     koText.textContent = game.kills;
     const level = getCharacterLevel();
     levelText.textContent = level;
@@ -8483,10 +8806,14 @@ import {
       }
       updatePotions(dt);
       if (game.mode === "exploration") {
-        updateQuestItems(dt);
-        updateHorse(dt);
-        updateTalkPrompt();
-        updateQuestMap();
+        if (!localPlayerInArenaActivity()) {
+          updateQuestItems(dt);
+          updateHorse(dt);
+          updateTalkPrompt();
+          updateQuestMap();
+        } else {
+          talkPrompt.hidden = true;
+        }
         game.saveTimer += dt;
         if (game.saveTimer >= 4) {
           game.saveTimer = 0;
@@ -8554,6 +8881,11 @@ import {
         return;
       }
       if (game.state !== "playing") {
+        return;
+      }
+      if (event.code === "KeyY" && localPlayerInArenaActivity()) {
+        event.preventDefault();
+        endCrownringArenaActivity("yield");
         return;
       }
       if (event.code === "KeyR" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
@@ -8731,6 +9063,7 @@ import {
     playerNameInput.addEventListener("blur", syncPlayerName);
     questAcceptButton.addEventListener("click", acceptCurrentQuest);
     questClaimButton.addEventListener("click", claimCurrentQuest);
+    questServiceButton.addEventListener("click", startCrownringArenaActivity);
     questCloseButton.addEventListener("click", closeQuestDialog);
 
     roomCodeInput.addEventListener("input", () => {
