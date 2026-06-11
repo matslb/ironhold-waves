@@ -1347,6 +1347,7 @@ import {
     const activity = game.exploration.arenaActivity;
     const xp = crownringWaveXp(wave);
     awardExplorationXp(xp);
+    updateQuestProgress("crownringTrial", 1);
     if (online.connected) {
       sendOnlineMessage({
         kind: "arenaReward",
@@ -1375,6 +1376,7 @@ import {
     }
     const xp = Math.max(0, Math.floor(numberOrZero(message.xp)));
     awardExplorationXp(xp);
+    updateQuestProgress("crownringTrial", 1);
     if (xp > 0) {
       showBanner("Crownring purse +" + xp + " XP", 2.4);
     }
@@ -3334,6 +3336,13 @@ import {
       player.health = player.maxHealth;
       game.potions.push(createHealthPotion(player.position.x - 1.2, player.position.z + 1.4, { kind: "small", healAmount: 34 }));
       trimPotionDrops();
+    } else if (quest.id === "crownringTrial") {
+      addProgressionBoon({ health: 5, guard: 5, mana: 5 });
+      player.health = player.maxHealth;
+      player.guard = player.maxGuard;
+      player.mana = player.maxMana;
+      game.potions.push(createHealthPotion(player.position.x + 1.3, player.position.z + 1.1, { kind: "small", healAmount: 32 }));
+      trimPotionDrops();
     }
     awardExplorationXp(quest.rewardXp);
     spawnImpact(player.position, 0xffd889, 24);
@@ -3369,7 +3378,8 @@ import {
       wisps: { hex: "#8affd2", fill: "rgba(138, 255, 210, 0.17)", stroke: "rgba(138, 255, 210, 0.78)" },
       bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
       cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
-      citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" }
+      citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" },
+      crownringTrial: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" }
     };
     return colors[id] || { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.76)" };
   }
@@ -3388,7 +3398,8 @@ import {
       wisps: "Mistfen",
       bogRelics: "Mistfen pools",
       cityWrits: "Crownford beacon",
-      citySanctuary: "church district"
+      citySanctuary: "church district",
+      crownringTrial: "Crownring"
     };
     return hints[quest.id] || "";
   }
@@ -3487,6 +3498,14 @@ import {
           color
         }];
       }
+    }
+    if (quest.id === "crownringTrial" && game.exploration.arenaCity) {
+      return [{
+        x: game.exploration.arenaCity.x,
+        z: game.exploration.arenaCity.z,
+        radius: game.exploration.arenaCity.radius + 12,
+        color
+      }];
     }
     return [];
   }
@@ -3675,6 +3694,28 @@ import {
         "Health boon, XP, and a field potion",
         "collect",
         3
+      ),
+      createQuest(
+        "crownringTrial",
+        "First Bell of the Crownring",
+        "Steward Bryn",
+        "Every traveler wants the purse. Fewer learn when to yield. Clear the first Crownring wave and come back with your name still attached to you.",
+        "Clear one Crownring wave",
+        "Training boon, XP, and a field potion",
+        "arena",
+        1,
+        {
+          rewardXp: 55,
+          conversationTags: ["arena", "training", "crownring", "waves"],
+          dialogue: {
+            available: "The first bell is not about glory. It is about proving you can hear a second bell and still choose whether to stay.",
+            active: "Enter the Crownring from here, clear one wave, then yield if your knees start writing poetry.",
+            ready: "There. You heard the bell and answered it. That makes you more useful than most bold fools.",
+            readyStatus: "First bell answered",
+            done: "Come back whenever you want a purse, a bruise, or both. The ring remembers regulars.",
+            doneStatus: "Steward Bryn has marked you as Crownring proven."
+          }
+        }
       )
     );
   }
@@ -4067,7 +4108,7 @@ import {
     addBarrel(group, x - 22, z - 4, -0.2, 0.82);
     addBucket(group, x - 17, z + 7, 0.4, 0.82);
 
-    const steward = createFriendlyNpc(game.exploration.origin.x + x - 3.4, game.exploration.origin.z + z - 11.6, random, 8.5, "Steward Bryn", null, "city");
+    const steward = createFriendlyNpc(game.exploration.origin.x + x - 3.4, game.exploration.origin.z + z - 11.6, random, 8.5, "Steward Bryn", "crownringTrial", "city");
     steward.serviceType = "crownring";
     steward.questMarker.visible = true;
     steward.questMarker.material.color.setHex(0xffd889);
