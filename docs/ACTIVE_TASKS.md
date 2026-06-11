@@ -201,6 +201,9 @@ Primary owner: UI / UX Agent
 Support: Sound Design / Audio Agent, QA / Playtest Agent
 
 Tasks:
+- Keep desktop controls first-class, but make handheld/touch play a supported control surface.
+- Require landscape mode on small touch devices and show a clear orientation notice in portrait.
+- Ensure touch movement, camera control, attack, secondary ability, potion/bash, interact, mount, yield, and pause have usable controls.
 - Add keyboard-first arena service dialogue:
   - `E` interact/advance
   - `Up/Down` or `W/S` select
@@ -218,6 +221,9 @@ Tasks:
 
 Acceptance:
 - Dialogue can be completed without mouse interaction.
+- Core Exploration and Crownring arena play can be completed on a landscape touch device.
+- Portrait mode on handheld devices shows a clear landscape-required notice instead of a cramped broken game.
+- Touch controls do not overlap critical HUD, quest tracker, arena status, or ability boxes.
 - Escape closes the correct layer in dialogue, arena, pause, and normal exploration.
 - Arena status is visible without hiding core health/resource information.
 - Sound hooks are named and ready even if full audio implementation lands later.
@@ -261,6 +267,7 @@ Acceptance:
 - Die in arena and confirm infirmary recovery.
 - Host/join smoke: both players see same arena enemies, fireballs, effects, and wizard potions.
 - Visual screenshots: starter house, Crownford street, Crownring, infirmary, NPC beside player, meadow village, desert spider, mountain dragon.
+- Touch/handheld checks: landscape phone-sized viewport, landscape tablet-sized viewport, portrait orientation notice, touch movement/camera/attack/interact/pause.
 - Performance check during Crownford traversal and active arena waves.
 
 ## Implementation Policy

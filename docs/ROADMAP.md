@@ -5,7 +5,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 ## Current Product Pillars
 
 - A fantasy action game that supports both arena waves and open-world exploration.
-- Desktop-first gameplay with third-person movement, combat, quests, mounts, and online rooms.
+- Desktop-first gameplay with third-person movement, combat, quests, mounts, and online rooms, plus supported landscape touch play on handheld devices.
 - Host-authoritative multiplayer today, with a path toward Firebase-backed identity and persistence.
 - Procedural geometry and lightweight deployment, with Firebase Hosting as the primary production target.
 - Sound should make combat, exploration, quests, and biomes easier to read while keeping the game lightweight.
@@ -39,6 +39,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 ### UI And Onboarding
 
 - Add contextual desktop prompts for interact, attack, block/burst, mount, quest tracker, and map.
+- Support landscape touch controls for handheld devices, with a portrait-mode notice telling players to rotate.
 - Keep prompts sparse and state-aware.
 - Improve quest tracker and minimap/marker usefulness without removing exploration challenge.
 - Keep pause/session menus separate from start/join flows.
@@ -182,6 +183,7 @@ Phase 3, Bounded Generated Dialogue:
 ### Visual Gate
 
 - Check each biome at common desktop sizes: 1366x768, 1440x900, 1920x1080, ultrawide.
+- Check landscape handheld/tablet viewports and the portrait orientation notice.
 - Confirm roofs, horns, collision, terrain blending, water, fog, and shadows.
 - Confirm NPC, player, house, dragon, spider, and barbarian proportions follow the scale targets in `docs/ACTIVE_TASKS.md`.
 - Confirm generated or external textures follow `docs/ASSET_POLICY.md`.
