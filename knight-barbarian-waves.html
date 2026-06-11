@@ -1143,8 +1143,8 @@
         const lintel = makeBox(1.25, 0.34, 0.26, materials.plaster, 0, 2.13, -2.18);
         const roofA = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, -0.92);
         const roofB = makeBox(5.8, 0.36, 2.9, materials.roof, 0, 2.64, 0.92);
-        roofA.rotation.x = 0.55;
-        roofB.rotation.x = -0.55;
+        roofA.rotation.x = -0.55;
+        roofB.rotation.x = 0.55;
         const chimney = makeBox(0.45, 1.05, 0.45, materials.darkStone, 1.42, 3.06, 0.65);
         const door = makeBox(0.86, 1.4, 0.08, materials.wood, 0, 0.76, -2.34);
         const windowMat = materials.lightningCore.clone();
@@ -2374,10 +2374,10 @@
         const helmetBand = makeCylinder(0.31, 0.31, 0.12, 16, materials.iron, 0, 2.2, 0);
         const hornLeft = makeCylinder(0.02, 0.085, 0.36, 8, materials.bone, -0.28, 2.28, -0.02);
         const hornRight = makeCylinder(0.02, 0.085, 0.36, 8, materials.bone, 0.28, 2.28, -0.02);
-        hornLeft.rotation.z = -1.05;
-        hornLeft.rotation.y = 0.18;
-        hornRight.rotation.z = 1.05;
-        hornRight.rotation.y = -0.18;
+        hornLeft.rotation.z = 1.05;
+        hornLeft.rotation.y = -0.18;
+        hornRight.rotation.z = -1.05;
+        hornRight.rotation.y = 0.18;
         const leftLeg = makeBox(0.22, 0.66, 0.24, materials.leather, -0.22, 0.28, 0);
         const rightLeg = makeBox(0.22, 0.66, 0.24, materials.leather, 0.22, 0.28, 0);
         const leftBoot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.04);
