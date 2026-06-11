@@ -98,7 +98,16 @@ Primary owner: Multiplayer / Netcode Agent
 
 Reviewer: UI / UX Agent
 
-Status: `[ ] Todo`
+Status: `[~] Active`
+
+Done evidence:
+- Host messages and world snapshots now include room phase labels.
+- Four digit room codes and stable local member ids are remembered in local storage for refresh/rejoin continuity.
+- Active Crownring late joiners queue at the infirmary and are admitted at intermission instead of entering mid-wave.
+
+Remaining work:
+- Document host disconnect, kicked-user, and stale retained-room edge cases in one concise flow table.
+- Run a two-client refresh/rejoin smoke test.
 
 Scope:
 - Formalize room phases: lobby, loading, exploration, arena-active, arena-intermission, closing, abandoned.
@@ -393,9 +402,9 @@ Done evidence:
 - Host snapshots include `arenaActivity`, enemies, fireballs, and potions.
 - Joiners apply host world snapshots and render remote enemies/fireballs/potions.
 - Arena start, leave, defeat, reward, potion pickup, and wizard potion drop messages exist.
+- Room phase labels now ride host messages/world snapshots, remembered room codes and stable local member ids survive refresh, and late joiners are queued outside the Crownring until an intermission admits them.
 
 Remaining work:
-- Add explicit room/arena phases and late-join rules.
 - Run/record a two-client host/join smoke test for Crownring waves.
 - Decide if `arenaState` remains folded into world snapshots or becomes a separate message.
 
@@ -405,10 +414,10 @@ Task checklist:
 - [x] Add message kind `arenaStartRequest`.
 - [x] Add message kind `arenaLeaveRequest`.
 - [x] Add message kind `arenaDefeated`.
-- [~] Add message kind or equivalent for `arenaState`.
+- [x] Add message kind or equivalent for `arenaState`.
 - [x] Add message kind `arenaReward`.
 - [x] Include arena activity state in host world snapshots or an equivalent single source of truth message.
-- [ ] Late joiners spawn at Crownford/infirmary as spectators or pending participants, then join at the next intermission.
+- [x] Late joiners spawn at Crownford/infirmary as spectators or pending participants, then join at the next intermission.
 - [x] If a joiner leaves mid-arena, remove that player from participants and continue if others remain.
 - [x] If host closes/leaves, current room-close behavior wins. No host migration in this pass.
 
@@ -429,10 +438,11 @@ Status: `[~] Active`
 Done evidence:
 - Friendly NPCs, quest marker height, door sizes, village house scale, city wall height, Crownring houses, dragons, and spider footprint have a first normalization pass against the player scale anchor.
 - Remote enemy/player snapshots carry scale/radius data for shared visuals.
+- Village/city roof eaves were raised, the city church roof was rebuilt along the nave axis, and dragon horn/scale tuning was adjusted.
 
 Remaining work:
 - Run a focused screenshot QA pass for all major character/enemy/structure proportions.
-- Re-check roofs and barbarian horns during that pass before marking fully done.
+- Re-check roofs, dragon horns, and barbarian horns during that pass before marking fully done.
 
 Scale targets:
 - Player body reads as roughly `2.2-2.4` world units tall. Plume/hat may reach about `3.0`.

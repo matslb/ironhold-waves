@@ -560,7 +560,7 @@ import {
   const modelScale = {
     npc: 1.3,
     barbarianBase: 1.08,
-    dragonBase: 1.18,
+    dragonBase: 1.06,
     spiderBase: 1.32
   };
 
@@ -623,16 +623,53 @@ import {
     }
   };
 
+  function stableOnlineId() {
+    const makeId = () => (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
+    try {
+      const stored = localStorage.getItem("ironholdClientId");
+      if (stored && /^[a-zA-Z0-9_-]{8,64}$/.test(stored)) {
+        return stored;
+      }
+      const nextId = makeId();
+      localStorage.setItem("ironholdClientId", nextId);
+      return nextId;
+    } catch (error) {
+      return makeId();
+    }
+  }
+
+  function storedRoomCode() {
+    try {
+      return normalizeRoomCode(localStorage.getItem("ironholdLastRoomCode") || "");
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function rememberRoomCode(code) {
+    const safeCode = normalizeRoomCode(code);
+    try {
+      if (safeCode) {
+        localStorage.setItem("ironholdLastRoomCode", safeCode);
+      } else {
+        localStorage.removeItem("ironholdLastRoomCode");
+      }
+    } catch (error) {
+      // Storage can be unavailable in private or embedded browser contexts.
+    }
+  }
+
   const online = {
-    localId: (crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2),
+    localId: stableOnlineId(),
     client: null,
     topic: "",
     connected: false,
     role: null,
     flow: "join",
     roomCode: "",
-    lastRoomCode: "",
+    lastRoomCode: storedRoomCode(),
     lastRoomMode: "exploration",
+    roomPhase: "lobby",
     hostId: "",
     sendTimer: 0,
     worldSendTimer: 0,
@@ -1479,6 +1516,8 @@ import {
       center: { x: 0, z: 0 },
       radius: arenaRadius,
       participants: [],
+      pendingParticipants: [],
+      optedOutParticipants: [],
       startedBy: "",
       nextWaveIn: 0,
       exitOpen: false,
@@ -1486,7 +1525,9 @@ import {
       returnPosition: null,
       infirmaryPosition: null,
       localReturnPosition: null,
-      localOptOutActivityId: ""
+      localOptOutActivityId: "",
+      localSpectatorActivityId: "",
+      localPendingActivityId: ""
     };
   }
 
@@ -1519,6 +1560,7 @@ import {
       center: activity.center,
       radius: activity.radius,
       participants: activity.participants.slice(0, 8),
+      pendingParticipants: activity.pendingParticipants.slice(0, 8),
       startedBy: activity.startedBy,
       nextWaveIn: activity.nextWaveIn,
       exitOpen: !!activity.exitOpen,
@@ -1528,10 +1570,79 @@ import {
 
   function arenaParticipantsForRoom() {
     const participants = new Set([online.localId]);
-    for (const id of online.remotePlayers.keys()) {
-      participants.add(id);
+    for (const [id, remote] of online.remotePlayers) {
+      if (remote.playing !== false) {
+        participants.add(id);
+      }
     }
     return Array.from(participants).slice(0, 8);
+  }
+
+  function arenaListIncludes(list, id) {
+    return Array.isArray(list) && list.includes(id);
+  }
+
+  function sendArenaQueueNotice(targetId, ready = false) {
+    const activity = game.exploration.arenaActivity;
+    if (online.role !== "host" || !targetId || !activity.active) {
+      return;
+    }
+    sendOnlineMessage({
+      kind: "arenaQueued",
+      targetId,
+      activityId: activity.activityId,
+      ready,
+      phase: activity.phase
+    });
+  }
+
+  function maybeQueueArenaLateParticipant(id, state) {
+    const activity = game.exploration.arenaActivity;
+    if (online.role !== "host" || !activity.active || !id || id === online.localId) {
+      return false;
+    }
+    if (!state || state.playing !== true) {
+      return false;
+    }
+    if (arenaListIncludes(activity.participants, id) || arenaListIncludes(activity.optedOutParticipants, id)) {
+      return false;
+    }
+    if (activity.phase === "intermission" && activity.exitOpen) {
+      activity.participants = Array.from(new Set([...activity.participants, id])).slice(0, 8);
+      activity.pendingParticipants = activity.pendingParticipants.filter(participant => participant !== id);
+      sendArenaQueueNotice(id, true);
+      sendWorldSnapshot(true);
+      return true;
+    }
+    if (!arenaListIncludes(activity.pendingParticipants, id)) {
+      activity.pendingParticipants = [...activity.pendingParticipants, id].slice(0, 8);
+      sendArenaQueueNotice(id, false);
+      sendWorldSnapshot(true);
+      return true;
+    }
+    return false;
+  }
+
+  function promotePendingArenaParticipants() {
+    const activity = game.exploration.arenaActivity;
+    if (!activity.active || !activity.pendingParticipants.length) {
+      return 0;
+    }
+    const nextParticipants = new Set(activity.participants);
+    let promoted = 0;
+    for (const id of activity.pendingParticipants) {
+      if (!id || arenaListIncludes(activity.optedOutParticipants, id)) {
+        continue;
+      }
+      if (!nextParticipants.has(id)) {
+        nextParticipants.add(id);
+        promoted += 1;
+        sendArenaQueueNotice(id, true);
+      }
+    }
+    activity.participants = Array.from(nextParticipants).slice(0, 8);
+    activity.pendingParticipants = [];
+    return promoted;
   }
 
   function removeArenaParticipant(id) {
@@ -1539,11 +1650,18 @@ import {
     if (!activity.active || !id) {
       return false;
     }
+    const pendingBefore = activity.pendingParticipants.length;
+    activity.pendingParticipants = activity.pendingParticipants.filter(participant => participant !== id);
     const nextParticipants = activity.participants.filter(participant => participant !== id);
     if (nextParticipants.length === activity.participants.length) {
+      if (pendingBefore !== activity.pendingParticipants.length) {
+        sendWorldSnapshot(true);
+        return true;
+      }
       return false;
     }
     activity.participants = nextParticipants;
+    activity.optedOutParticipants = Array.from(new Set([...activity.optedOutParticipants, id])).slice(0, 8);
     if (activity.participants.length === 0 || (activity.participants.length === 1 && activity.participants[0] === online.localId && online.role !== "host")) {
       endCrownringArenaActivity("yield");
       return true;
@@ -1571,6 +1689,23 @@ import {
     game.cameraYaw = 0;
     playSfx("arenaStart", 1);
     showBanner("Crownring opened - press Y to yield", 3);
+    updateHud();
+  }
+
+  function moveLocalArenaSpectatorToInfirmary() {
+    if (game.state !== "playing") {
+      return;
+    }
+    const recovery = crownfordInfirmaryPosition();
+    setArenaVisible(false);
+    scene.fog.density = 0.0065;
+    parkHorseNear(recovery);
+    player.position.copy(recovery);
+    player.velocity.set(0, 0, 0);
+    if (player.group) {
+      player.group.position.copy(player.position);
+    }
+    game.cameraYaw = Math.PI;
     updateHud();
   }
 
@@ -1609,22 +1744,31 @@ import {
     const activity = game.exploration.arenaActivity;
     const wasLocal = localPlayerInArenaActivity();
     const previousActivityId = activity.activityId;
+    const nextActivityId = snapshot.activityId || "";
+    const sameActivity = previousActivityId === nextActivityId;
     const localReturnPosition = activity.localReturnPosition;
     const localOptOutActivityId = activity.localOptOutActivityId;
+    const localSpectatorActivityId = activity.localSpectatorActivityId;
+    const localPendingActivityId = activity.localPendingActivityId;
     activity.active = !!snapshot.active;
     activity.phase = snapshot.phase || (activity.active ? "wave" : "idle");
-    activity.activityId = snapshot.activityId || "";
-    activity.localReturnPosition = previousActivityId === activity.activityId ? localReturnPosition : null;
-    activity.localOptOutActivityId = previousActivityId === activity.activityId ? localOptOutActivityId : "";
+    activity.activityId = nextActivityId;
+    activity.localReturnPosition = sameActivity ? localReturnPosition : null;
+    activity.localOptOutActivityId = sameActivity ? localOptOutActivityId : "";
+    activity.localSpectatorActivityId = sameActivity ? localSpectatorActivityId : "";
+    activity.localPendingActivityId = sameActivity ? localPendingActivityId : "";
     activity.wave = Math.max(0, Math.floor(numberOrZero(snapshot.wave)));
     activity.center = snapshot.center || { x: 0, z: 0 };
     activity.radius = Math.max(8, numberOrZero(snapshot.radius) || arenaRadius);
     activity.participants = Array.isArray(snapshot.participants) ? snapshot.participants.slice(0, 8) : [];
+    activity.pendingParticipants = Array.isArray(snapshot.pendingParticipants) ? snapshot.pendingParticipants.slice(0, 8) : [];
+    activity.optedOutParticipants = sameActivity ? activity.optedOutParticipants : [];
     activity.startedBy = snapshot.startedBy || "";
     activity.nextWaveIn = Math.max(0, numberOrZero(snapshot.nextWaveIn));
     activity.exitOpen = !!snapshot.exitOpen;
     activity.endedReason = snapshot.endedReason || null;
     const nowLocal = localPlayerInArenaActivity();
+    const pendingLocal = arenaListIncludes(activity.pendingParticipants, online.localId);
     if (nowLocal && !wasLocal) {
       enterLocalArenaActivity();
     } else if (!nowLocal && wasLocal) {
@@ -1632,8 +1776,17 @@ import {
     } else {
       setArenaVisible(nowLocal);
     }
-    if (!nowLocal && activity.active && !wasLocal) {
-      showBanner("Crownring match in progress", 2.2);
+    if (!nowLocal && activity.active) {
+      if (game.state === "playing" && activity.localSpectatorActivityId !== activity.activityId && activity.localOptOutActivityId !== activity.activityId) {
+        moveLocalArenaSpectatorToInfirmary();
+        activity.localSpectatorActivityId = activity.activityId;
+      }
+      if (pendingLocal && activity.localPendingActivityId !== activity.activityId) {
+        activity.localPendingActivityId = activity.activityId;
+        showBanner("Queued for the next Crownring bell", 2.4);
+      } else if (!wasLocal && !pendingLocal && activity.localSpectatorActivityId === activity.activityId) {
+        showBanner("Crownring match in progress", 2.2);
+      }
     }
   }
 
@@ -2034,6 +2187,9 @@ import {
   }
 
   function explorationGroundWorldY(worldX, worldZ, offset = 0) {
+    if (localPlayerInArenaActivity() && Math.hypot(worldX, worldZ) <= arenaRadius + 24) {
+      return offset;
+    }
     if (game.mode !== "exploration" && !game.explorationGroup) {
       return offset;
     }
@@ -2055,6 +2211,7 @@ import {
     const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
     const zones = [];
     const landmarkZones = [
+      { x: -game.exploration.origin.x, z: -game.exploration.origin.z, radius: arenaRadius + 24, blend: 18, height: 0, strength: 1.0 },
       { x: 0, z: -2, radius: 24, blend: 11, strength: 1.0 },
       { x: 0, z: -17, radius: 6, blend: 6, strength: 0.8 },
       { x: 0, z: 86, radius: 7, blend: 7, strength: 0.75 },
@@ -2134,7 +2291,7 @@ import {
       );
     }
     for (const zone of zones) {
-      registerExplorationFlatZone(zone.x, zone.z, zone.radius, zone.blend, null, zone.strength);
+      registerExplorationFlatZone(zone.x, zone.z, zone.radius, zone.blend, zone.height ?? null, zone.strength);
     }
   }
 
@@ -3007,10 +3164,10 @@ import {
     const frontLeft = makeBox(1.72, 2.0, 0.26, walls, -1.55, 1.08, -1.98);
     const frontRight = makeBox(1.72, 2.0, 0.26, walls, 1.55, 1.08, -1.98);
     const lintel = makeBox(1.18, 0.3, 0.28, walls, 0, 1.98, -1.98);
-    const flatRoof = makeBox(5.55, 0.28, 4.86, roofMat, 0, 2.18, 0);
-    const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 1.54, -2.42);
+    const flatRoof = makeBox(5.55, 0.28, 4.86, roofMat, 0, 2.46, 0);
+    const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 2.06, -2.42);
     shade.rotation.x = -0.18;
-    const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, 2.5, 0.85);
+    const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, 2.78, 0.85);
     const door = makeBox(0.92, 1.86, 0.08, materials.darkLeather, 0, 0.98, -2.16);
     house.add(base, back, left, right, frontLeft, frontRight, lintel, flatRoof, shade, dome, door);
     if (variant % 2 === 1) {
@@ -3033,12 +3190,12 @@ import {
     const frontLeft = makeBox(1.7, 2.18, 0.28, wall, -1.62, 1.18, -2.08);
     const frontRight = makeBox(1.7, 2.18, 0.28, wall, 1.62, 1.18, -2.08);
     const lintel = makeBox(1.35, 0.34, 0.3, materials.wood, 0, 2.08, -2.08);
-    const roofA = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 2.66, -0.9);
-    const roofB = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 2.66, 0.9);
+    const roofA = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 3.22, -0.9);
+    const roofB = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 3.22, 0.9);
     roofA.rotation.x = -0.6;
     roofB.rotation.x = 0.6;
-    const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.44, -2.2);
-    const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.08, 0.42);
+    const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.72, -2.2);
+    const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.54, 0.42);
     const door = makeBox(0.92, 1.86, 0.08, materials.wood, 0, 0.98, -2.25);
     house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, beam, chimney, door);
     if (variant % 2 === 1) {
@@ -3104,11 +3261,11 @@ import {
     const frontLeft = makeBox(1.8, 2.25, 0.24, materials.plaster, -1.7, 1.18, -2.18);
     const frontRight = makeBox(1.8, 2.25, 0.24, materials.plaster, 1.7, 1.18, -2.18);
     const lintel = makeBox(1.25, 0.34, 0.26, materials.plaster, 0, 2.13, -2.18);
-    const roofA = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 2.6, -0.92);
-    const roofB = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 2.6, 0.92);
+    const roofA = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 3.18, -0.92);
+    const roofB = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 3.18, 0.92);
     roofA.rotation.x = -0.5;
     roofB.rotation.x = 0.5;
-    const chimney = makeBox(0.44, 0.92, 0.44, materials.darkStone, 1.42, 2.96, 0.65);
+    const chimney = makeBox(0.44, 0.92, 0.44, materials.darkStone, 1.42, 3.44, 0.65);
     const door = makeBox(0.94, 1.86, 0.08, materials.wood, 0, 0.98, -2.34);
     const windowMat = materials.lightningCore.clone();
     windowMat.color.setHex(0xffd889);
@@ -4759,9 +4916,9 @@ import {
     const right = makeBox(0.24, 2.6, 4.0, wall, 2.18, 1.35, 0);
     const frontLeft = makeBox(1.48, 2.6, 0.24, wall, -1.56, 1.35, -1.88);
     const frontRight = makeBox(1.48, 2.6, 0.24, wall, 1.56, 1.35, -1.88);
-    const door = makeBox(0.92, 1.82, 0.08, materials.wood, 0, 0.98, -2.04);
-    const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, -0.8);
-    const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.02, 0.8);
+    const door = makeBox(0.92, 1.9, 0.08, materials.wood, 0, 1.02, -2.04);
+    const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, -0.8);
+    const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, 0.8);
     roofA.rotation.x = -0.52;
     roofB.rotation.x = 0.52;
     const sign = makeBox(1.0, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, 0, 1.55, -2.07);
@@ -4812,10 +4969,10 @@ import {
     const nave = makeBox(7.2, 3.25, 11.2, materials.cityWall, 0, 1.72, 0);
     const apse = makeCylinder(1.8, 2.0, 3.3, 18, materials.cityWall, 0, 1.7, 6.1);
     apse.rotation.x = Math.PI / 2;
-    const roofA = makeBox(7.9, 0.44, 6.8, materials.cityRoof, 0, 3.72, -1.7);
-    const roofB = makeBox(7.9, 0.44, 6.8, materials.cityRoof, 0, 3.72, 1.7);
-    roofA.rotation.x = -0.62;
-    roofB.rotation.x = 0.62;
+    const roofA = makeBox(4.55, 0.44, 12.3, materials.cityRoof, -1.95, 3.88, 0);
+    const roofB = makeBox(4.55, 0.44, 12.3, materials.cityRoof, 1.95, 3.88, 0);
+    roofA.rotation.z = 0.52;
+    roofB.rotation.z = -0.52;
     const tower = makeBox(3.0, 6.5, 3.0, materials.cityWall, 0, 3.28, -5.55);
     const spire = makeCone(1.82, 3.95, 24, materials.cityRoof, 0, 8.38, -5.55);
     const door = makeBox(1.08, 1.88, 0.08, materials.wood, 0, 0.99, -7.1);
@@ -5504,6 +5661,9 @@ import {
     if (game.arenaGroup) {
       game.arenaGroup.visible = visible;
     }
+    if (game.explorationGroup) {
+      game.explorationGroup.visible = !visible;
+    }
   }
 
   function createSpectator(x, y, z, angle, material, cheerPhase) {
@@ -6010,6 +6170,45 @@ import {
     return "Exploration";
   }
 
+  function sanitizeRoomPhase(phase) {
+    return [
+      "lobby",
+      "loading",
+      "exploration",
+      "arena-active",
+      "arena-intermission",
+      "closing",
+      "abandoned"
+    ].includes(phase) ? phase : "lobby";
+  }
+
+  function currentRoomPhase() {
+    if (online.role === "host" && !online.connected && !roomIsOpen()) {
+      return "lobby";
+    }
+    if (arenaActivityActive()) {
+      return game.exploration.arenaActivity.phase === "intermission" ? "arena-intermission" : "arena-active";
+    }
+    if (game.state === "playing" || game.state === "paused") {
+      return "exploration";
+    }
+    if (online.connected) {
+      return online.role === "join" ? sanitizeRoomPhase(online.roomPhase) : "lobby";
+    }
+    return "lobby";
+  }
+
+  function roomPhaseLabel(phase = currentRoomPhase()) {
+    const safePhase = sanitizeRoomPhase(phase);
+    if (safePhase === "arena-active") return "Arena active";
+    if (safePhase === "arena-intermission") return "Arena intermission";
+    if (safePhase === "exploration") return "Exploration";
+    if (safePhase === "loading") return "Loading";
+    if (safePhase === "closing") return "Closing";
+    if (safePhase === "abandoned") return "Host disconnected";
+    return "Lobby";
+  }
+
   function roomIsOpen() {
     return !!online.topic && (online.connected || online.role === "host");
   }
@@ -6061,6 +6260,8 @@ import {
     const activeSessionMenu = pausePhase && sessionIsActive();
     const showOnlinePanel = hostPhase || joinPhase || joinReady || (pausePhase && roomIsOpen());
     const activeGame = savedActiveGame();
+    const roomPhase = currentRoomPhase();
+    const roomPhaseText = roomPhaseLabel(roomPhase);
 
     overlay.dataset.phase = phase;
     overlay.classList.toggle("active-session-menu", activeSessionMenu);
@@ -6094,7 +6295,7 @@ import {
       updateOnlineStatus(online.lastRoomCode ? "Last room " + online.lastRoomCode + " ready to rejoin" : "Choose start or join");
     } else if (hostPhase) {
       overlayCopy.textContent = "Pick your character, then start Exploration. Crownring waves are found in the world.";
-      setSessionNote(online.roomCode ? "Room " + online.roomCode + " - " + modeDisplayName() : "Creating room");
+      setSessionNote(online.roomCode ? "Room " + online.roomCode + " - " + roomPhaseText : "Creating room");
       if (!online.connected && online.role === "host") {
         updateOnlineStatus("Opening room");
       }
@@ -6105,16 +6306,22 @@ import {
         updateOnlineStatus("Enter 4 digits");
       }
     } else if (joinReady) {
-      overlayCopy.textContent = "Connected to the host world. Saved progress carries into the room.";
-      setSessionNote("Room " + (online.roomCode || "----") + " - " + modeDisplayName());
+      if (roomPhase === "arena-active") {
+        overlayCopy.textContent = "The Crownring is underway. You will wait at the infirmary and enter at the next bell.";
+      } else if (roomPhase === "arena-intermission") {
+        overlayCopy.textContent = "The Crownring is between waves. Join now and you can enter with the next bell.";
+      } else {
+        overlayCopy.textContent = "Connected to the host world. Saved progress carries into the room.";
+      }
+      setSessionNote("Room " + (online.roomCode || "----") + " - " + roomPhaseText);
     } else if (pausePhase) {
       overlayCopy.textContent = online.role === "join"
         ? "Session paused. Leave returns you to the menu and remembers this room code for rejoining."
         : "Session paused. Closing saves progress and shuts this room for everyone.";
       if (online.role === "host" && online.roomCode) {
-        setSessionNote("Room " + online.roomCode + " - " + modeDisplayName());
+        setSessionNote("Room " + online.roomCode + " - " + roomPhaseText);
       } else if (online.role === "join" && online.roomCode) {
-        setSessionNote("Joined room " + online.roomCode + " - " + modeDisplayName());
+        setSessionNote("Joined room " + online.roomCode + " - " + roomPhaseText);
       } else {
         setSessionNote(modeDisplayName());
       }
@@ -6298,6 +6505,7 @@ import {
       online.lastRoomCode = code;
       online.lastRoomMode = game.mode;
       roomCodeInput.value = code;
+      rememberRoomCode(code);
     }
     updateSessionMenu();
   }
@@ -6345,9 +6553,11 @@ import {
         online.lastRoomCode = previousCode;
         online.lastRoomMode = game.mode;
         roomCodeInput.value = previousCode;
+        rememberRoomCode(previousCode);
       } else {
         online.lastRoomCode = "";
         roomCodeInput.value = "";
+        rememberRoomCode("");
       }
     }
     if (removeRemotes) {
@@ -6468,6 +6678,7 @@ import {
     return {
       id: online.localId,
       mode: game.mode,
+      playing: game.state === "playing" || game.state === "paused",
       character: player.character,
       name: player.name,
       weaponId: equippedWeapon(),
@@ -6494,6 +6705,7 @@ import {
       ...message,
       id: online.localId,
       mode: game.mode,
+      roomPhase: currentRoomPhase(),
       sentAt: Date.now()
     };
     online.client.publish(online.topic, JSON.stringify(payload), { qos: retain ? 1 : 0, retain });
@@ -6635,6 +6847,7 @@ import {
 
   function serializeWorldSnapshot() {
     return {
+      roomPhase: currentRoomPhase(),
       wave: game.wave,
       kills: game.kills,
       nextWaveIn: game.nextWaveIn,
@@ -6823,6 +7036,7 @@ import {
     if (!world || online.role !== "join") {
       return;
     }
+    online.roomPhase = sanitizeRoomPhase(world.roomPhase || online.roomPhase);
     game.wave = world.wave ?? game.wave;
     game.kills = world.kills ?? 0;
     game.nextWaveIn = world.nextWaveIn ?? 0;
@@ -6984,7 +7198,9 @@ import {
     if (Math.hypot(remotePosition.x - x, remotePosition.z - z) > 4.0) {
       return;
     }
-    const inArena = message.activityType === "arena" && arenaActivityActive();
+    const inArena = message.activityType === "arena"
+      && arenaActivityActive()
+      && arenaListIncludes(game.exploration.arenaActivity.participants, message.id);
     game.potions.push(createHealthPotion(x, z, {
       kind: "wizard",
       healAmount: 28,
@@ -7101,6 +7317,10 @@ import {
     if (message.kind === "host") {
       online.hostId = message.id || online.hostId;
     }
+    if (online.role === "join" && message.roomPhase && (message.kind === "host" || message.id === online.hostId)) {
+      online.roomPhase = sanitizeRoomPhase(message.roomPhase);
+      updateSessionMenu();
+    }
     if (message.state && message.id) {
       message.state.id = message.id;
     }
@@ -7125,6 +7345,17 @@ import {
     }
     if (message.kind === "arenaReward") {
       handleArenaReward(message);
+      return;
+    }
+    if (message.kind === "arenaQueued") {
+      if (!messageFromKnownHost(message) || message.targetId !== online.localId) {
+        return;
+      }
+      if (message.ready) {
+        showBanner("Crownring bell is open", 2.2);
+      } else {
+        showBanner("Queued for the next Crownring bell", 2.4);
+      }
       return;
     }
     if (message.kind === "potionPickup") {
@@ -7181,6 +7412,9 @@ import {
     }
     if (message.state) {
       upsertRemotePlayer(message.state);
+      if (online.role === "host") {
+        maybeQueueArenaLateParticipant(message.id, message.state);
+      }
       updateOnlineStatus(online.role === "host" ? "Player joined" : "Joined room");
       if (online.role === "join" && (game.menuPhase === "joinSetup" || game.menuPhase === "landing")) {
         setMenuPhase("joinReady");
@@ -7516,6 +7750,7 @@ import {
     if (remote.nameTag) {
       updateNameTag(remote.nameTag, state.name || "Player");
     }
+    remote.playing = state.playing === true;
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
     const claimedProfile = sanitizedCombatProfile(nextCharacter, state.weaponId, state.perks);
@@ -7593,6 +7828,9 @@ import {
       if (clock.elapsedTime - (remote.lastSeen || 0) > 12) {
         removeRemotePlayer(remote);
         online.remotePlayers.delete(id);
+        if (online.role === "host") {
+          removeArenaParticipant(id);
+        }
         updateRoomRoster();
       }
     }
@@ -7648,6 +7886,9 @@ import {
 
   function applyRemoteActionToEnemies(action, source, yaw, forward, state = {}) {
     const sourceId = state.id || online.localId;
+    if (arenaActivityActive() && !arenaListIncludes(game.exploration.arenaActivity.participants, sourceId)) {
+      return;
+    }
     const remote = sourceId !== online.localId ? online.remotePlayers.get(sourceId) : null;
     const profile = remote && remote.combatProfile
       ? remote.combatProfile
@@ -7720,15 +7961,23 @@ import {
   }
 
   function combatTargets() {
-    const targets = [{
-      id: online.localId,
-      local: true,
-      position: player.position,
-      health: player.health,
-      maxHealth: player.maxHealth
-    }];
+    const arenaActive = arenaActivityActive();
+    const activity = game.exploration.arenaActivity;
+    const targets = [];
+    if (!arenaActive || arenaListIncludes(activity.participants, online.localId)) {
+      targets.push({
+        id: online.localId,
+        local: true,
+        position: player.position,
+        health: player.health,
+        maxHealth: player.maxHealth
+      });
+    }
     if (online.role === "host") {
       for (const [id, remote] of online.remotePlayers) {
+        if (arenaActive && !arenaListIncludes(activity.participants, id)) {
+          continue;
+        }
         targets.push({
           id,
           local: false,
@@ -7742,6 +7991,9 @@ import {
   }
 
   function combatTargetById(id) {
+    if (arenaActivityActive() && !arenaListIncludes(game.exploration.arenaActivity.participants, id || online.localId)) {
+      return null;
+    }
     if (!id || id === online.localId) {
       return {
         id: online.localId,
@@ -7911,8 +8163,8 @@ import {
     const rightEye = makeSphere(0.06, materials.dragonEye, 0.2, 0.75, -1.9);
     const hornLeft = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, -0.21, 0.98, -1.46);
     const hornRight = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, 0.21, 0.98, -1.46);
-    hornLeft.rotation.set(-0.82, -0.22, -0.18);
-    hornRight.rotation.set(-0.82, 0.22, 0.18);
+    hornLeft.rotation.set(-0.82, -0.22, 0.18);
+    hornRight.rotation.set(-0.82, 0.22, -0.18);
 
     const tail = makeCylinder(0.09, 0.36, 1.92, 12, materials.dragonScale, 0, -0.04, 1.48);
     tail.rotation.x = Math.PI / 2 + 0.18;
@@ -8089,7 +8341,7 @@ import {
   }
 
   function createDragon(x, z, wave) {
-    const scale = modelScale.dragonBase + Math.random() * 0.1 + Math.min(wave * 0.01, 0.08);
+    const scale = modelScale.dragonBase + Math.random() * 0.07 + Math.min(wave * 0.008, 0.05);
     const model = createDragonModel(scale);
     const enemy = {
       ...model,
@@ -8483,7 +8735,7 @@ import {
       }
     }
     if (isJoinedClient()) {
-      const inArena = arenaActivityActive();
+      const inArena = localPlayerInArenaActivity();
       sendOnlineMessage({
         kind: "dropPotion",
         x: dropPosition.x,
@@ -8501,8 +8753,8 @@ import {
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
       kind: "wizard",
       healAmount: 28,
-      activityType: arenaActivityActive() ? "arena" : "",
-      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+      activityType: localPlayerInArenaActivity() ? "arena" : "",
+      activityId: localPlayerInArenaActivity() ? game.exploration.arenaActivity.activityId : ""
     }));
     trimPotionDrops();
     player.potionCooldown = player.potionCooldownMax;
@@ -9744,8 +9996,10 @@ import {
           activity.nextWaveIn = game.nextWaveIn;
           activity.exitOpen = true;
           const xp = grantCrownringWaveReward(game.wave);
+          const joinedAtBell = promotePendingArenaParticipants();
           playSfx(game.wave % 3 === 0 ? "arenaMilestone" : "waveClear", 1.1);
-          showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP - press Y to yield", 3);
+          showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP" + (joinedAtBell ? " - allies joined" : " - press Y to yield"), 3);
+          sendWorldSnapshot(true);
         } else {
           showBanner("Wave " + game.wave + " cleared");
         }
