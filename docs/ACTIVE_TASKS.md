@@ -103,7 +103,7 @@ Primary owner: World & Content Agent
 
 Support: Rendering / Performance Agent, Gameplay Systems Agent, QA / Playtest Agent
 
-Status: Queued. Add hills and mountain landforms after current material/performance slices, with careful road, collision, camera, and mob-pathing checks.
+Status: First pass shipped. Exploration now has rolling terrain, stronger wilderness ridges/escarpments/valleys, Dragonspine/biome landform variation, terrain-aware camera height, and flat/blended pads for the house spawn, roads, villages, Crownford, Crownring, lakes, and biome landmarks.
 
 Tasks:
 - Add broad rolling hills to meadow and wilderness areas without making basic traversal tedious.
