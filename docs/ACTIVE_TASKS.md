@@ -4,6 +4,23 @@ Branch: `master` with short-lived `codex/*` feature branches.
 
 This brief converts the current creative direction into implementation tasks. Agents may propose creative details inside their ownership area, but implementation choices must preserve the approved direction below.
 
+## Task Status System
+
+Use this file as the single source of truth for implementation status.
+
+Status legend:
+- `[x] Done` means the task is implemented in repo code/docs, has passed the relevant local checks for its risk level, and has no known blocker.
+- `[~] Active` means a usable slice exists, but the task still has known gaps, missing verification, or follow-up work.
+- `[ ] Todo` means approved and ready to pick up.
+- `[?] Needs decision` means the product/design/technical direction is not settled enough for implementation.
+- `[!] Blocked` means implementation cannot continue until a named dependency changes.
+
+Completion rules:
+- Agents may propose completion, but the Game Director / Integrator marks `[x] Done`.
+- A task is not done only because its acceptance criteria were written; it needs implementation evidence.
+- Done evidence should be a short note such as a commit, shipped slice, smoke test, or code location.
+- If a task is partially shipped, keep it `[~] Active` and list the exact remaining work.
+
 ## Approved Direction
 
 - Exploration is the primary frame of the game.
@@ -17,19 +34,172 @@ This brief converts the current creative direction into implementation tasks. Ag
 - Arena rewards support Exploration with XP, supplies, future reputation, and unlock hooks. They should not replace exploration quest rewards.
 - Model proportions should be normalized around the player as the scale anchor.
 
+## Newly Specced Tasks From Roadmap
+
+These are ready-to-delegate tasks extracted from `docs/ROADMAP.md`.
+
+### T-001: Combat Event Pipeline Prep
+
+Primary owner: Gameplay Systems Agent
+
+Reviewer: Multiplayer / Netcode Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Define a compact event shape for `input intent -> validation -> hit resolution -> damage/status -> XP/loot -> replicated result`.
+- Start by documenting the event names and payloads before moving code.
+- Identify the first two call sites to migrate: player melee/projectile hit and enemy death reward.
+
+Acceptance:
+- Event names cover player attacks, enemy attacks, projectile hits, enemy death, item collection, wave clear, and quest reward.
+- Host-authoritative online behavior is preserved.
+- The first migration can be done without rewriting all combat at once.
+
+### T-002: Quest Definitions Extraction
+
+Primary owner: Creative / Narrative Agent
+
+Reviewer: World & Content Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Move quest definition data toward a structured table or module while leaving quest runtime state in progression.
+- Preserve current quest IDs and local saves.
+- Add explicit dialogue states for unavailable, available, active, ready, and done.
+
+Acceptance:
+- No local save migration breakage.
+- Existing herbs, villages, horse, biome, city, Roadwarden Tack, and Crownring quests still work.
+- Future AI-assisted NPC work can use `conversationTags` and authored lines as lore packets.
+
+### T-003: Audio Manager And Ambience Slice
+
+Primary owner: Sound Design / Audio Agent
+
+Reviewer: Rendering / Performance Agent
+
+Status: `[~] Active`
+
+Scope:
+- Keep the louder procedural mix.
+- Add explicit master/SFX/ambience volume controls before adding many new loops.
+- Add one lightweight settlement ambience and one wilderness ambience prototype with hard limits on concurrent voices.
+
+Acceptance:
+- Mute and volume changes work before and during gameplay.
+- Combat-critical SFX remain audible over ambience.
+- Ambience does not spawn unbounded audio nodes.
+
+### T-004: Room Phases And Rejoin Behavior
+
+Primary owner: Multiplayer / Netcode Agent
+
+Reviewer: UI / UX Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Formalize room phases: lobby, loading, exploration, arena-active, arena-intermission, closing, abandoned.
+- Define browser refresh/rejoin behavior for host and joiner.
+- Keep first implementation fail-closed for host disconnect; no host migration yet.
+
+Acceptance:
+- Pause menu copy and buttons match the room phase.
+- Joiners can rejoin a still-open room with the remembered four digit code.
+- Host disconnect and kicked-user behavior are predictable and documented.
+
+### T-005: First Lightweight Inventory Boundary
+
+Primary owner: RPG Mechanics / Economy Agent
+
+Reviewer: UI / UX Agent
+
+Status: `[?] Needs decision`
+
+Scope:
+- Propose the smallest useful inventory: stackable consumables/materials only, or equipment plus consumables.
+- Define persistence, UI surface, online authority, and reward sources.
+- Avoid random loot spam until comparison/equipment UI exists.
+
+Acceptance:
+- The proposal names concrete first items and where they come from.
+- The player benefit is obvious without opening a large menu system.
+- Multiplayer double-claim risks are addressed.
+
+### T-006: Next POI Slice
+
+Primary owner: World & Content Agent
+
+Reviewer: Creative / Narrative Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Add one compact POI from the roadmap: bandit roadblock, abandoned watchtower, cave/micro-dungeon, or mount corral challenge.
+- Include a small quest hook or reward.
+- Keep collision, roads, terrain, and performance budgets in scope.
+
+Acceptance:
+- The POI has a readable silhouette from travel distance.
+- It connects to a nearby road/trail naturally.
+- It adds either combat, traversal, discovery, or reward variety.
+
+### T-007: Firebase Anonymous Identity Design
+
+Primary owner: Firebase / Platform Agent
+
+Reviewer: Multiplayer / Netcode Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Draft the anonymous Auth and Firestore profile plan without implementing writes yet.
+- Document collections, security rules assumptions, and migration from local saves.
+- Keep real-time simulation out of Firestore.
+
+Acceptance:
+- Schema plan covers users, characters, quest state, rooms, members, and content versions.
+- The plan says what remains local/MQTT-only.
+- No secrets or production rule changes are committed in this design slice.
+
+### T-008: Internal Performance Overlay
+
+Primary owner: Rendering / Performance Agent
+
+Reviewer: QA / Playtest Agent
+
+Status: `[ ] Todo`
+
+Scope:
+- Add a developer-only overlay or toggle for FPS-ish frame timing, active enemies, particles, projectiles, potions, remote players, and draw-risk notes.
+- Keep it hidden by default.
+
+Acceptance:
+- The overlay can be enabled without changing gameplay.
+- It helps compare Crownford traversal, mounted exploration, and active Crownring waves.
+- It does not create meaningful overhead when hidden.
+
 ## Phase 1: Remove Arena As A Top-Level Mode
 
 Primary owner: UI / UX Agent
 
 Support: Gameplay Systems Agent, Release Agent
 
-Tasks:
-- Remove the visible Arena Waves mode card from the start flow.
-- Default new sessions to Exploration.
-- Keep Start Session, Join Session, and Resume Game as the main entry choices.
-- Ensure joined users inherit the host world and do not choose modes.
-- Update menu copy so it explains Exploration as the full game frame.
-- Keep old arena code available temporarily for reuse, but stop exposing it as a top-level mode.
+Status: `[x] Done`
+
+Done evidence:
+- Start menu now exposes Start New Session, Resume Game, and Join Session; visible standalone Arena Waves mode is gone.
+- `modeDisplayName()` returns Exploration and session copy explains that Crownring waves are found in the world.
+
+Task checklist:
+- [x] Remove the visible Arena Waves mode card from the start flow.
+- [x] Default new sessions to Exploration.
+- [x] Keep Start Session, Join Session, and Resume Game as the main entry choices.
+- [x] Ensure joined users inherit the host world and do not choose modes.
+- [x] Update menu copy so it explains Exploration as the full game frame.
+- [x] Keep old arena code available temporarily for reuse, but stop exposing it as a top-level mode.
 
 Acceptance:
 - A new player cannot select standalone arena waves from the menu.
@@ -43,14 +213,25 @@ Primary owner: World & Content Agent
 
 Support: Creative / Narrative Agent, Rendering / Performance Agent
 
-Tasks:
-- Replace or evolve the current arena-city concept into Crownford.
-- Add a city layout that reads as a place first, not just an arena launcher.
-- Include castle ward, church/infirmary, stable yard, market/guild hints, houses, walls, and the Crownring at the outer edge.
-- Add Marshal Rowan Vale near the Crownring entrance.
-- Add an infirmary recovery point beside the church or arena barracks.
-- Add a yield bell or steward object inside the arena.
-- Add Crownford to discovery/progression without breaking the village discovery quest edge cases.
+Status: `[~] Active`
+
+Done evidence:
+- `addCrownfordCity()` and `addCrownringCity()` create Crownford, Crownring, walls, houses, castle/church/stable elements, city NPCs, and city quest items.
+- `crownfordInfirmaryPosition()` and arena defeat recovery are implemented.
+- Steward Bryn opens the Crownring activity from world dialogue.
+
+Remaining work:
+- Resolve the design mismatch between "Marshal Rowan Vale starts the arena" and the current implementation where Steward Bryn is the Crownring service NPC.
+- Add a more explicit in-world yield bell/steward/gate object if keyboard-only `Y` yield feels too abstract.
+
+Task checklist:
+- [x] Replace or evolve the current arena-city concept into Crownford.
+- [x] Add a city layout that reads as a place first, not just an arena launcher.
+- [x] Include castle ward, church/infirmary, stable yard, market/guild hints, houses, walls, and the Crownring at the outer edge.
+- [~] Add Marshal Rowan Vale near the Crownring entrance.
+- [x] Add an infirmary recovery point beside the church or arena barracks.
+- [~] Add a yield bell or steward object inside the arena.
+- [x] Add Crownford to discovery/progression without breaking the village discovery quest edge cases.
 
 Creative constraints:
 - Crownford should feel civic, old, and disciplined: pale stone, timber upper floors, tiled roofs, banners, fountains/gardens, and broad streets.
@@ -69,17 +250,23 @@ Primary owner: World & Content Agent
 
 Support: Rendering / Performance Agent, QA / Playtest Agent
 
-Status: First pass shipped. Roads now use deduped junction patches, stronger winding rules, and deterministic roadside supply/decor stops at forks, gates, biome thresholds, villages, and Crownring/Crownford entries.
+Status: `[x] Done`
 
-Tasks:
-- Keep the Exploration road network continuous, aligned to settlement entrances, and clear of major lakes.
-- Avoid overly straight wilderness roads. Use mild bends, forks, landmark turns, terrain-aware detours, and worn edges so roads feel traveled, old, and part of the landscape.
-- Let formal places be formal: Crownford can have straighter civic streets, but village paths, biome trails, and wilderness roads should twist and settle around hills, water, trees, rocks, and POIs.
-- Keep later tree, rock, and clutter placement off the main roads.
-- Expand deterministic low-poly decor around villages, Crownford, and biome landmarks.
-- Add carts, buckets, brooms, barrels, crates, benches, lantern posts, market clutter, training props, and biome-specific props.
-- Use mostly static meshes and glow materials; reserve real lights for a small bounded list.
-- Add colliders only for large decor such as carts, stalls, lamp posts, racks, and piles.
+Done evidence:
+- Roads use deduped junction patches, stronger winding rules, lake detours, and deterministic roadside supply/decor stops at forks, gates, biome thresholds, villages, and Crownring/Crownford entries.
+- Large trees, rocks, structures, and decor now use exploration colliders/spatial checks.
+
+Follow-up tasks should be opened as new POI/world-decor tickets rather than keeping this first pass open.
+
+Task checklist:
+- [x] Keep the Exploration road network continuous, aligned to settlement entrances, and clear of major lakes.
+- [x] Avoid overly straight wilderness roads with bends, forks, landmark turns, terrain-aware detours, and worn edges.
+- [x] Let formal places be formal while wilderness/village/biome paths feel natural.
+- [x] Keep later tree, rock, and clutter placement off the main roads.
+- [x] Expand deterministic low-poly decor around villages, Crownford, and biome landmarks.
+- [x] Add carts, buckets, brooms, barrels, crates, benches, lantern posts, market clutter, training props, and biome-specific props.
+- [x] Use mostly static meshes and glow materials; reserve real lights for a small bounded list.
+- [x] Add colliders only for large decor such as carts, stalls, lamp posts, racks, and piles.
 
 Acceptance:
 - Roads read as a connected travel network rather than disconnected patches.
@@ -90,12 +277,16 @@ Acceptance:
 
 ## Phase 2B-R: Roadwarden Tack Slice
 
-Status: Implemented in the gameplay slice. Quartermaster Pell now offers "Shoes for the Long Road" after the horse unlock only, with four mounted road waymarks and a personal `roadwarden_tack` reward.
+Status: `[x] Done`
 
-Acceptance:
-- The quest does not require Crownring arena completion.
-- The reward remains local progression while online player state carries mount tack for remote rendering.
-- No currency, shop, timed race, or inventory screen is introduced.
+Done evidence:
+- Quartermaster Pell offers "Shoes for the Long Road" after the horse unlock only.
+- Four mounted road waymarks grant the personal `roadwarden_tack` reward.
+
+Task checklist:
+- [x] The quest does not require Crownring arena completion.
+- [x] The reward remains local progression while online player state carries mount tack for remote rendering.
+- [x] No currency, shop, timed race, or inventory screen is introduced.
 
 ## Phase 2C: Terrain Elevation And Landforms
 
@@ -103,15 +294,21 @@ Primary owner: World & Content Agent
 
 Support: Rendering / Performance Agent, Gameplay Systems Agent, QA / Playtest Agent
 
-Status: First pass shipped. Exploration now has rolling terrain, stronger wilderness ridges/escarpments/valleys, Dragonspine/biome landform variation, terrain-aware camera height, and flat/blended pads for the house spawn, roads, villages, Crownford, Crownring, lakes, and biome landmarks.
+Status: `[x] Done`
 
-Tasks:
-- Add broad rolling hills to meadow and wilderness areas without making basic traversal tedious.
-- Give Dragonspine Peaks real mountain massing: foothills, ridges, passes, roost shelves, and a few readable silhouettes from long distance.
-- Keep roads believable by letting them bend around slopes, climb through passes, and avoid steep terrain where possible.
-- Preserve flat enough areas around Crownford, Crownring, villages, house spawn, quest items, lakes, and arena activity spaces.
-- Add terrain-aware placement rules so trees, rocks, mobs, NPCs, and decor sit cleanly on or above the ground.
-- Review camera height, horse riding, projectile aim, collision, and quest markers after elevation is introduced.
+Done evidence:
+- Exploration uses rolling terrain, stronger wilderness ridges/escarpments/valleys, Dragonspine/biome landform variation, terrain-aware camera height, and flat/blended pads for the house spawn, roads, villages, Crownford, Crownring, lakes, and biome landmarks.
+- `explorationTerrainHeight()` is now the shared sampler for ground placement and camera anchoring.
+
+Future terrain work should be opened as separate biome/POI tickets.
+
+Task checklist:
+- [x] Add broad rolling hills to meadow and wilderness areas without making basic traversal tedious.
+- [x] Give Dragonspine Peaks real mountain massing: foothills, ridges, passes, roost shelves, and readable silhouettes.
+- [x] Keep roads believable by letting them bend around slopes, climb through passes, and avoid steep terrain where possible.
+- [x] Preserve flat enough areas around Crownford, Crownring, villages, house spawn, quest items, lakes, and arena activity spaces.
+- [x] Add terrain-aware placement rules so trees, rocks, mobs, NPCs, and decor sit cleanly on or above the ground.
+- [x] Review camera height, horse riding, projectile aim, collision, and quest markers after elevation is introduced.
 
 Acceptance:
 - The world no longer reads as a mostly flat board.
@@ -125,6 +322,19 @@ Acceptance:
 Primary owner: Gameplay Systems Agent
 
 Support: Multiplayer / Netcode Agent, UI / UX Agent
+
+Status: `[~] Active`
+
+Done evidence:
+- `game.exploration.arenaActivity` exists and Crownring waves start from world dialogue without resetting Exploration.
+- Arena actors are tagged/cleaned by activity id.
+- Defeat returns the player to the infirmary and yield returns them to Exploration.
+- Crownring wave XP and the first Crownring quest are implemented.
+
+Remaining work:
+- Add a clearer intermission/claim/continue presentation instead of relying mostly on immediate rewards and the `Y` yield prompt.
+- Decide whether a physical yield bell/gate object is required for the first shipped arena loop.
+- Add persisted arena rank fields such as `bestWave`, `completions`, and `rank`.
 
 Core state:
 
@@ -144,25 +354,25 @@ game.exploration.arenaActivity = {
 };
 ```
 
-Tasks:
-- Add a scoped arena activity state under `game.exploration`.
-- Start arena waves from Marshal Rowan Vale dialogue/service actions.
-- Do not call `resetGame()` to start arena waves.
-- Teleport participants into the Crownring, dismount players, and park horses outside.
-- Spawn arena waves from Crownring gates.
-- Tag arena enemies, projectiles, fireballs, effects, and potions with `activityType: "arena"` and `activityId`.
-- Make arena cleanup remove only matching activity actors.
-- Keep roaming Exploration mobs, quests, mounts, saves, and NPCs intact.
-- Add intermission behavior where players can claim winnings and leave.
-- Add mid-wave yield behavior with reduced current-wave reward.
-- On arena defeat, stop the activity, clear arena actors, restore the player at the infirmary, and continue Exploration.
+Task checklist:
+- [x] Add a scoped arena activity state under `game.exploration`.
+- [~] Start arena waves from Marshal Rowan Vale dialogue/service actions.
+- [x] Do not call `resetGame()` to start arena waves.
+- [x] Teleport participants into the Crownring, dismount players, and park horses outside.
+- [x] Spawn arena waves from Crownring gates.
+- [x] Tag arena enemies, projectiles, fireballs, effects, and potions with `activityType: "arena"` and `activityId`.
+- [x] Make arena cleanup remove only matching activity actors.
+- [x] Keep roaming Exploration mobs, quests, mounts, saves, and NPCs intact.
+- [~] Add intermission behavior where players can claim winnings and leave.
+- [x] Add mid-wave yield behavior with reduced current-wave reward.
+- [x] On arena defeat, stop the activity, clear arena actors, restore the player at the infirmary, and continue Exploration.
 
 Rewards:
-- Kill XP remains small and immediate.
-- Wave clear XP is awarded once per eligible participant.
-- Milestone rewards can land every three waves.
-- Dying or yielding mid-wave keeps earned kill XP but no current wave clear bonus.
-- Future progression state should support `bestWave`, `completions`, and `rank`.
+- [x] Kill XP remains small and immediate.
+- [x] Wave clear XP is awarded once per eligible participant.
+- [~] Milestone rewards can land every three waves.
+- [x] Dying or yielding mid-wave keeps earned kill XP but no current wave clear bonus.
+- [ ] Future progression state should support `bestWave`, `completions`, and `rank`.
 
 Acceptance:
 - Starting arena waves does not reset the Exploration world.
@@ -177,19 +387,30 @@ Primary owner: Multiplayer / Netcode Agent
 
 Support: Gameplay Systems Agent, QA / Playtest Agent
 
-Tasks:
-- Host owns arena activity phase, wave number, enemy spawning, enemy health/death, shared drops, fireballs, reward events, and end transitions.
-- Joiners send intents/requests only.
-- Add message kinds or equivalents:
-  - `arenaStartRequest`
-  - `arenaLeaveRequest`
-  - `arenaDefeated`
-  - `arenaState`
-  - `arenaReward`
-- Include arena activity state in host world snapshots or an equivalent single source of truth message.
-- Late joiners spawn at Crownford/infirmary as spectators or pending participants, then join at the next intermission.
-- If a joiner leaves mid-arena, remove that player from participants and continue if others remain.
-- If host closes/leaves, current room-close behavior wins. No host migration in this pass.
+Status: `[~] Active`
+
+Done evidence:
+- Host snapshots include `arenaActivity`, enemies, fireballs, and potions.
+- Joiners apply host world snapshots and render remote enemies/fireballs/potions.
+- Arena start, leave, defeat, reward, potion pickup, and wizard potion drop messages exist.
+
+Remaining work:
+- Add explicit room/arena phases and late-join rules.
+- Run/record a two-client host/join smoke test for Crownring waves.
+- Decide if `arenaState` remains folded into world snapshots or becomes a separate message.
+
+Task checklist:
+- [x] Host owns arena activity phase, wave number, enemy spawning, enemy health/death, shared drops, fireballs, reward events, and end transitions.
+- [x] Joiners send intents/requests only.
+- [x] Add message kind `arenaStartRequest`.
+- [x] Add message kind `arenaLeaveRequest`.
+- [x] Add message kind `arenaDefeated`.
+- [~] Add message kind or equivalent for `arenaState`.
+- [x] Add message kind `arenaReward`.
+- [x] Include arena activity state in host world snapshots or an equivalent single source of truth message.
+- [ ] Late joiners spawn at Crownford/infirmary as spectators or pending participants, then join at the next intermission.
+- [x] If a joiner leaves mid-arena, remove that player from participants and continue if others remain.
+- [x] If host closes/leaves, current room-close behavior wins. No host migration in this pass.
 
 Acceptance:
 - Two desktop clients see the same arena enemies, projectiles, fireballs, effects, and potions.
@@ -203,7 +424,15 @@ Primary owner: Rendering / Performance Agent
 
 Support: World & Content Agent, QA / Playtest Agent
 
-Status: First proportion pass in progress. Friendly NPCs, quest marker height, door sizes, village house scale, city wall height, Crownring houses, dragons, and spider footprint have been normalized against the player scale anchor.
+Status: `[~] Active`
+
+Done evidence:
+- Friendly NPCs, quest marker height, door sizes, village house scale, city wall height, Crownring houses, dragons, and spider footprint have a first normalization pass against the player scale anchor.
+- Remote enemy/player snapshots carry scale/radius data for shared visuals.
+
+Remaining work:
+- Run a focused screenshot QA pass for all major character/enemy/structure proportions.
+- Re-check roofs and barbarian horns during that pass before marking fully done.
 
 Scale targets:
 - Player body reads as roughly `2.2-2.4` world units tall. Plume/hat may reach about `3.0`.
@@ -213,13 +442,13 @@ Scale targets:
 - Spiders are man-sized giants: low and wide, carapace top around `1.1-1.3`, leg span around `2.5-3.0`.
 - Doors should be at least `1.75` units high; eaves should clear player head.
 
-Tasks:
-- Fix any remaining roof inversion and horn orientation issues.
-- Normalize friendly NPC proportions and quest marker height.
-- Increase village/city house scales where doors and walls look too small.
-- Update structure colliders after model scale changes.
-- Resize dragons and spiders, then update radius, health bar height, hover height, and attack ranges.
-- Verify remote player and enemy scale snapshots still match host state.
+Task checklist:
+- [~] Fix any remaining roof inversion and horn orientation issues.
+- [x] Normalize friendly NPC proportions and quest marker height.
+- [x] Increase village/city house scales where doors and walls look too small.
+- [x] Update structure colliders after model scale changes.
+- [x] Resize dragons and spiders, then update radius, health bar height, hover height, and attack ranges.
+- [x] Verify remote player and enemy scale snapshots still match host state.
 
 Acceptance:
 - NPCs no longer look child-sized beside the player.
@@ -234,7 +463,14 @@ Primary owner: Rendering / Performance Agent
 
 Support: World & Content Agent, Sound Design / Audio Agent, QA / Playtest Agent
 
-Status: First procedural material pass in progress. Shared low-cost CanvasTexture detail now covers stone, city wall, slate/roof tile, timber, plaster/adobe, cloth banners, roads, thatch, desert sand, and Crownring arena sand without adding external assets.
+Status: `[~] Active`
+
+Done evidence:
+- Shared low-cost `CanvasTexture` detail covers stone, city wall, slate/roof tile, timber, plaster/adobe, cloth banners, roads, thatch, desert sand, and Crownring arena sand without adding external assets.
+
+Remaining work:
+- Add a focused character/enemy readability pass only where it helps at third-person camera distance.
+- Track any future external assets under `docs/ASSET_POLICY.md`.
 
 Policy:
 - Follow `docs/ASSET_POLICY.md`.
@@ -242,12 +478,12 @@ Policy:
 - Use external free textures only when the license is clear and the visual gain is worth the asset cost.
 - CC0 sources are preferred. Mixed-license libraries require per-asset checks.
 
-Tasks:
-- Add a focused Crownford material pass after scale/proportion cleanup.
-- Prioritize stone, roof tile, timber, banners, roads, arena sand, church/castle accents, and shield/cape detail.
-- Add character/enemy texture details only where they improve recognition from the default third-person camera.
-- Track any committed external asset source, license, and attribution requirement.
-- Keep texture sizes small and reuse atlases/materials where practical.
+Task checklist:
+- [x] Add a focused Crownford material pass after scale/proportion cleanup.
+- [x] Prioritize stone, roof tile, timber, banners, roads, arena sand, church/castle accents, and shield/cape detail.
+- [~] Add character/enemy texture details only where they improve recognition from the default third-person camera.
+- [x] Track any committed external asset source, license, and attribution requirement. No external texture assets are currently committed.
+- [x] Keep texture sizes small and reuse atlases/materials where practical.
 
 Acceptance:
 - Textures improve readability without pushing the game toward photorealism.
@@ -261,18 +497,27 @@ Primary owner: RPG Mechanics / Economy Agent
 
 Support: Gameplay Systems Agent, Creative / Narrative Agent, UI / UX Agent, Multiplayer / Netcode Agent
 
+Status: `[~] Active`
+
+Done evidence:
+- Levels, XP, lower starting stats, level-based ability unlocks, equipment definitions, perks, Roadwarden Tack, and quest reward hooks exist.
+
+Remaining work:
+- Decide and implement the first inventory boundary.
+- Add temporary buffs/debuffs and more weapon identity once UI and persistence surfaces are clear.
+
 Purpose:
 - Turn Ironhold from a set of activities into a satisfying RPG loop with meaningful choices, rewards, and character growth.
 
 Candidate systems:
-- Equipment slots: weapon, offhand or focus, armor or robe, trinket, mount tack, consumables.
-- Weapon identities: sword, axe, mace, spear, staff, wand, spell focus, and future rare variants.
-- Passive perks: class-specific and general upgrades unlocked through levels, trainers, quests, arena rank, or biome discoveries.
-- Buffs and debuffs: food, potions, shrine blessings, NPC blessings, arena boons, poison, burn, slow, guard break, storm charge.
-- Inventory: lightweight stackable consumables/materials first, then equipment once UI and persistence are ready.
-- Loot sources: quests, POIs, arena milestones, chests, merchants, elite mobs, and future dungeons.
-- Economy: small coin/material model only when there are clear sinks such as repairs, upgrades, shops, crafting, stables, or training.
-- Buildcraft: knight and wizard should have distinct choices without requiring complicated menus.
+- [~] Equipment slots: weapon, offhand or focus, armor or robe, trinket, mount tack, consumables.
+- [~] Weapon identities: sword, axe, mace, spear, staff, wand, spell focus, and future rare variants.
+- [x] Passive perks: class-specific and general upgrades unlocked through levels, trainers, quests, arena rank, or biome discoveries.
+- [ ] Buffs and debuffs: food, potions, shrine blessings, NPC blessings, arena boons, poison, burn, slow, guard break, storm charge.
+- [ ] Inventory: lightweight stackable consumables/materials first, then equipment once UI and persistence are ready.
+- [~] Loot sources: quests, POIs, arena milestones, chests, merchants, elite mobs, and future dungeons.
+- [ ] Economy: small coin/material model only when there are clear sinks such as repairs, upgrades, shops, crafting, stables, or training.
+- [~] Buildcraft: knight and wizard should have distinct choices without requiring complicated menus.
 
 Design rules:
 - A reward should usually give one of: more power, a new option, better survival, faster traversal, access to a place/activity, or world recognition.
@@ -293,25 +538,29 @@ Primary owner: UI / UX Agent
 
 Support: Sound Design / Audio Agent, QA / Playtest Agent
 
-Status: Desktop-first pass active. Touch/handheld support is deferred for now. A first procedural Web Audio SFX pass now covers player attacks, blocks, hits, potions, quest moments, and level-ups with autoplay-safe fallback behavior. The master mix has been raised and routed through light compression so combat feedback reads more clearly.
+Status: `[~] Active`
 
-Tasks:
-- Keep desktop controls first-class.
-- Defer handheld/touch play, landscape enforcement, and portrait notices until the project returns to small-screen support.
-- Add keyboard-first arena service dialogue:
-  - `E` interact/advance
-  - `Up/Down` or `W/S` select
-  - `Enter` choose
-  - `Esc` or `Backspace` close
-- Add contextual prompts:
-  - `E Talk`
-  - `Hold E Leave Arena`
-  - `Hold R Yield`
-  - `Enter Select`
-- During arena activity, temporarily show arena wave/status in the quest tracker area.
-- Keep ability boxes and desktop key labels visible.
-- Extend procedural audio toward arena start, wave clear, yield, defeat, victory, crowd ambience, city ambience, UI selection, and confirm/cancel.
-- Ensure audio hooks respect mute/volume settings.
+Done evidence:
+- Desktop-first scope is explicit; touch/handheld support is deferred.
+- Ability boxes show desktop key labels.
+- Keyboard-first quest/dialogue controls exist.
+- Procedural Web Audio covers player attacks, blocks, hits, potions, quest moments, level-ups, louder master mix, and light compression.
+- In the current worktree, additional arena/dialogue cues cover Crownring open, wave entering, wave clear, every-third-wave milestone fanfare, yield, infirmary defeat, dialogue selection movement, and dialogue cancel/close.
+
+Remaining work:
+- Add actual master/SFX/ambience volume controls.
+- Add crowd/city/biome ambience loops with voice limits.
+- Confirm arena status belongs in quest tracker, wave pill, or both.
+
+Task checklist:
+- [x] Keep desktop controls first-class.
+- [x] Defer handheld/touch play, landscape enforcement, and portrait notices until the project returns to small-screen support.
+- [x] Add keyboard-first arena service dialogue: `E` interact/advance, `Up/Down` or `W/S` select, `Enter` choose, `Esc` or `Backspace` close.
+- [~] Add contextual prompts: `E Talk`, `Hold E Leave Arena`, `Hold R Yield`, `Enter Select`.
+- [~] During arena activity, temporarily show arena wave/status in the quest tracker area.
+- [x] Keep ability boxes and desktop key labels visible.
+- [~] Extend procedural audio toward arena start, wave clear, yield, defeat, victory, crowd ambience, city ambience, UI selection, and confirm/cancel.
+- [x] Ensure audio hooks respect mute/volume settings.
 
 Acceptance:
 - Dialogue can be completed without mouse interaction.
@@ -325,16 +574,23 @@ Performance does not need to become a separate decision-making agent yet, but it
 
 Specialist owner: Rendering / Performance Agent
 
-Status: First structural pass shipped. Exploration colliders now register into a spatial grid so player, horse, and procedural placement checks query nearby obstacles instead of scanning every tree, rock, structure, and decor item.
+Status: `[~] Active`
+
+Done evidence:
+- First structural pass shipped. Exploration colliders now register into a spatial grid so player, horse, and procedural placement checks query nearby obstacles instead of scanning every tree, rock, structure, and decor item.
+
+Remaining work:
+- Add the internal performance overlay from task `T-008`.
+- Record performance notes in every feature branch summary.
 
 Feature owner duties:
-- Call out expected performance impact before implementation.
-- Prefer pooled/reused objects for projectiles, particles, potions, markers, and short-lived effects.
-- Avoid adding per-frame scans over large arrays unless the list is bounded or spatially filtered.
-- Keep lights, shadow casters, particles, and animated props intentional in Crownford and the Crownring.
-- Keep texture count, resolution, and material variety intentional.
-- Keep multiplayer snapshots compact when adding arena activity state.
-- Preserve low-poly procedural style before adding geometry detail.
+- [ ] Call out expected performance impact before implementation.
+- [~] Prefer pooled/reused objects for projectiles, particles, potions, markers, and short-lived effects.
+- [x] Avoid adding per-frame scans over large arrays unless the list is bounded or spatially filtered.
+- [~] Keep lights, shadow casters, particles, and animated props intentional in Crownford and the Crownring.
+- [x] Keep texture count, resolution, and material variety intentional.
+- [x] Keep multiplayer snapshots compact when adding arena activity state.
+- [x] Preserve low-poly procedural style before adding geometry detail.
 
 Review triggers:
 - New city districts or many repeated structures.
@@ -355,7 +611,12 @@ Primary owner: World Design Agent
 
 Support: Rendering / Performance Agent, QA / Playtest Agent
 
-Status: First visible elevation slice in progress. Exploration terrain now uses a shared sampler for rolling meadow ground, raised Dragonspine mountain mass, subtle dunes, and lower swamp pockets. Roads, biome patches, common props, NPCs, enemies, potions, horses, and remote player visuals are being grounded against the same terrain height while gameplay collision remains stable and mostly horizontal.
+Status: `[x] Done`
+
+Done evidence:
+- Superseded by Phase 2C. Exploration terrain uses a shared sampler for rolling meadow ground, raised Dragonspine mountain mass, dunes, swamp pockets, roads, flat pads, camera anchoring, props, NPCs, enemies, potions, horses, and remote player visuals.
+
+Do not add new work here. Open future terrain requests under Phase 2C follow-up or `T-006` POI/world tasks.
 
 Acceptance:
 - Exploration starts from the menu with no console errors.

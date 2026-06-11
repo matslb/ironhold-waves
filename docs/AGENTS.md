@@ -12,6 +12,9 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 - Firebase Hosting is the only supported deployment target.
 - Performance is cross-cutting. Rendering / Performance is the specialist reviewer, but every feature owner is responsible for the cost of their own objects, loops, particles, network messages, and UI work.
 - Theme is cross-cutting too. Every agent should ask whether a feature feels like Ironhold: low-poly, grounded fantasy, civic old-world settlements, readable silhouettes, practical magic, wilderness danger, and authored details that look lived-in rather than generated from a grid.
+- `docs/ACTIVE_TASKS.md` is the task status source of truth. Agents may recommend status changes, but only the Game Director / Integrator marks `[x] Done`.
+- A task is done only with implementation evidence and appropriate verification, not because its acceptance criteria are written or a single agent believes it is complete.
+- Use the shared status legend from `docs/ACTIVE_TASKS.md`: `[x] Done`, `[~] Active`, `[ ] Todo`, `[?] Needs decision`, `[!] Blocked`.
 
 ## Current Code Layout
 
