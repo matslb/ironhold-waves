@@ -241,6 +241,30 @@ Acceptance:
 - Future assisted/generated dialogue can only consume lore packets, must pass validation, falls back deterministically, and is logged for review.
 - No AI generation runs in the shipped game until Phase 3 preconditions in `docs/LORE_BIBLE.md` are signed off.
 
+### T-010: Briarfall Woods Biome And Gear Slice
+
+Primary owner: World & Content Agent
+
+Reviewer: RPG Mechanics / Economy Agent, Multiplayer / Netcode Agent
+
+Status: `[x] Done`
+
+Done evidence:
+- Briarfall Woods now generates as a fourth exploration biome with mossy terrain texture, low basin/ridge shaping, flat village pads, a winding woodland lane, minimap biome color, and collision-enabled oaks/brambles/charcoal/standing-stone props in `src/main.js`.
+- A Briarfall timber village spawns with timber/moss house architecture, Briarfall-styled NPCs, and the quest giver Edda Thorn.
+- The new quest `briarStalkers` gives map hints, quest tracker progress, XP, boons, a field potion, Briarfall class kits, and the Briarfall Pathcraft perk.
+- Thornbound raiders (`briarRaider`) are a distinct enemy type with Briarfall visuals, XP/reward mapping, quest progress, host snapshot creation, shared damage/death path, and tier scaling compatibility.
+- Gear expansion shipped in `src/content/rpg.js`: `knight_briarfall_hookblade`, `wizard_briar_focus`, `ranger_briarstring_bow`, `briarfall_pathcraft`, Crownring Recurve unlock, and ranger-relevant Crownford Drill tuning.
+- Multiplayer polish: remote player combat profiles now refresh on weapon/perk changes, not only character changes.
+- Verification: `/usr/local/bin/node --check src/main.js`, `/usr/local/bin/node --check src/content/rpg.js`, `/usr/local/bin/node --check src/content/dialogue.js`, `git diff --check`, and in-browser local Exploration resume smoke passed. Browser smoke confirmed active Exploration HUD and no new console errors after fixes.
+
+Coordination note:
+- `src/content/dialogue.js` received only a small Briarfall ambient-bark addition. Creative / Narrative Agent should review/adopt/refine this into the fuller canon pass.
+
+Remaining work:
+- Playtest travel to Briarfall, complete `briarStalkers`, and verify the reward loop with each class.
+- Two-client smoke test for host-owned thornbound raiders and kit display after gear switching.
+
 ## Phase 1: Remove Arena As A Top-Level Mode
 
 Primary owner: UI / UX Agent

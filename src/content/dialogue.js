@@ -429,6 +429,11 @@ export const ambientBarks = [
   { biome: "swamp", mood: "greeting", when: "always", text: "Dry boots still? Then you have been listening to Mirel. Good." },
   { biome: "swamp", mood: "smalltalk", when: "always", text: "The reeds are thick this season. Noll says that means the pools are keeping their secrets close." },
   { biome: "swamp", mood: "rumor", when: "always", text: "On still nights you can hear a bell under the black water. Some say blessing, some say warning. Nobody wades out to check." },
+  // Briarfall
+  { biome: "briar", mood: "warning", when: "always", text: "The woods remember every shortcut. Stay on the timber road unless you know which roots are sleeping." },
+  { biome: "briar", mood: "greeting", when: "always", text: "Smoke and shade to you. If you smell charcoal, you are close enough to shout for help." },
+  { biome: "briar", mood: "smalltalk", when: "always", text: "The moss roofs held through last night's rain. That means the old oaks approve of us for one more day." },
+  { biome: "briar", mood: "rumor", when: "questActive", text: "Edda says the thornbound have lost their nerve. The lane may open before the next charcoal burn." },
   // City
   { biome: "city", mood: "warning", when: "always", text: "Keep to the paved streets near the ring. The castle bells make it easy to find your way back." },
   { biome: "city", mood: "greeting", when: "always", text: "Welcome to Crownford. Mind the cart lanes, trust the bells, and the city will treat you fairly." },
