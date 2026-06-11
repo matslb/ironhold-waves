@@ -10,6 +10,7 @@ This file defines the working taskforce for Ironhold. Keep it current as the gam
 - Agents must not revert work they did not make. If another change affects their task, they adapt or escalate.
 - Multiplayer, saves, quests, and rewards should be treated as shared systems, not one-off feature patches.
 - Firebase Hosting is the only supported deployment target.
+- Performance is cross-cutting. Rendering / Performance is the specialist reviewer, but every feature owner is responsible for the cost of their own objects, loops, particles, network messages, and UI work.
 
 ## Core Agents
 
@@ -149,6 +150,8 @@ Owns visual polish, Three.js performance, object pooling, draw calls, shadows, p
 Responsibilities:
 - Preserve fidelity while improving frame rate.
 - Profile exploration traversal, villages, waves, particles, shadows, and online sessions.
+- Review performance risk for any feature that adds repeated world objects, enemies, particles, lights, audio instances, network traffic, or per-frame logic.
+- Maintain practical budgets for draw calls, shadow casters, active enemies, projectiles, particles, foliage, lights, audio voices, and world snapshot size.
 - Add internal performance overlays when useful.
 - Fix visual oddities found during playthroughs.
 

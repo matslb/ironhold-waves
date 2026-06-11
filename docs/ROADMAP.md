@@ -184,6 +184,7 @@ Phase 3, Bounded Generated Dialogue:
 - Track draw calls, shadow cost, particles, enemy counts, and foliage density.
 - Stress-test max waves, mounted traversal, village NPCs, and online sessions.
 - Add internal FPS/memory overlay if needed.
+- Treat performance as a required review note for every feature that adds repeated objects, per-frame logic, network messages, particles, lights, or audio voices.
 
 ### Audio Gate
 

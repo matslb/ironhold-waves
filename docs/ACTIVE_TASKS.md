@@ -197,6 +197,33 @@ Acceptance:
 - Arena status is visible without hiding core health/resource information.
 - Sound hooks are named and ready even if full audio implementation lands later.
 
+## Performance Stewardship
+
+Performance does not need to become a separate decision-making agent yet, but it is a required review concern for every implementation slice.
+
+Specialist owner: Rendering / Performance Agent
+
+Feature owner duties:
+- Call out expected performance impact before implementation.
+- Prefer pooled/reused objects for projectiles, particles, potions, markers, and short-lived effects.
+- Avoid adding per-frame scans over large arrays unless the list is bounded or spatially filtered.
+- Keep lights, shadow casters, particles, and animated props intentional in Crownford and the Crownring.
+- Keep multiplayer snapshots compact when adding arena activity state.
+- Preserve low-poly procedural style before adding geometry detail.
+
+Review triggers:
+- New city districts or many repeated structures.
+- New enemies, arena waves, projectiles, particles, fireballs, or potion drops.
+- More NPCs, quest markers, minimap markers, or interactables.
+- Any additional shadow-casting lights, spatial audio voices, or retained network messages.
+- Any new loop that runs every frame.
+
+Acceptance:
+- Feature branches include at least one performance note in their final summary.
+- Crownford traversal remains smooth from the default camera.
+- Active arena waves do not cause obvious frame drops compared with current exploration combat.
+- Host snapshots stay small enough that two-player sessions remain responsive.
+
 ## Verification Plan
 
 - `node --check` on the module script.
