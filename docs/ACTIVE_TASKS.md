@@ -214,6 +214,38 @@ Acceptance:
 - Crownford and arena waves remain smooth.
 - Every external asset has documented licensing.
 
+## RPG Mechanics Backlog
+
+Primary owner: RPG Mechanics / Economy Agent
+
+Support: Gameplay Systems Agent, Creative / Narrative Agent, UI / UX Agent, Multiplayer / Netcode Agent
+
+Purpose:
+- Turn Ironhold from a set of activities into a satisfying RPG loop with meaningful choices, rewards, and character growth.
+
+Candidate systems:
+- Equipment slots: weapon, offhand or focus, armor or robe, trinket, mount tack, consumables.
+- Weapon identities: sword, axe, mace, spear, staff, wand, spell focus, and future rare variants.
+- Passive perks: class-specific and general upgrades unlocked through levels, trainers, quests, arena rank, or biome discoveries.
+- Buffs and debuffs: food, potions, shrine blessings, NPC blessings, arena boons, poison, burn, slow, guard break, storm charge.
+- Inventory: lightweight stackable consumables/materials first, then equipment once UI and persistence are ready.
+- Loot sources: quests, POIs, arena milestones, chests, merchants, elite mobs, and future dungeons.
+- Economy: small coin/material model only when there are clear sinks such as repairs, upgrades, shops, crafting, stables, or training.
+- Buildcraft: knight and wizard should have distinct choices without requiring complicated menus.
+
+Design rules:
+- A reward should usually give one of: more power, a new option, better survival, faster traversal, access to a place/activity, or world recognition.
+- Avoid random loot spam until inventory and comparison UI exist.
+- Prefer a small number of memorable items over many tiny stat sticks.
+- Keep early leveling fast: one or two quests should noticeably improve the character.
+- Do not add a new item type, currency, or upgrade material without a clear first use.
+- Online rewards must be host-authoritative and safe from double-claiming.
+
+Acceptance:
+- Proposed mechanics include player benefit, acquisition source, UI implications, persistence needs, multiplayer authority, and tuning knobs.
+- First versions are small enough to ship and playtest.
+- RPG systems support Exploration and Crownford arena instead of turning into a separate menu game.
+
 ## Phase 6: UI, Audio, And QA Polish
 
 Primary owner: UI / UX Agent

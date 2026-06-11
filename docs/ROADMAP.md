@@ -35,6 +35,8 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 - Prevent double rewards in both solo and online sessions.
 - Keep leveling fast enough that one or two quests matter.
 - Add Crownford arena rewards that support Exploration without replacing quest progression.
+- Define first-pass RPG systems: equipment slots, weapon identities, passive perks, temporary buffs, loot sources, and inventory boundaries.
+- Make every reward answer a player question: stronger now, new option, better survival, faster travel, access, or story/world recognition.
 
 ### UI And Onboarding
 
@@ -73,6 +75,17 @@ Priority POIs:
 - Abandoned watchtower with vertical exploration.
 - Cave or dungeon micro-zone with wave-style room locks.
 - Mount corral and mounted traversal challenge.
+
+### RPG Mechanics Foundation
+
+- Define class growth for knight and wizard beyond raw stats.
+- Add equipment concepts carefully: weapon, offhand/focus, armor/robe, trinket, mount tack, and consumables.
+- Give weapons identities rather than only numbers: reach, timing, cleave, stun, resource gain, elemental effects, or defensive utility.
+- Add temporary buffs from potions, shrines, food, arena boons, NPC blessings, and biome discoveries.
+- Add lightweight inventory before adding many item types; first version can cap stackable consumables/materials and avoid complex drag-and-drop.
+- Add upgrade benches or trainers in settlements so growth feels grounded in the world.
+- Keep loot sparse and readable: quests and POIs should be stronger reward sources than random enemy drops.
+- Ensure multiplayer reward grants are host-authoritative and persistence-safe.
 
 ### Texture And Asset Pipeline
 

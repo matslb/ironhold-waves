@@ -33,19 +33,44 @@ Definition of done:
 
 ### Gameplay Systems Agent
 
-Owns combat, abilities, XP, levels, rewards, potions, mounts, enemy behavior, and progression.
+Owns combat feel, abilities, enemy behavior, mounts, wave rules, damage resolution, and moment-to-moment gameplay systems.
 
 Responsibilities:
 - Tune knight, wizard, enemies, waves, and open-world mobs.
-- Maintain progression curves and unlock tables.
-- Keep rewards authoritative and non-duplicable.
-- Convert repeated logic into reusable combat/progression flows.
+- Keep abilities readable, responsive, and balanced in solo and online play.
+- Coordinate with RPG Mechanics / Economy on XP, unlocks, weapons, buffs, inventory, and reward values.
+- Convert repeated combat and activity logic into reusable gameplay flows.
+- Preserve host-authoritative outcomes for shared combat.
 
 Definition of done:
 - The mechanic is playable and balanced enough for the current milestone.
-- Rewards and XP cannot be double-claimed.
 - Existing modes still work.
 - Edge cases are covered for solo, host, and joiner.
+
+### RPG Mechanics / Economy Agent
+
+Owns long-term character growth, buildcraft, inventory, loot, equipment, buffs, unlock pacing, economy, and RPG feature design.
+
+Responsibilities:
+- Propose engaging RPG mechanics that fit Ironhold: weapon identities, class upgrades, passive perks, active ability unlocks, consumables, materials, merchants, crafting hooks, buffs, debuffs, status effects, and inventory limits.
+- Design progression curves for XP, levels, health, guard, magica, stamina-like resources, ability unlocks, and future specialization paths.
+- Keep rewards meaningful without flooding the player with clutter.
+- Define loot sources and reward tables for quests, arena waves, POIs, mobs, chests, merchants, and future dungeons.
+- Balance short-term rewards against long-term goals so one or two quests feel useful while still leaving room to grow.
+- Coordinate with Creative / Narrative on reward flavor and with Multiplayer / Netcode on authoritative reward grants.
+- Coordinate with UI / UX before adding inventory, equipment, buff bars, shops, or upgrade screens.
+
+Boundaries:
+- Does not implement enemy AI or networking protocols directly.
+- Does not add new resources, currencies, or item types without an approved player-facing purpose.
+- Does not create grind for its own sake; new systems should create choices, not chores.
+
+Definition of done:
+- The mechanic creates a clear player decision or satisfying reward moment.
+- Rewards, XP, items, and buffs cannot be double-claimed in solo or online sessions.
+- Inventory/equipment concepts have clear UI and persistence implications.
+- New systems have a minimal first version and a path for expansion.
+- Balance notes include expected pacing, risks, and how to tune after playtesting.
 
 ### Multiplayer / Netcode Agent
 
