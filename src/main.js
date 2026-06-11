@@ -30,10 +30,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const healthText = document.getElementById("healthText");
   const resourceLabel = document.getElementById("resourceLabel");
   const guardText = document.getElementById("guardText");
-  const koText = document.getElementById("koText");
   const levelText = document.getElementById("levelText");
   const xpReadout = document.getElementById("xpReadout");
-  const xpText = document.getElementById("xpText");
+  const xpFill = document.getElementById("xpFill");
   const kitReadout = document.getElementById("kitReadout");
   const kitText = document.getElementById("kitText");
   const saveHint = document.getElementById("saveHint");
@@ -139,6 +138,156 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     playerStepDistance: 0,
     playerLastSurface: "grass",
     remoteStepDistance: new Map()
+  };
+
+  const MUSIC_THEME_DEFAULT_ID = "meadow-wild";
+  const MUSIC_THEMES = {
+    "homestead": {
+      root: 146.83,
+      scale: [0, 2, 4, 5, 7, 9, 11, 12],
+      patterns: [[0, 2, 4, 2], [0, 3, 4, 5], [4, 5, 4, 2, 0]],
+      bass: [0, 4, 3, 4],
+      pace: 0.26,
+      restMin: 4.2,
+      restMax: 7.4,
+      leadGain: 0.010,
+      bassGain: 0.005
+    },
+    "meadow-wild": {
+      root: 146.83,
+      scale: [0, 2, 3, 5, 7, 9, 10, 12],
+      patterns: [[0, 2, 4, 5], [2, 4, 3, 1], [4, 5, 7, 5, 3]],
+      bass: [0, 0, 4, 3],
+      pace: 0.28,
+      restMin: 5.0,
+      restMax: 8.6,
+      leadGain: 0.010,
+      bassGain: 0.0048
+    },
+    "meadow-village-east": {
+      root: 164.81,
+      scale: [0, 2, 4, 5, 7, 9, 11, 12],
+      patterns: [[0, 2, 4, 7], [5, 4, 2, 0], [2, 4, 5, 4, 2]],
+      bass: [0, 4, 5, 4],
+      pace: 0.22,
+      restMin: 3.4,
+      restMax: 5.6,
+      leadGain: 0.012,
+      bassGain: 0.006
+    },
+    "meadow-village-west": {
+      root: 146.83,
+      scale: [0, 2, 3, 5, 7, 8, 10, 12],
+      patterns: [[4, 3, 0, 2], [0, 2, 5, 3], [7, 5, 3, 2, 0]],
+      bass: [0, 3, 5, 3],
+      pace: 0.24,
+      restMin: 3.8,
+      restMax: 6.1,
+      leadGain: 0.011,
+      bassGain: 0.0055
+    },
+    "mountain-village": {
+      root: 130.81,
+      scale: [0, 3, 5, 7, 10, 12, 15, 17],
+      patterns: [[0, 3, 4, 7], [7, 4, 3, 0], [3, 4, 7, 9, 7]],
+      bass: [0, 0, -2, 0],
+      pace: 0.29,
+      restMin: 4.0,
+      restMax: 6.8,
+      leadGain: 0.011,
+      bassGain: 0.0065
+    },
+    "desert-village": {
+      root: 146.83,
+      scale: [0, 1, 4, 5, 7, 8, 11, 12],
+      patterns: [[0, 1, 4, 5], [7, 5, 4, 1], [4, 5, 8, 7, 5]],
+      bass: [0, 4, 1, 4],
+      pace: 0.25,
+      restMin: 3.7,
+      restMax: 6.3,
+      leadGain: 0.0105,
+      bassGain: 0.0052
+    },
+    "swamp-village": {
+      root: 123.47,
+      scale: [0, 2, 3, 6, 7, 10, 12, 14],
+      patterns: [[0, 2, 3, 6], [3, 2, 0, -1], [6, 3, 2, 0]],
+      bass: [0, -1, 0, 3],
+      pace: 0.31,
+      restMin: 4.8,
+      restMax: 8.8,
+      leadGain: 0.0095,
+      bassGain: 0.0055
+    },
+    "crownford": {
+      root: 196.00,
+      scale: [0, 2, 4, 5, 7, 9, 11, 12],
+      patterns: [[0, 2, 4, 7], [7, 9, 7, 4], [5, 4, 2, 0, 2]],
+      bass: [-7, 0, 4, 5],
+      pace: 0.21,
+      restMin: 3.0,
+      restMax: 5.2,
+      leadGain: 0.0125,
+      bassGain: 0.006
+    },
+    "crownring": {
+      root: 110.00,
+      scale: [0, 2, 3, 5, 7, 8, 10, 12],
+      patterns: [[0, 2, 3, 7], [7, 5, 3, 2], [0, 3, 5, 8, 7]],
+      dangerPatterns: [[0, 3, 0, 5], [2, 5, 2, 7], [0, 2, 3, 7, 3]],
+      bass: [0, 0, -2, 0],
+      pace: 0.22,
+      dangerPace: 0.17,
+      restMin: 2.6,
+      restMax: 4.6,
+      leadGain: 0.012,
+      bassGain: 0.007
+    },
+    "skirmish": {
+      root: 110.00,
+      scale: [0, 2, 3, 5, 7, 8, 10, 12],
+      patterns: [[0, 3, 2, 5], [0, 2, 5, 7], [3, 2, 0, -2]],
+      bass: [0, -2, 0, 3],
+      pace: 0.2,
+      dangerPace: 0.16,
+      restMin: 2.4,
+      restMax: 4.2,
+      leadGain: 0.011,
+      bassGain: 0.0065
+    },
+    "mountain-wild": {
+      root: 130.81,
+      scale: [0, 3, 5, 7, 10, 12, 15, 17],
+      patterns: [[0, 3, 4], [7, 4, 3, 0], [3, 7, 9, 7]],
+      bass: [0, -2, 0],
+      pace: 0.32,
+      restMin: 5.2,
+      restMax: 9.4,
+      leadGain: 0.0095,
+      bassGain: 0.0052
+    },
+    "desert-wild": {
+      root: 146.83,
+      scale: [0, 1, 4, 5, 7, 8, 11, 12],
+      patterns: [[0, 1, 4], [5, 4, 1, 0], [4, 7, 5]],
+      bass: [0, 1, 0],
+      pace: 0.3,
+      restMin: 5.0,
+      restMax: 9.0,
+      leadGain: 0.009,
+      bassGain: 0.0048
+    },
+    "swamp-wild": {
+      root: 123.47,
+      scale: [0, 2, 3, 6, 7, 10, 12, 14],
+      patterns: [[0, 2, 3], [6, 3, 2, 0], [3, 6, 7, 6]],
+      bass: [0, -1, 0],
+      pace: 0.34,
+      restMin: 6.0,
+      restMax: 10.0,
+      leadGain: 0.0085,
+      bassGain: 0.0048
+    }
   };
 
   function ensureAudio() {
@@ -277,25 +426,6 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     source.stop(start + duration + 0.03);
   }
 
-  function makeDroneLayer(ctx, frequency, type = "sine") {
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = type;
-    oscillator.frequency.value = frequency;
-    gain.gain.value = 0.0001;
-    oscillator.connect(gain);
-    gain.connect(audioBus("music"));
-    oscillator.start();
-    return { oscillator, gain };
-  }
-
-  function setAudioGain(gain, value, lag = 0.45) {
-    if (!gain || !audio.context) {
-      return;
-    }
-    gain.gain.setTargetAtTime(Math.max(0.0001, value), audio.context.currentTime, lag);
-  }
-
   function startAmbientAudio() {
     const ctx = audio.context;
     if (!ctx || audio.ambientState) {
@@ -312,11 +442,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     audio.musicState = {
-      low: makeDroneLayer(ctx, 73.42, "triangle"),
-      fifth: makeDroneLayer(ctx, 110, "sine"),
-      high: makeDroneLayer(ctx, 146.83, "triangle"),
       nextNoteAt: ctx.currentTime + 1.8,
-      noteIndex: 0
+      noteIndex: 0,
+      phraseIndex: 0,
+      themeId: MUSIC_THEME_DEFAULT_ID
     };
   }
 
@@ -398,6 +527,140 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
   }
 
+  function degreeFrequency(theme, degree, octaveShift = 0) {
+    const scale = theme.scale || MUSIC_THEMES[MUSIC_THEME_DEFAULT_ID].scale;
+    const wrapped = ((degree % scale.length) + scale.length) % scale.length;
+    const octave = Math.floor(degree / scale.length) + octaveShift;
+    const semitone = scale[wrapped] + octave * 12;
+    return theme.root * Math.pow(2, semitone / 12);
+  }
+
+  function musicThemeForVillage(village) {
+    if (!village) {
+      return MUSIC_THEME_DEFAULT_ID;
+    }
+    if (village.id === "crownford") {
+      return "crownford";
+    }
+    if (village.id === "crownring") {
+      return "crownring";
+    }
+    if (village.biome === "mountain") {
+      return "mountain-village";
+    }
+    if (village.biome === "desert") {
+      return "desert-village";
+    }
+    if (village.biome === "swamp") {
+      return "swamp-village";
+    }
+    return village.id === "village-1" ? "meadow-village-west" : "meadow-village-east";
+  }
+
+  function wildernessThemeForBiome(biome) {
+    if (biome === "mountain") {
+      return "mountain-wild";
+    }
+    if (biome === "desert") {
+      return "desert-wild";
+    }
+    if (biome === "swamp") {
+      return "swamp-wild";
+    }
+    return MUSIC_THEME_DEFAULT_ID;
+  }
+
+  function currentMusicThemeId(biome, inArena, danger) {
+    if (inArena) {
+      return "crownring";
+    }
+    if (danger) {
+      return "skirmish";
+    }
+    if (game.mode !== "exploration") {
+      return "crownring";
+    }
+    const local = explorationLocalPosition(player.position, tmpVec);
+    if (Math.hypot(local.x, local.z) < 32) {
+      return "homestead";
+    }
+    let nearestVillage = null;
+    let nearestDistance = Infinity;
+    for (const village of game.exploration.villages || []) {
+      const dx = player.position.x - village.x;
+      const dz = player.position.z - village.z;
+      const distance = Math.hypot(dx, dz);
+      const influence = village.id === "crownford" || village.id === "crownring" ? 62 : 42;
+      if (distance < (village.radius || 20) + influence && distance < nearestDistance) {
+        nearestVillage = village;
+        nearestDistance = distance;
+      }
+    }
+    return nearestVillage ? musicThemeForVillage(nearestVillage) : wildernessThemeForBiome(biome);
+  }
+
+  function playMusicPluck(frequency, options = {}) {
+    const gain = options.gain || 0.016;
+    const delay = options.delay || 0;
+    const duration = options.duration || 0.24;
+    playTone(frequency, duration, {
+      type: options.type || "square",
+      gain: gain * 0.72,
+      attack: 0.004,
+      delay,
+      bus: "music"
+    });
+    playTone(frequency * 2.01, Math.min(0.09, duration * 0.42), {
+      type: "triangle",
+      gain: gain * 0.24,
+      attack: 0.004,
+      delay: delay + 0.012,
+      bus: "music"
+    });
+  }
+
+  function playMusicBassTick(frequency, delay, gain) {
+    playTone(frequency, 0.12, {
+      type: "triangle",
+      endFrequency: frequency * 0.92,
+      gain,
+      attack: 0.004,
+      delay,
+      bus: "music"
+    });
+  }
+
+  function playMusicPhrase(themeId, danger, music) {
+    const theme = MUSIC_THEMES[themeId] || MUSIC_THEMES[MUSIC_THEME_DEFAULT_ID];
+    const patterns = danger && theme.dangerPatterns ? theme.dangerPatterns : theme.patterns;
+    const pattern = patterns[music.phraseIndex % patterns.length];
+    const shiftPattern = danger ? [0, 0, 2, 0] : [0, 2, 0, -1];
+    const phraseShift = shiftPattern[music.noteIndex % shiftPattern.length];
+    const pace = danger ? (theme.dangerPace || Math.max(0.15, theme.pace * 0.75)) : theme.pace;
+    const leadGain = theme.leadGain * (danger ? 1.18 : 1);
+    const bassPattern = theme.bass || [0];
+    for (let i = 0; i < pattern.length; i += 1) {
+      const delay = i * pace;
+      const degree = pattern[i];
+      if (i % 2 === 0) {
+        const bassDegree = bassPattern[(music.phraseIndex + i / 2) % bassPattern.length];
+        if (bassDegree !== null && bassDegree !== undefined) {
+          playMusicBassTick(degreeFrequency(theme, bassDegree, -1), delay, theme.bassGain * (danger ? 1.25 : 1));
+        }
+      }
+      if (degree === null || degree === undefined) {
+        continue;
+      }
+      playMusicPluck(degreeFrequency(theme, degree + phraseShift), {
+        delay,
+        duration: danger ? 0.16 : 0.2,
+        gain: leadGain * (i === 0 ? 1.12 : 1)
+      });
+    }
+    music.noteIndex += 1;
+    music.phraseIndex += 1;
+  }
+
   function updateAmbienceAndMusic(dt) {
     const ctx = ensureAudio();
     if (!ctx || !audio.ambientState || !audio.musicState) {
@@ -420,44 +683,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     const music = audio.musicState;
     const danger = inArena || game.enemies.some(enemy => !enemy.dead && enemy.position.distanceTo(player.position) < 18);
-    setAudioGain(music.low.gain, active ? (danger ? 0.034 : 0.024) : 0.012, 1.2);
-    setAudioGain(music.fifth.gain, active ? (danger ? 0.022 : 0.016) : 0.008, 1.4);
-    setAudioGain(music.high.gain, active && !danger ? 0.005 : 0.0001, 1.5);
+    const themeId = currentMusicThemeId(biome, inArena, danger);
+    if (music.themeId !== themeId) {
+      music.themeId = themeId;
+      music.noteIndex = 0;
+      music.phraseIndex = 0;
+      music.nextNoteAt = ctx.currentTime + 0.18;
+    }
     if (ctx.currentTime >= music.nextNoteAt) {
-      const explorationScale = biome === "desert"
-        ? [110, 116.54, 130.81, 146.83, 164.81, 196, 220]
-        : biome === "mountain"
-          ? [146.83, 174.61, 196, 220, 261.63, 293.66, 349.23]
-          : biome === "swamp"
-            ? [146.83, 164.81, 196, 220, 246.94, 293.66, 329.63]
-            : [146.83, 164.81, 174.61, 196, 220, 246.94, 293.66];
-      const arenaScale = [73.42, 110, 146.83, 174.61, 196, 220, 293.66];
-      const scale = danger ? arenaScale : explorationScale;
-      const note = scale[music.noteIndex % scale.length];
-      music.noteIndex += 1 + Math.floor(Math.random() * 2);
-      playTone(note, danger ? 0.5 : 0.58, {
-        type: "triangle",
-        gain: danger ? 0.02 : 0.017,
-        attack: 0.01,
-        bus: "music"
-      });
-      playTone(note * 2, 0.18, {
-        type: "square",
-        gain: danger ? 0.0045 : 0.0035,
-        attack: 0.006,
-        delay: 0.025,
-        bus: "music"
-      });
-      if (!danger && Math.random() < 0.58) {
-        playTone(note * 1.5, 0.42, {
-          type: "triangle",
-          gain: 0.009,
-          attack: 0.012,
-          delay: 0.16,
-          bus: "music"
-        });
-      }
-      music.nextNoteAt = ctx.currentTime + (danger ? 2.2 + Math.random() * 1.6 : 3.2 + Math.random() * 2.4);
+      const theme = MUSIC_THEMES[themeId] || MUSIC_THEMES[MUSIC_THEME_DEFAULT_ID];
+      playMusicPhrase(themeId, danger, music);
+      const restMin = theme.restMin || 4.5;
+      const restMax = Math.max(restMin, theme.restMax || restMin + 2);
+      music.nextNoteAt = ctx.currentTime + restMin + Math.random() * (restMax - restMin);
     }
   }
 
@@ -638,6 +876,15 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playTone(784, 0.2, { type: "triangle", gain: 0.04 * amount, delay: 0.22 });
     } else if (name === "ui") {
       playTone(360, 0.055, { type: "triangle", endFrequency: 460, gain: 0.025 * amount });
+    } else if (name === "arrow") {
+      playNoise(0.08, { frequency: 2400, gain: 0.03 * amount, q: 0.5 });
+      playTone(320, 0.1, { type: "triangle", endFrequency: 130, gain: 0.03 * amount, delay: 0.015 });
+    } else if (name === "pierce") {
+      playNoise(0.12, { frequency: 1900, gain: 0.04 * amount, q: 0.6 });
+      playTone(210, 0.18, { type: "sawtooth", endFrequency: 95, gain: 0.04 * amount, delay: 0.02 });
+    } else if (name === "roll") {
+      playNoise(0.16, { filterType: "lowpass", frequency: 460, gain: 0.045 * amount });
+      playTone(140, 0.12, { type: "sine", endFrequency: 90, gain: 0.03 * amount });
     } else if (name === "uiMove") {
       playTone(330, 0.04, { type: "triangle", endFrequency: 385, gain: 0.018 * amount });
     } else if (name === "uiBack") {
@@ -849,6 +1096,54 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ctx.lineTo(x + 12 + random() * 24, y + 8 + random() * 20);
         ctx.stroke();
       }
+    } else if (style === "leather") {
+      ctx.fillStyle = "#efe6d8";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 900; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(82, 56, 32, 0.1)" : "rgba(255, 244, 222, 0.1)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 0.6 + random() * 2.2, 0, TAU);
+        ctx.fill();
+      }
+      for (let i = 0; i < 9; i += 1) {
+        ctx.strokeStyle = "rgba(64, 42, 24, 0.2)";
+        ctx.lineWidth = 1.4;
+        const y = 14 + random() * 228;
+        ctx.setLineDash([5, 6]);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(256, y + random() * 14 - 7);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      for (let i = 0; i < 16; i += 1) {
+        ctx.strokeStyle = "rgba(70, 47, 26, 0.14)";
+        ctx.lineWidth = 1;
+        const x = random() * 256;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + random() * 40 - 20, y + random() * 40 - 20);
+        ctx.stroke();
+      }
+    } else if (style === "metal") {
+      ctx.fillStyle = "#f1f3f2";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 120; i += 1) {
+        ctx.strokeStyle = random() > 0.5 ? "rgba(255,255,255,0.16)" : "rgba(96, 108, 108, 0.12)";
+        ctx.lineWidth = 0.8 + random() * 1.6;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(256, y + random() * 6 - 3);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 26; i += 1) {
+        ctx.fillStyle = "rgba(74, 84, 84, 0.16)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 1 + random() * 1.6, 0, TAU);
+        ctx.fill();
+      }
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -872,19 +1167,23 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     dirt: new THREE.MeshStandardMaterial({ color: 0x6a5740, map: createMaterialDetailTexture("dirt", "path", 2, 2), roughness: 0.98 }),
     stone: new THREE.MeshStandardMaterial({ color: 0x646865, map: createMaterialDetailTexture("field-stone", "stone", 1.4, 1.4), roughness: 0.88, metalness: 0.02 }),
     darkStone: new THREE.MeshStandardMaterial({ color: 0x3e4544, map: createMaterialDetailTexture("dark-stone", "stone", 1.25, 1.25), roughness: 0.94 }),
-    steel: new THREE.MeshStandardMaterial({ color: 0xbfc8c5, metalness: 0.82, roughness: 0.34 }),
-    iron: new THREE.MeshStandardMaterial({ color: 0x727d7d, metalness: 0.7, roughness: 0.44 }),
+    steel: new THREE.MeshStandardMaterial({ color: 0xbfc8c5, map: createMaterialDetailTexture("brushed-steel", "metal", 1.2, 1.2), metalness: 0.82, roughness: 0.34 }),
+    iron: new THREE.MeshStandardMaterial({ color: 0x727d7d, map: createMaterialDetailTexture("worn-iron", "metal", 1.1, 1.1), metalness: 0.7, roughness: 0.44 }),
     gold: new THREE.MeshStandardMaterial({ color: 0xd5aa50, metalness: 0.55, roughness: 0.42 }),
     bone: new THREE.MeshStandardMaterial({ color: 0xd9cfb1, roughness: 0.7 }),
-    blue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, roughness: 0.68 }),
+    blue: new THREE.MeshStandardMaterial({ color: 0x2d5f78, map: createMaterialDetailTexture("blue-cloth", "cloth", 1.2, 1.2), roughness: 0.68 }),
     royalBlue: new THREE.MeshStandardMaterial({ color: 0x173f5c, roughness: 0.72 }),
     cloth: new THREE.MeshStandardMaterial({ color: 0x8d3430, map: createMaterialDetailTexture("red-cloth", "cloth", 1.3, 1.3), roughness: 0.82 }),
-    wizardRobe: new THREE.MeshStandardMaterial({ color: 0x273f78, roughness: 0.78 }),
+    wizardRobe: new THREE.MeshStandardMaterial({ color: 0x273f78, map: createMaterialDetailTexture("robe-cloth", "cloth", 1.4, 1.6), roughness: 0.78 }),
     wizardTrim: new THREE.MeshStandardMaterial({ color: 0x7ae8ff, roughness: 0.46, metalness: 0.14 }),
-    wizardHat: new THREE.MeshStandardMaterial({ color: 0x1f2f5f, roughness: 0.76 }),
+    wizardHat: new THREE.MeshStandardMaterial({ color: 0x1f2f5f, map: createMaterialDetailTexture("hat-cloth", "cloth", 1.2, 1.2), roughness: 0.76 }),
     skin: new THREE.MeshStandardMaterial({ color: 0xb77a55, roughness: 0.72 }),
-    leather: new THREE.MeshStandardMaterial({ color: 0x593822, roughness: 0.86 }),
-    darkLeather: new THREE.MeshStandardMaterial({ color: 0x2f1c13, roughness: 0.9 }),
+    leather: new THREE.MeshStandardMaterial({ color: 0x593822, map: createMaterialDetailTexture("worn-leather", "leather", 1.2, 1.2), roughness: 0.86 }),
+    darkLeather: new THREE.MeshStandardMaterial({ color: 0x2f1c13, map: createMaterialDetailTexture("dark-leather", "leather", 1.1, 1.1), roughness: 0.9 }),
+    rangerCloak: new THREE.MeshStandardMaterial({ color: 0x33573b, map: createMaterialDetailTexture("ranger-cloak", "cloth", 1.3, 1.5), roughness: 0.86 }),
+    rangerHood: new THREE.MeshStandardMaterial({ color: 0x27452e, map: createMaterialDetailTexture("ranger-hood", "cloth", 1.2, 1.2), roughness: 0.88 }),
+    rangerJerkin: new THREE.MeshStandardMaterial({ color: 0x4c3422, map: createMaterialDetailTexture("ranger-jerkin", "leather", 1.25, 1.25), roughness: 0.84 }),
+    rangerTrim: new THREE.MeshStandardMaterial({ color: 0x9fdf8a, roughness: 0.5, metalness: 0.1 }),
     fur: new THREE.MeshStandardMaterial({ color: 0x2e2118, roughness: 0.95 }),
     warPaint: new THREE.MeshBasicMaterial({ color: 0x2d5f78 }),
     emberEye: new THREE.MeshBasicMaterial({ color: 0xffce73 }),
@@ -1115,8 +1414,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     attackHitDone: false,
     blocking: false,
     blockHeld: false,
+    rollTimer: 0,
     hurtTimer: 0,
-    walkTime: 0
+    walkTime: 0,
+    bowPivot: null,
+    quiver: null
   };
 
   try {
@@ -1388,8 +1690,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
   }
 
+  function characterKey(character) {
+    return character === "wizard" || character === "ranger" ? character : "knight";
+  }
+
   function defaultCharacterProgress(character) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     const weapon = defaultWeaponByCharacter[key];
     return {
       xp: 0,
@@ -1400,7 +1706,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function validEquipmentForCharacter(character, equipmentId) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     const definition = equipmentDefs[equipmentId];
     return !!definition && definition.character === key;
   }
@@ -1428,7 +1734,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function characterProgressNeedsMigration(entry, character) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     if (!entry || typeof entry !== "object") {
       return true;
     }
@@ -1445,14 +1751,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function equippedWeapon(character = player.character) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     const progress = getCharacterProgress(key);
     const weapon = progress.equipment && progress.equipment.weapon;
     return validEquipmentForCharacter(key, weapon) ? weapon : defaultWeaponByCharacter[key];
   }
 
   function cycleEquippedWeapon() {
-    const key = player.character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(player.character);
     const progress = getCharacterProgress(key);
     const unlocked = (progress.unlockedEquipment || []).filter(id => validEquipmentForCharacter(key, id));
     if (unlocked.length < 2) {
@@ -1492,7 +1798,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function sanitizedCombatProfile(character, weaponId, perks = []) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     const fallbackWeapon = defaultWeaponByCharacter[key];
     const safeWeapon = validEquipmentForCharacter(key, weaponId) ? weaponId : fallbackWeapon;
     const safePerks = Array.isArray(perks)
@@ -1502,7 +1808,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function combatTuningFor(character = player.character, options = {}) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     const profile = sanitizedCombatProfile(
       key,
       options.weaponId || equippedWeapon(key),
@@ -1517,7 +1823,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function grantEquipmentToCharacter(character, equipmentId, autoEquip = true) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     if (!validEquipmentForCharacter(key, equipmentId)) {
       return null;
     }
@@ -1594,7 +1900,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       activeGame: null,
       characters: {
         knight: defaultCharacterProgress("knight"),
-        wizard: defaultCharacterProgress("wizard")
+        wizard: defaultCharacterProgress("wizard"),
+        ranger: defaultCharacterProgress("ranger")
       },
       exploration: {
         quests: {},
@@ -1620,7 +1927,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const base = defaultProgression();
     const source = raw && typeof raw === "object" ? raw : {};
     const sourceCharacters = source.characters && typeof source.characters === "object" ? source.characters : {};
-    for (const character of ["knight", "wizard"]) {
+    for (const character of ["knight", "wizard", "ranger"]) {
       base.characters[character] = normalizeCharacterProgress(sourceCharacters[character], character);
     }
 
@@ -1654,7 +1961,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (sourceExploration.resources && typeof sourceExploration.resources === "object") {
       base.exploration.resources = {
-        character: sourceExploration.resources.character === "wizard" ? "wizard" : "knight",
+        character: characterKey(sourceExploration.resources.character),
         health: numberOrZero(sourceExploration.resources.health),
         guard: numberOrZero(sourceExploration.resources.guard),
         mana: numberOrZero(sourceExploration.resources.mana)
@@ -1666,13 +1973,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (sourceActive && sourceActive.mode === "exploration") {
       base.activeGame = {
         mode: "exploration",
-        character: sourceActive.character === "wizard" ? "wizard" : "knight",
+        character: characterKey(sourceActive.character),
         updatedAt: Math.max(0, Math.floor(numberOrZero(sourceActive.updatedAt)))
       };
     } else if (base.exploration.position || base.exploration.resources) {
       base.activeGame = {
         mode: "exploration",
-        character: base.exploration.resources && base.exploration.resources.character === "wizard" ? "wizard" : "knight",
+        character: characterKey(base.exploration.resources && base.exploration.resources.character),
         updatedAt: 0
       };
     }
@@ -1698,7 +2005,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     return {
       mode: "exploration",
-      character: progression.activeGame.character === "wizard" ? "wizard" : "knight",
+      character: characterKey(progression.activeGame.character),
       updatedAt: progression.activeGame.updatedAt || 0
     };
   }
@@ -1723,7 +2030,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function getCharacterProgress(character = player.character) {
-    const key = character === "wizard" ? "wizard" : "knight";
+    const key = characterKey(character);
     if (characterProgressNeedsMigration(progression.characters[key], key)) {
       progression.characters[key] = normalizeCharacterProgress(progression.characters[key], key);
     }
@@ -1759,20 +2066,24 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     showBanner(abilityDisplayName(ability) + " unlocks at level " + abilityUnlockLevel(ability), 2.3);
   }
 
+  function characterLevelUnlocks(character) {
+    if (character === "wizard") {
+      return [{ level: 3, name: "Arcane burst" }, { level: 5, name: "Potion drop" }];
+    }
+    if (character === "ranger") {
+      return [{ level: 3, name: "Piercing shot" }];
+    }
+    return [{ level: 3, name: "Shield bash" }];
+  }
+
   function nextUnlockText(character = player.character) {
     const level = getCharacterLevel(character);
-    const unlocks = character === "wizard"
-      ? [{ level: 3, name: "Arcane burst" }, { level: 5, name: "Potion drop" }]
-      : [{ level: 3, name: "Shield bash" }];
-    const next = unlocks.find(unlock => unlock.level > level);
+    const next = characterLevelUnlocks(character).find(unlock => unlock.level > level);
     return next ? next.name + " at level " + next.level : "Stats improve each level";
   }
 
   function levelRewardText(level, character = player.character) {
-    const unlocks = character === "wizard"
-      ? [{ level: 3, name: "Arcane burst" }, { level: 5, name: "Potion drop" }]
-      : [{ level: 3, name: "Shield bash" }];
-    const unlocked = unlocks.filter(unlock => unlock.level === level).map(unlock => unlock.name);
+    const unlocked = characterLevelUnlocks(character).filter(unlock => unlock.level === level).map(unlock => unlock.name);
     return unlocked.length ? unlocked.join(" and ") + " unlocked" : "Stats increased";
   }
 
@@ -1787,6 +2098,16 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         maxMana: 72 + steps * 8 + (boons.mana || 0),
         manaRegen: 16.5 + steps * 0.65,
         potionCooldownMax: Math.max(10, 18 - (progression.exploration.potionCooldownBonus || 0))
+      };
+    }
+    if (character === "ranger") {
+      // Focus reuses the mana fields: small pool, fast regen.
+      return {
+        maxHealth: 68 + steps * 5 + (boons.health || 0),
+        maxGuard: 0,
+        maxMana: 64 + steps * 6 + (boons.mana || 0),
+        manaRegen: 18 + steps * 0.7,
+        potionCooldownMax: 18
       };
     }
     return {
@@ -6484,6 +6805,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     crownRidge.rotation.x = 0.25;
     const plume = makeBox(0.12, 0.56, 0.1, materials.cloth, 0, 2.67, 0.08);
     plume.rotation.x = 0.32;
+    const leftTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), -0.3, 0.62, 0);
+    leftTasset.rotation.z = 0.18;
+    const rightTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), 0.3, 0.62, 0);
+    rightTasset.rotation.z = -0.18;
     const leftLeg = makeBox(0.22, 0.78, 0.24, materials.iron, -0.22, 0.34, 0);
     const rightLeg = makeBox(0.22, 0.78, 0.24, materials.iron, 0.22, 0.34, 0);
     const leftKnee = makeSphere(0.13, materials.steel, -0.22, 0.55, -0.11);
@@ -6546,6 +6871,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     group.add(
       hips, chest, tabard, tabardTrim, belt, beltBuckle, cape, capeClaspLeft, capeClaspRight,
       head, visor, visorSlit, helmet, helmetBand, crownRidge, plume,
+      leftTasset, rightTasset,
       leftLeg, rightLeg, leftKnee, rightKnee, leftBoot, rightBoot,
       leftArm, rightArm, leftPauldron, rightPauldron, leftGauntlet, rightGauntlet,
       swordPivot, shieldPivot, slashArc, hitFlash
@@ -6575,6 +6901,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const robeLower = makeCylinder(0.68, 0.9, 1.0, 18, materials.wizardRobe.clone(), 0, 0.58, 0);
     const robeUpper = makeCylinder(0.48, 0.62, 0.92, 18, materials.wizardRobe.clone(), 0, 1.33, 0);
     const sash = makeCylinder(0.56, 0.57, 0.11, 18, materials.gold, 0, 0.96, 0);
+    const sashPouch = makeBox(0.2, 0.22, 0.13, materials.leather, 0.4, 0.82, -0.34);
     const frontTrim = makeBox(0.12, 1.28, 0.05, materials.wizardTrim.clone(), 0, 0.98, -0.62);
     const shoulderWrap = makeBox(1.16, 0.18, 0.5, materials.wizardTrim.clone(), 0, 1.75, -0.03);
     const cape = makeBox(0.92, 1.24, 0.06, materials.royalBlue, 0, 1.12, 0.49);
@@ -6629,7 +6956,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     hitFlash.visible = false;
 
     group.add(
-      robeLower, robeUpper, sash, frontTrim, shoulderWrap, cape,
+      robeLower, robeUpper, sash, sashPouch, frontTrim, shoulderWrap, cape,
       head, beard, leftEye, rightEye, hatBrim, hatCone, hatBand,
       leftLeg, rightLeg, leftBoot, rightBoot,
       leftArm, rightArm, leftHand, rightHand, leftCuff, rightCuff,
@@ -6653,15 +6980,117 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     player.hitFlash = hitFlash;
   }
 
+  function createRanger() {
+    const group = new THREE.Group();
+    group.position.copy(player.position);
+
+    const leftLeg = makeBox(0.21, 0.74, 0.23, materials.rangerJerkin, -0.21, 0.32, 0);
+    const rightLeg = makeBox(0.21, 0.74, 0.23, materials.rangerJerkin, 0.21, 0.32, 0);
+    const leftBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, -0.21, -0.03, -0.06);
+    const rightBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0.21, -0.03, -0.06);
+    const leftKneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, -0.21, 0.55, 0);
+    const rightKneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, 0.21, 0.55, 0);
+
+    const hips = makeCylinder(0.44, 0.52, 0.62, 16, materials.rangerJerkin, 0, 0.78, 0);
+    const chest = makeCylinder(0.52, 0.42, 0.9, 16, materials.rangerJerkin.clone(), 0, 1.4, 0);
+    const belt = makeCylinder(0.49, 0.5, 0.11, 16, materials.darkLeather, 0, 1.0, 0);
+    const beltBuckle = makeBox(0.15, 0.1, 0.05, materials.rangerTrim.clone(), 0, 1.0, -0.45);
+    const chestStrap = makeBox(0.14, 1.0, 0.06, materials.darkLeather, 0, 1.42, -0.44);
+    chestStrap.rotation.z = 0.62;
+    const pouch = makeBox(0.22, 0.2, 0.14, materials.leather, -0.36, 0.94, -0.34);
+
+    const cloak = makeBox(0.86, 1.34, 0.06, materials.rangerCloak, 0, 1.08, 0.46);
+    cloak.rotation.x = -0.1;
+    const shoulderMantle = makeCylinder(0.56, 0.66, 0.34, 16, materials.rangerHood, 0, 1.78, 0);
+
+    const head = makeSphere(0.26, materials.skin, 0, 2.04, 0);
+    const leftEye = makeSphere(0.03, materials.emberEye.clone(), -0.08, 2.07, -0.23);
+    const rightEye = makeSphere(0.03, materials.emberEye.clone(), 0.08, 2.07, -0.23);
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.72, 16), materials.rangerHood.clone());
+    hood.position.set(0, 2.32, 0.07);
+    hood.rotation.x = 0.34;
+    addShadow(hood);
+    const hoodRim = makeCylinder(0.33, 0.35, 0.16, 16, materials.rangerHood.clone(), 0, 2.1, 0.04);
+    hoodRim.rotation.x = 0.3;
+
+    const leftArm = makeBox(0.19, 0.74, 0.21, materials.rangerCloak.clone(), -0.55, 1.36, 0);
+    const rightArm = makeBox(0.19, 0.74, 0.21, materials.rangerCloak.clone(), 0.55, 1.36, 0);
+    const leftBracer = makeCylinder(0.12, 0.13, 0.24, 10, materials.leather, -0.55, 1.04, -0.02);
+    const rightBracer = makeCylinder(0.12, 0.13, 0.24, 10, materials.leather, 0.55, 1.04, -0.02);
+    const leftHand = makeSphere(0.1, materials.skin, -0.55, 0.94, -0.03);
+    const rightHand = makeSphere(0.1, materials.skin, 0.55, 0.94, -0.03);
+
+    // Quiver across the back with arrow shafts poking out.
+    const quiver = new THREE.Group();
+    quiver.position.set(0.3, 1.52, 0.4);
+    quiver.rotation.z = 0.42;
+    const quiverBody = makeCylinder(0.13, 0.11, 0.78, 10, materials.leather, 0, 0, 0);
+    const quiverRim = makeCylinder(0.14, 0.14, 0.06, 10, materials.rangerTrim.clone(), 0, 0.38, 0);
+    quiver.add(quiverBody, quiverRim);
+    for (let i = 0; i < 3; i += 1) {
+      const shaft = makeCylinder(0.018, 0.018, 0.46, 6, materials.wood, -0.05 + i * 0.05, 0.6, (i - 1) * 0.05);
+      const fletch = makeBox(0.01, 0.1, 0.07, materials.cloth, -0.05 + i * 0.05, 0.82, (i - 1) * 0.05);
+      quiver.add(shaft, fletch);
+    }
+
+    // Recurve bow held in the left hand, drawn toward -Z.
+    const bowPivot = new THREE.Group();
+    bowPivot.position.set(-0.58, 1.3, -0.12);
+    const bowUpper = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.035, 8, 18, Math.PI * 0.62), materials.paleWood);
+    bowUpper.rotation.set(0, Math.PI / 2, Math.PI / 2 - Math.PI * 0.31);
+    addShadow(bowUpper);
+    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, 0);
+    const bowString = makeBox(0.012, 1.16, 0.012, materials.bone, 0, 0, 0.17);
+    const upperTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, 0.61, 0.16);
+    const lowerTip = makeSphere(0.045, materials.rangerTrim.clone(), 0, -0.61, 0.16);
+    bowPivot.add(bowUpper, bowGrip, bowString, upperTip, lowerTip);
+    bowPivot.rotation.set(0, -0.35, -0.08);
+
+    const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
+    hitFlash.position.set(0, 1.5, -0.62);
+    hitFlash.rotation.x = Math.PI / 2;
+    hitFlash.visible = false;
+
+    group.add(
+      leftLeg, rightLeg, leftBoot, rightBoot, leftKneeWrap, rightKneeWrap,
+      hips, chest, belt, beltBuckle, chestStrap, pouch, cloak, shoulderMantle,
+      head, leftEye, rightEye, hood, hoodRim,
+      leftArm, rightArm, leftBracer, rightBracer, leftHand, rightHand,
+      quiver, bowPivot, hitFlash
+    );
+    scene.add(group);
+
+    player.group = group;
+    player.body = chest;
+    player.swordPivot = null;
+    player.shieldPivot = null;
+    player.staffPivot = null;
+    player.bowPivot = bowPivot;
+    player.quiver = quiver;
+    player.leftArm = leftArm;
+    player.rightArm = rightArm;
+    player.leftLeg = leftLeg;
+    player.rightLeg = rightLeg;
+    player.swordBlade = null;
+    player.slashArc = null;
+    player.burstRing = null;
+    player.castGlow = null;
+    player.hitFlash = hitFlash;
+  }
+
   function setPlayerCharacter(character, resetVitals = true) {
     game.selectedCharacter = character;
     player.character = character;
     if (player.group) {
       scene.remove(player.group);
     }
+    player.bowPivot = null;
+    player.quiver = null;
 
     if (character === "wizard") {
       createWizard();
+    } else if (character === "ranger") {
+      createRanger();
     } else {
       createKnight();
     }
@@ -6690,16 +7119,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function updateAbilityLocks() {
-    const wizard = player.character === "wizard";
-    setAbilityLock(attackIcon, wizard ? "lightning" : "slash");
-    setAbilityLock(blockIcon, wizard ? "burst" : "block");
-    setAbilityLock(potionIcon, wizard ? "potion" : "bash");
+    const key = characterKey(player.character);
+    setAbilityLock(attackIcon, key === "wizard" ? "lightning" : key === "ranger" ? "arrow" : "slash");
+    setAbilityLock(blockIcon, key === "wizard" ? "burst" : key === "ranger" ? "roll" : "block");
+    setAbilityLock(potionIcon, key === "wizard" ? "potion" : key === "ranger" ? "pierce" : "bash");
+  }
+
+  function characterDisplayName(character = player.character) {
+    const key = characterKey(character);
+    return key === "wizard" ? "Wizard" : key === "ranger" ? "Ranger" : "Knight";
   }
 
   function getStartButtonText() {
-    const className = player.character === "wizard" ? "Wizard" : "Knight";
     const prefix = online.role === "join" ? "Join" : "Start";
-    return prefix + " Exploration as " + className;
+    return prefix + " Exploration as " + characterDisplayName();
   }
 
   function updateModeDescription() {
@@ -6721,31 +7154,40 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function updateCharacterUi() {
-    const wizard = player.character === "wizard";
+    const key = characterKey(player.character);
+    const wizard = key === "wizard";
+    const ranger = key === "ranger";
     hud.classList.toggle("wizard-mode", wizard);
-    classLabel.textContent = wizard ? "Wizard" : "Knight";
-    resourceLabel.textContent = wizard ? "Magica" : "Guard";
-    statusPanel.setAttribute("aria-label", wizard ? "Wizard status" : "Knight status");
+    hud.classList.toggle("ranger-mode", ranger);
+    classLabel.textContent = characterDisplayName();
+    resourceLabel.textContent = wizard ? "Magica" : ranger ? "Focus" : "Guard";
+    statusPanel.setAttribute("aria-label", characterDisplayName() + " status");
     startButton.textContent = getStartButtonText();
     blockIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M16 4v5M16 23v5M4 16h5M23 16h5M8.5 8.5l3.5 3.5M20 20l3.5 3.5M23.5 8.5L20 12M12 20l-3.5 3.5"/><circle cx="16" cy="16" r="5"/></svg>'
+      : ranger
+      ? '<svg viewBox="0 0 32 32"><path d="M6 16c4-7 16-7 20 0-4 7-16 7-20 0z"/><path d="M10 16h12M16 10v12"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg>',
       "RMB / K");
     attackIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg>'
+      : ranger
+      ? '<svg viewBox="0 0 32 32"><path d="M8 24C8 13 13 8 24 8"/><path d="M8 24L24 8"/><path d="M24 8l-6 1.5M24 8l-1.5 6"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M22 4l6 6M18 8l6 6M4 28l6-2 15-15-4-4L6 22zM6 22l4 4"/></svg>',
       "LMB / Space");
     potionIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>'
+      : ranger
+      ? '<svg viewBox="0 0 32 32"><path d="M4 16h20M24 16l-5-4M24 16l-5 4"/><path d="M8 10l4 6-4 6M14 10l4 6-4 6"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M15 3l9 4v7c0 6-3.5 10.5-9 13-5.5-2.5-9-7-9-13V7z"/><path d="M15 8v14M9.5 15h11M24 12l5 4-5 4"/></svg>',
       wizard ? "MMB / H" : "J / MMB");
     potionIcon.hidden = false;
     if (secondaryTouchButton) {
-      secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : "Block");
+      secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : "Block");
     }
     if (potionTouchButton) {
       potionTouchButton.hidden = false;
-      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : "Shield bash");
+      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Piercing shot" : "Shield bash");
     }
     characterCards.forEach(card => {
       const selected = card.dataset.character === player.character;
@@ -6840,7 +7282,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     roomRosterList.replaceChildren();
     addRosterRow(player.name || "Player", online.role === "host" ? "Host" : "You");
     for (const [id, remote] of online.remotePlayers) {
-      addRosterRow(remote.nameTag ? remote.nameTag.text : "Player", remote.character === "wizard" ? "Wizard" : "Knight", id);
+      addRosterRow(remote.nameTag ? remote.nameTag.text : "Player", characterDisplayName(remote.character), id);
     }
     const showRoster = !overlay.classList.contains("hidden")
       && (game.menuPhase === "hostSetup" || game.menuPhase === "joinReady" || game.menuPhase === "pause" || online.remotePlayers.size > 0)
@@ -6867,7 +7309,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     sessionSelect.classList.toggle("has-resume", !!activeGame);
     resumeGameButton.hidden = !activeGame;
     if (activeGame) {
-      const className = activeGame.character === "wizard" ? "Wizard" : "Knight";
+      const className = characterDisplayName(activeGame.character);
       resumeGameSummary.textContent = "Continue Exploration as " + className + ".";
     }
     backMenuButton.hidden = phase === "landing" || pausePhase;
@@ -8209,6 +8651,76 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, nameTagY: 3.36 };
   }
 
+  function createRemoteRangerDetails(group, palette) {
+    const cloakMat = paletteMaterial(palette.cape, 0.86, 0.02);
+    const hoodMat = paletteMaterial(palette.hat, 0.88, 0.02);
+    const jerkin = paletteMaterial(palette.primary, 0.84, 0.04);
+    const trim = paletteMaterial(palette.trim, 0.5, 0.1);
+    const glow = paletteGlow(palette.glow);
+
+    const leftLeg = makeBox(0.21, 0.74, 0.23, jerkin, -0.21, 0.32, 0);
+    const rightLeg = makeBox(0.21, 0.74, 0.23, jerkin.clone(), 0.21, 0.32, 0);
+    const leftBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, -0.21, -0.03, -0.06);
+    const rightBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0.21, -0.03, -0.06);
+
+    const hips = makeCylinder(0.44, 0.52, 0.62, 16, jerkin.clone(), 0, 0.78, 0);
+    const chest = makeCylinder(0.52, 0.42, 0.9, 16, jerkin.clone(), 0, 1.4, 0);
+    const belt = makeCylinder(0.49, 0.5, 0.11, 16, materials.darkLeather, 0, 1.0, 0);
+    const beltBuckle = makeBox(0.15, 0.1, 0.05, trim, 0, 1.0, -0.45);
+    const chestStrap = makeBox(0.14, 1.0, 0.06, materials.darkLeather, 0, 1.42, -0.44);
+    chestStrap.rotation.z = 0.62;
+    const cloak = makeBox(0.86, 1.34, 0.06, cloakMat, 0, 1.08, 0.46);
+    cloak.rotation.x = -0.1;
+    const shoulderMantle = makeCylinder(0.56, 0.66, 0.34, 16, hoodMat, 0, 1.78, 0);
+
+    const head = makeSphere(0.26, materials.skin, 0, 2.04, 0);
+    const leftEye = makeSphere(0.03, glow, -0.08, 2.07, -0.23);
+    const rightEye = makeSphere(0.03, glow.clone(), 0.08, 2.07, -0.23);
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.72, 16), hoodMat.clone());
+    hood.position.set(0, 2.32, 0.07);
+    hood.rotation.x = 0.34;
+    addShadow(hood);
+    const hoodRim = makeCylinder(0.33, 0.35, 0.16, 16, hoodMat.clone(), 0, 2.1, 0.04);
+    hoodRim.rotation.x = 0.3;
+
+    const leftArm = makeBox(0.19, 0.74, 0.21, cloakMat.clone(), -0.55, 1.36, 0);
+    const rightArm = makeBox(0.19, 0.74, 0.21, cloakMat.clone(), 0.55, 1.36, 0);
+    const leftHand = makeSphere(0.1, materials.skin, -0.55, 0.94, -0.03);
+    const rightHand = makeSphere(0.1, materials.skin, 0.55, 0.94, -0.03);
+
+    const quiver = new THREE.Group();
+    quiver.position.set(0.3, 1.52, 0.4);
+    quiver.rotation.z = 0.42;
+    const quiverBody = makeCylinder(0.13, 0.11, 0.78, 10, materials.leather, 0, 0, 0);
+    const quiverRim = makeCylinder(0.14, 0.14, 0.06, 10, trim.clone(), 0, 0.38, 0);
+    quiver.add(quiverBody, quiverRim);
+    for (let i = 0; i < 3; i += 1) {
+      const shaft = makeCylinder(0.018, 0.018, 0.46, 6, materials.wood, -0.05 + i * 0.05, 0.6, (i - 1) * 0.05);
+      const fletch = makeBox(0.01, 0.1, 0.07, cloakMat.clone(), -0.05 + i * 0.05, 0.82, (i - 1) * 0.05);
+      quiver.add(shaft, fletch);
+    }
+
+    const bowPivot = new THREE.Group();
+    bowPivot.position.set(-0.58, 1.3, -0.12);
+    const bowUpper = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.035, 8, 18, Math.PI * 0.62), materials.paleWood);
+    bowUpper.rotation.set(0, Math.PI / 2, Math.PI / 2 - Math.PI * 0.31);
+    addShadow(bowUpper);
+    const bowGrip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, 0);
+    const bowString = makeBox(0.012, 1.16, 0.012, materials.bone, 0, 0, 0.17);
+    bowPivot.add(bowUpper, bowGrip, bowString);
+    bowPivot.rotation.set(0, -0.35, -0.08);
+
+    group.add(
+      leftLeg, rightLeg, leftBoot, rightBoot,
+      hips, chest, belt, beltBuckle, chestStrap, cloak, shoulderMantle,
+      head, leftEye, rightEye, hood, hoodRim,
+      leftArm, rightArm, leftHand, rightHand,
+      quiver, bowPivot
+    );
+
+    return { leftLeg, rightLeg, leftArm, rightArm, body: chest, nameTagY: 3.0 };
+  }
+
   function createRemotePlayerModel(character, id) {
     const group = new THREE.Group();
     const rider = new THREE.Group();
@@ -8223,6 +8735,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     group.add(marker, rider);
     const details = character === "wizard"
       ? createRemoteWizardDetails(rider, palette)
+      : character === "ranger"
+      ? createRemoteRangerDetails(rider, palette)
       : createRemoteKnightDetails(rider, palette);
     const nameTag = createNameTag("", allyMode ? palette.glow : palette.trim);
     nameTag.sprite.position.set(0, details.nameTagY, 0);
@@ -8488,11 +9002,17 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playPositionalSfx("burst", source, 0.82, 36);
     } else if (action === "bash") {
       playPositionalSfx("bash", source, 0.82, 32);
+    } else if (action === "arrow" || action === "pierce") {
+      playPositionalSfx(action, source, 0.8, 36);
+    } else if (action === "roll") {
+      playPositionalSfx("roll", source, 0.7, 24);
     } else {
       playPositionalSfx("slash", source, 0.78, 30);
     }
     if (action === "lightning") {
       spawnRemoteLightningVisual(source, state.yaw || 0);
+    } else if (action === "arrow" || action === "pierce") {
+      spawnRemoteArrowVisual(source, state.yaw || 0, action === "pierce");
     }
     if (options.broadcast) {
       broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
@@ -8537,10 +9057,27 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
 
+    if (action === "roll") {
+      return;
+    }
+
+    if (action === "pierce") {
+      // Pierce damages every enemy in a narrow forward corridor.
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.pierceDamageMin, forward, 0.4, sourceId);
+      }
+      return;
+    }
+
     let best = null;
     let bestDistance = Infinity;
-    const range = action === "lightning" ? tuning.remoteLightningRange : tuning.slashRange + 0.15;
-    const minDot = action === "lightning" ? 0.34 : 0.18;
+    const range = action === "lightning" ? tuning.remoteLightningRange
+      : action === "arrow" ? 15
+      : tuning.slashRange + 0.15;
+    const minDot = action === "lightning" ? 0.34 : action === "arrow" ? 0.6 : 0.18;
     for (const enemy of game.enemies) {
       if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
         continue;
@@ -8554,8 +9091,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (best) {
       const damage = action === "lightning"
         ? tuning.lightningDamageMin + tuning.lightningDamageBonus - 1
+        : action === "arrow"
+        ? tuning.arrowDamageMin + tuning.arrowDamageBonus - 2
         : tuning.slashDamageMin + tuning.slashDamageBonus - 4;
-      damageEnemy(best, damage, forward, action === "lightning" ? 0.35 : tuning.slashKnockback, sourceId);
+      damageEnemy(best, damage, forward, action === "lightning" ? 0.35 : action === "arrow" ? 0.25 : tuning.slashKnockback, sourceId);
     }
   }
 
@@ -8564,17 +9103,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     let hit = false;
+    if (action === "roll") {
+      return;
+    }
     if (action === "burst") {
       hit = player.position.distanceTo(source) < 3.35;
     } else {
-      const range = action === "lightning" ? 14.0 : action === "bash" ? 2.55 : 2.7;
-      const minDot = action === "lightning" ? 0.55 : action === "bash" ? 0.24 : 0.18;
+      const range = action === "lightning" ? 14.0 : action === "arrow" ? 13.0 : action === "pierce" ? 15.0 : action === "bash" ? 2.55 : 2.7;
+      const minDot = action === "lightning" ? 0.55 : action === "arrow" || action === "pierce" ? 0.72 : action === "bash" ? 0.24 : 0.18;
       hit = pointInAttackCone(source, yaw, player.position.clone(), range, minDot);
     }
     if (!hit) {
       return;
     }
-    const damage = action === "lightning" ? 22 : action === "burst" ? 18 : action === "bash" ? 14 : 24;
+    const damage = action === "lightning" ? 22 : action === "burst" ? 18 : action === "arrow" ? 17 : action === "pierce" ? 24 : action === "bash" ? 14 : 24;
     const guardDamage = action === "bash" ? 36 : damage + 12;
     applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
   }
@@ -9483,7 +10025,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     player.attackCooldown = Math.max(0, player.attackCooldown - dt);
     player.secondaryCooldown = Math.max(0, player.secondaryCooldown - dt);
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
-    if (player.character === "wizard") {
+    player.rollTimer = Math.max(0, player.rollTimer - dt);
+    if (player.character === "wizard" || player.character === "ranger") {
       player.mana = Math.min(player.maxMana, player.mana + dt * player.manaRegen);
       player.potionCooldown = Math.max(0, player.potionCooldown - dt);
       player.blocking = false;
@@ -9514,6 +10057,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ? mountedMoveSpeed()
         : player.character === "wizard"
         ? (player.attacking ? 4.45 : 6.65)
+        : player.character === "ranger"
+        ? (player.attacking ? 4.9 : 6.9)
         : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
       player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
       player.velocity.z = lerp(player.velocity.z, tmpVec.z * speed, 1 - Math.pow(0.001, dt));
@@ -9526,7 +10071,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     if (player.attacking) {
       const forward = forwardFromYaw(player.yaw, tmpVec2);
-      player.velocity.addScaledVector(forward, dt * (player.character === "wizard" ? 2.0 : 4.8));
+      player.velocity.addScaledVector(forward, dt * (player.character === "wizard" ? 2.0 : player.character === "ranger" ? 0.6 : 4.8));
     }
 
     player.position.addScaledVector(player.velocity, dt);
@@ -9548,6 +10093,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
       if (player.character === "wizard") {
         updateWizardCastAnimation(t, swing);
+      } else if (player.character === "ranger") {
+        updateRangerDrawAnimation(t, swing);
       } else if (player.attackKind === "bash") {
         player.swordPivot.rotation.set(-0.28 + swing * 0.2, -0.58 + swing * 0.22, -0.86 + swing * 0.28);
         player.slashArc.visible = false;
@@ -9558,7 +10105,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         player.slashArc.rotation.z = -1.3 + swing * 1.9;
       }
 
-      const hitFrame = player.attackKind === "lightning" ? t > 0.28 : player.attackKind === "burst" ? t > 0.36 : player.attackKind === "bash" ? t > 0.26 : t > 0.34 && t < 0.68;
+      const hitFrame = player.attackKind === "lightning" ? t > 0.28
+        : player.attackKind === "burst" ? t > 0.36
+        : player.attackKind === "bash" ? t > 0.26
+        : player.attackKind === "arrow" ? t > 0.3
+        : player.attackKind === "pierce" ? t > 0.42
+        : t > 0.34 && t < 0.68;
       if (!player.attackHitDone && hitFrame) {
         player.attackHitDone = true;
         if (player.attackKind === "lightning") {
@@ -9567,6 +10119,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
           performWizardBurst();
         } else if (player.attackKind === "bash") {
           performShieldBash();
+        } else if (player.attackKind === "arrow" || player.attackKind === "pierce") {
+          launchArrow(player.attackKind);
         } else {
           performPlayerAttack();
         }
@@ -9586,6 +10140,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }
     } else if (player.character === "wizard") {
       resetWizardCastPose(dt);
+    } else if (player.character === "ranger") {
+      resetRangerDrawPose(dt);
     } else {
       player.swordPivot.rotation.x = lerp(player.swordPivot.rotation.x, -0.22, 1 - Math.pow(0.00001, dt));
       player.swordPivot.rotation.y = lerp(player.swordPivot.rotation.y, -0.24, 1 - Math.pow(0.00001, dt));
@@ -9657,6 +10213,29 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
   }
 
+  function updateRangerDrawAnimation(t, swing) {
+    if (player.bowPivot) {
+      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -1.35, swing);
+      player.bowPivot.rotation.z = -0.08 - swing * 0.1;
+    }
+    if (player.leftArm) {
+      player.leftArm.rotation.x = -swing * 1.25;
+      player.leftArm.rotation.z = swing * 0.2;
+    }
+    if (player.rightArm) {
+      player.rightArm.rotation.x = -swing * 1.1;
+      player.rightArm.rotation.z = -swing * 0.45;
+    }
+  }
+
+  function resetRangerDrawPose(dt) {
+    const ease = 1 - Math.pow(0.00001, dt);
+    if (player.bowPivot) {
+      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -0.35, ease);
+      player.bowPivot.rotation.z = lerp(player.bowPivot.rotation.z, -0.08, ease);
+    }
+  }
+
   function resetWizardCastPose(dt) {
     if (player.staffPivot) {
       player.staffPivot.rotation.x = lerp(player.staffPivot.rotation.x, 0.08, 1 - Math.pow(0.00001, dt));
@@ -9724,6 +10303,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       player.attackDuration = 0.46;
       player.attackCooldown = 0.52;
       playSfx("lightning", 0.95);
+    } else if (player.character === "ranger") {
+      if (!hasAbility("arrow")) {
+        showAbilityLocked("arrow");
+        return;
+      }
+      const cost = combatTuningFor().arrowFocusCost;
+      if (player.mana < cost) {
+        showBanner("Not enough focus");
+        return;
+      }
+      player.mana -= cost;
+      player.attackKind = "arrow";
+      player.attackDuration = 0.34;
+      player.attackCooldown = 0.4;
+      playSfx("arrow", 0.95);
     } else {
       player.attackKind = "slash";
       player.attackDuration = 0.42;
@@ -9742,6 +10336,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (player.character === "knight") {
       player.blockHeld = true;
+      return;
+    }
+    if (player.character === "ranger") {
+      startRangerRoll();
       return;
     }
     if (game.state !== "playing" || player.attacking || player.secondaryCooldown > 0) {
@@ -9792,6 +10390,67 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     player.attackHitDone = false;
     playSfx("bash", 1.05);
     sendOnlineAction("bash");
+    return true;
+  }
+
+  function startRangerRoll() {
+    if (game.state !== "playing" || player.character !== "ranger" || player.secondaryCooldown > 0 || player.rollTimer > 0) {
+      return false;
+    }
+    if (!hasAbility("roll")) {
+      showAbilityLocked("roll");
+      return false;
+    }
+    const cost = combatTuningFor().rollFocusCost;
+    if (player.mana < cost) {
+      showBanner("Not enough focus");
+      return false;
+    }
+    player.mana -= cost;
+    player.rollTimer = 0.34;
+    player.secondaryCooldown = 0.95;
+    // Roll toward current input direction, falling back to facing.
+    const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
+    const inputZ = (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0) - (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0);
+    tmpVec.set(0, 0, 0);
+    if (inputX || inputZ) {
+      const f = forwardFromYaw(game.cameraYaw, tmpVec2);
+      const r = rightFromYaw(game.cameraYaw, new THREE.Vector3());
+      tmpVec.addScaledVector(f, -inputZ);
+      tmpVec.addScaledVector(r, inputX);
+      tmpVec.normalize();
+    } else {
+      forwardFromYaw(player.yaw, tmpVec);
+    }
+    player.velocity.addScaledVector(tmpVec, 13.5);
+    player.yaw = yawFromDirection(tmpVec);
+    playSfx("roll", 1);
+    sendOnlineAction("roll");
+    return true;
+  }
+
+  function startRangerPierce() {
+    if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.character !== "ranger" || player.attacking || player.attackCooldown > 0) {
+      return false;
+    }
+    if (!hasAbility("pierce")) {
+      showAbilityLocked("pierce");
+      return false;
+    }
+    const cost = combatTuningFor().pierceFocusCost;
+    if (player.mana < cost) {
+      showBanner("Not enough focus");
+      return false;
+    }
+    player.mana -= cost;
+    player.attacking = true;
+    player.attackKind = "pierce";
+    player.attackTimer = 0;
+    player.attackDuration = 0.52;
+    player.attackCooldown = 0.85;
+    player.attackHitDone = false;
+    playSfx("pierce", 1.05);
+    sendOnlineAction("pierce");
     return true;
   }
 
@@ -9887,6 +10546,55 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     };
   }
 
+  function createArrowProjectile(source, velocity, options = {}) {
+    const group = new THREE.Group();
+    group.position.copy(source);
+    const shaft = makeCylinder(0.022, 0.022, 0.78, 6, materials.wood, 0, 0, 0);
+    shaft.rotation.x = Math.PI / 2;
+    const head = makeCylinder(0.0, 0.045, 0.14, 6, materials.steel.clone(), 0, 0, -0.45);
+    head.rotation.x = Math.PI / 2;
+    const fletch = makeBox(0.012, 0.09, 0.14, materials.cloth, 0, 0, 0.34);
+    group.add(shaft, head, fletch);
+    group.rotation.y = Math.atan2(-velocity.x, -velocity.z);
+    scene.add(group);
+    return {
+      netId: options.netId || nextNetworkId("projectile"),
+      type: "arrow",
+      group,
+      shell: null,
+      core: null,
+      ringA: null,
+      ringB: null,
+      velocity,
+      speed: velocity.length(),
+      turnRate: 0,
+      life: options.life || 1.5,
+      damage: options.damage ?? 28,
+      stun: options.stun ?? 0.22,
+      radius: 0.42,
+      pierce: !!options.pierce,
+      hitIds: options.pierce ? new Set() : null,
+      visualOnly: !!options.visualOnly
+    };
+  }
+
+  function launchArrow(kind = "arrow") {
+    const source = player.group.localToWorld(new THREE.Vector3(0.32, 1.5, -0.62));
+    const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+    const tuning = combatTuningFor("ranger");
+    const pierce = kind === "pierce";
+    const velocity = direction.clone().multiplyScalar(tuning.arrowSpeed * (pierce ? 1.15 : 1));
+    const damage = pierce
+      ? tuning.pierceDamageMin + Math.floor(Math.random() * tuning.pierceDamageSpread)
+      : tuning.arrowDamageMin + tuning.arrowDamageBonus + Math.floor(Math.random() * tuning.arrowDamageSpread);
+    game.playerProjectiles.push(tagArenaActor(createArrowProjectile(source, velocity, {
+      damage,
+      pierce,
+      stun: pierce ? 0.4 : 0.22,
+      life: pierce ? 1.7 : tuning.arrowLife
+    })));
+  }
+
   function launchLightningBall() {
     const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
     const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
@@ -9908,6 +10616,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     game.playerProjectiles.push(createLightningProjectile(start, direction.multiplyScalar(12.8), {
       visualOnly: true,
       life: 1.35,
+      damage: 0,
+      stun: 0
+    }));
+  }
+
+  function spawnRemoteArrowVisual(source, yaw, pierce = false) {
+    const start = source.clone();
+    const direction = forwardFromYaw(yaw, new THREE.Vector3());
+    start.y = 1.5;
+    start.addScaledVector(direction, 0.62);
+    game.playerProjectiles.push(createArrowProjectile(start, direction.multiplyScalar(26 * (pierce ? 1.15 : 1)), {
+      visualOnly: true,
+      life: pierce ? 1.0 : 0.85,
       damage: 0,
       stun: 0
     }));
@@ -9979,7 +10700,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       const projectile = game.playerProjectiles[i];
       projectile.life -= dt;
 
-      const target = projectile.visualOnly ? null : findLightningTarget(projectile);
+      const target = projectile.visualOnly || projectile.turnRate <= 0 ? null : findLightningTarget(projectile);
       if (target) {
         const desired = target.sub(projectile.group.position);
         if (desired.lengthSq() > 0.0001) {
@@ -9991,18 +10712,24 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }
 
       projectile.group.position.addScaledVector(projectile.velocity, dt);
-      projectile.shell.rotation.y += dt * 9.0;
-      projectile.shell.rotation.x += dt * 7.4;
-      projectile.ringA.rotation.z += dt * 8.5;
-      projectile.ringB.rotation.x -= dt * 7.2;
-      const pulse = 1 + Math.sin(clock.elapsedTime * 20 + i) * 0.12;
-      projectile.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 28 + i) * 0.18);
-      projectile.shell.scale.setScalar(pulse);
+      if (projectile.shell) {
+        projectile.shell.rotation.y += dt * 9.0;
+        projectile.shell.rotation.x += dt * 7.4;
+        projectile.ringA.rotation.z += dt * 8.5;
+        projectile.ringB.rotation.x -= dt * 7.2;
+        const pulse = 1 + Math.sin(clock.elapsedTime * 20 + i) * 0.12;
+        projectile.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 28 + i) * 0.18);
+        projectile.shell.scale.setScalar(pulse);
+      }
+      const impactColor = projectile.type === "arrow" ? 0xd6c08a : 0x7ae8ff;
 
       let consumed = false;
       if (!projectile.visualOnly && canSimulateSharedWorld()) {
         for (const enemy of game.enemies) {
           if (enemy.dead) {
+            continue;
+          }
+          if (projectile.hitIds && projectile.hitIds.has(enemy)) {
             continue;
           }
           const targetPosition = getEnemyAimPosition(enemy, tmpVec);
@@ -10017,7 +10744,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
             hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
           }
           damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
-          spawnImpact(projectile.group.position, 0x7ae8ff, 16);
+          spawnImpact(projectile.group.position, impactColor, 16);
+          if (projectile.pierce) {
+            projectile.hitIds.add(enemy);
+            continue;
+          }
           scene.remove(projectile.group);
           game.playerProjectiles.splice(i, 1);
           consumed = true;
@@ -10034,7 +10765,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         : Math.hypot(projectile.group.position.x, projectile.group.position.z);
       const maxProjectileDistance = game.mode === "exploration" ? game.exploration.radius + 28 : arenaRadius + 14;
       if (projectile.life <= 0 || dist > maxProjectileDistance) {
-        spawnImpact(projectile.group.position, 0x7ae8ff, 10);
+        spawnImpact(projectile.group.position, impactColor, projectile.type === "arrow" ? 6 : 10);
         scene.remove(projectile.group);
         game.playerProjectiles.splice(i, 1);
       }
@@ -11012,9 +11743,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function updateHud() {
     const hpPct = clamp(player.health / player.maxHealth, 0, 1);
-    const wizard = player.character === "wizard";
-    const resourceValue = wizard ? player.mana : player.guard;
-    const resourceMax = wizard ? player.maxMana : player.maxGuard;
+    const key = characterKey(player.character);
+    const wizard = key === "wizard";
+    const ranger = key === "ranger";
+    const usesMana = wizard || ranger;
+    const resourceValue = usesMana ? player.mana : player.guard;
+    const resourceMax = usesMana ? player.maxMana : player.maxGuard;
     const guardPct = clamp(resourceValue / resourceMax, 0, 1);
     healthFill.style.transform = "scaleX(" + hpPct.toFixed(3) + ")";
     guardFill.style.transform = "scaleX(" + guardPct.toFixed(3) + ")";
@@ -11023,7 +11757,6 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     waveLabel.textContent = localPlayerInArenaActivity()
       ? "Crownring " + Math.max(1, game.wave)
       : game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
-    koText.textContent = game.kills;
     const level = getCharacterLevel();
     levelText.textContent = level;
     xpReadout.hidden = game.mode !== "exploration";
@@ -11035,19 +11768,28 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       const xp = getCharacterProgress().xp;
       const levelBaseXp = xpForLevel(level);
       const nextLevelXp = xpForLevel(level + 1);
-      xpText.textContent = Math.max(0, xp - levelBaseXp) + "/" + Math.max(1, nextLevelXp - levelBaseXp);
+      const xpIntoLevel = Math.max(0, xp - levelBaseXp);
+      const xpSpan = Math.max(1, nextLevelXp - levelBaseXp);
+      const xpPct = Number.isFinite(xpSpan) ? clamp(xpIntoLevel / xpSpan, 0, 1) : 1;
+      xpFill.style.transform = "scaleX(" + xpPct.toFixed(3) + ")";
+      xpReadout.title = xpIntoLevel + " / " + xpSpan + " XP to level " + (level + 1);
       kitText.textContent = currentKitText();
     } else {
-      xpText.textContent = "0";
+      xpFill.style.transform = "scaleX(0)";
       kitText.textContent = "";
     }
     const tuning = combatTuningFor();
     updateAbilityLocks();
-    attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning"));
-    blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : player.blocking);
-    blockIcon.classList.toggle("ready", wizard && hasAbility("burst") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= tuning.burstManaCost);
-    potionIcon.classList.toggle("active", !wizard && player.attacking && player.attackKind === "bash");
-    potionIcon.classList.toggle("ready", wizard ? hasAbility("potion") && player.potionCooldown <= 0 : hasAbility("bash") && !player.attacking && player.attackCooldown <= 0 && player.guard >= tuning.bashGuardCost);
+    attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning" || player.attackKind === "arrow"));
+    blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : ranger ? player.rollTimer > 0 : player.blocking);
+    blockIcon.classList.toggle("ready", (wizard && hasAbility("burst") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= tuning.burstManaCost)
+      || (ranger && hasAbility("roll") && player.secondaryCooldown <= 0 && player.mana >= tuning.rollFocusCost));
+    potionIcon.classList.toggle("active", player.attacking && (wizard ? false : ranger ? player.attackKind === "pierce" : player.attackKind === "bash"));
+    potionIcon.classList.toggle("ready", wizard
+      ? hasAbility("potion") && player.potionCooldown <= 0
+      : ranger
+      ? hasAbility("pierce") && !player.attacking && player.attackCooldown <= 0 && player.mana >= tuning.pierceFocusCost
+      : hasAbility("bash") && !player.attacking && player.attackCooldown <= 0 && player.guard >= tuning.bashGuardCost);
   }
 
   function tick() {
@@ -11195,6 +11937,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         event.preventDefault();
         if (player.character === "knight") {
           startKnightBash();
+        } else if (player.character === "ranger") {
+          startRangerPierce();
         } else {
           startAttack();
         }
@@ -11228,6 +11972,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         event.preventDefault();
         if (player.character === "knight") {
           startKnightBash();
+        } else if (player.character === "ranger") {
+          startRangerPierce();
         } else {
           dropWizardHealthPotion();
         }
@@ -11295,6 +12041,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         if (action === "potion") {
           if (player.character === "knight") {
             startKnightBash();
+          } else if (player.character === "ranger") {
+            startRangerPierce();
           } else {
             dropWizardHealthPotion();
           }

@@ -89,11 +89,14 @@ Scope:
 
 Done evidence:
 - Audio now routes through master, SFX, ambience, and music buses.
-- Procedural ambience uses persistent bounded layers for meadow/wind/desert/swamp/water/settlement/arena beds.
+- Procedural ambience no longer uses continuous noise beds after user feedback that they read as distracting hum. Current shipped procedural ambience is sparse bird one-shots only.
 - Procedural music, player/remote footsteps, horse hooves, enemy movement, enemy attack tells, fireballs, and remote potion/impact cues are in `src/main.js`.
 - User feedback pass: ambience/noise beds were too loud, so ambience bus and all ambience layer targets were pulled down substantially. Walking and hit effects are in a good range; keep them stable unless playtesting says otherwise.
-- Music direction updated toward medieval/modal travel music: D/A drones with short plucked Dorian-style phrases instead of long synth swells.
-- Second ambience feedback pass: continuous ambience was still too loud and engine-like. Ambience bus is now very low, continuous beds are longer high/band-passed wind textures, and birds are sparse tonal one-shots in exploration instead of another constant noise layer.
+- Music direction updated toward simple procedural 8-bit adventure motifs: short square/triangle phrases, settlement-specific themes, and no sustained music drones.
+- Second ambience feedback pass: continuous ambience was still too loud and engine-like; a quieter wind-texture attempt was superseded by removing continuous procedural ambience entirely.
+- Third ambience feedback pass: removed the continuous procedural ambience/hum entirely. Future ambience should either remain sparse one-shots or use vetted free-to-use assets with documented licenses.
+- Music hum feedback pass: removed persistent low/fifth/high music oscillators; music is now scheduled one-shot phrases and brief bass ticks only.
+- Composition pass: added procedural motif themes for the homestead, meadow villages, mountain village, desert village, swamp village, Crownford, Crownring, wilderness biomes, and skirmishes.
 
 Remaining work:
 - Add visible master/SFX/ambience/music controls.
@@ -552,26 +555,28 @@ Primary owner: Gameplay Systems Agent (Cursor agent)
 
 Support: RPG Mechanics / Economy Agent, Rendering / Performance Agent, Multiplayer / Netcode Agent
 
-Status: `[~] Active`
+Status: `[x] Done` (playtest/balance follow-up below)
 
 Class identity (approved direction):
 - Knight: melee tank. Top health plus guard, shield block/bash, holds the line in coop.
 - Wizard: AoE caster and support. Homing lightning, arcane burst, drops potions the whole room shares.
 - Ranger: precision skirmisher. Fast straight-flying arrows (skill shots, cheaper and quicker than lightning but no homing), a Tumble Roll instead of a block, and a level-3 Piercing Shot that punches through a line of enemies. Mid health, fast-regenerating small Focus pool, no heals, no block: strongest at range and mobility, weakest when swarmed in melee.
 
-Balance targets (tuning knobs in `src/content/rpg.js`):
-- Health 68 +5/level (knight 78 +6, wizard 62 +5). Focus 64 +6/level, regen ~18/s.
-- Arrow: 14 focus, 26+1d6 damage, straight, fast. Lightning stays the heavier homing option at 42 mana.
-- Piercing Shot: 34 focus, 38+1d8 to everything along the line. Tumble Roll: 22 focus dash.
+Balance numbers as shipped (tuning knobs in `src/content/rpg.js`):
+- Health 68 +5/level (knight 78 +6, wizard 62 +5). Focus 64 +6/level, regen ~18/s (reuses the mana fields/meter; HUD label says "Focus").
+- Arrow: 14 focus, 26+1d6 damage, straight, fast (LMB/Space). Lightning stays the heavier homing option at 42 mana.
+- Piercing Shot (level 3, J/MMB): 34 focus, 38+1d8 to everything along a narrow corridor; the projectile pierces (per-enemy hit set, no consume).
+- Tumble Roll (RMB/K): 22 focus, 0.95s cooldown, impulse toward movement input (falls back to facing).
 
-Done so far:
+Done evidence (shipped by Cursor agent):
 - `src/content/rpg.js`: ranger weapon defs (Ash Bow default, Crownring Recurve sidegrade), combat tuning, focus costs, ability unlocks (arrow/roll at 1, pierce at 3), display names.
-- `index.html`: Ranger character card. `styles/app.css`: ranger HUD tint.
+- `index.html`: Ranger character card. `styles/app.css`: ranger HUD tint (green).
+- `src/main.js`: `characterKey()` helper replaces all binary knight/wizard idioms; progression defaults + save normalization cover ranger; `progressionStatsFor` ranger branch; `createRanger` local model (hood, mantle, cloak, quiver with arrows, recurve bow with string) and `createRemoteRangerDetails` palette variant; arrow/pierce projectiles share the player-projectile pipeline (no homing, pierce uses hit-set); roll/pierce host-side remote handling in `applyRemoteAction*`; HUD icons/labels/ready-states, roster + resume labels; `arrow`/`pierce`/`roll` procedural SFX; touch buttons mapped (block slot = roll, potion slot = pierce).
+- Model polish pass (user request): new `leather` and `metal` procedural texture styles in `createMaterialDetailTexture`; texture maps added to steel/iron/blue/wizardRobe/wizardHat/leather/darkLeather plus ranger cloak/hood/jerkin materials; knight gained tassets, wizard a sash pouch. Local and remote models share the same material upgrades. Follows `docs/ASSET_POLICY.md` (procedural CanvasTexture only).
 
-Remaining work (write scope: `src/main.js`):
-- COORDINATION NOTE for Codex: this slice needs sweeping `src/main.js` edits across character-conditional code (player model, combat, HUD labels, progression defaults, remote player rendering). I will only start once your current dialogue/lore slice is committed or main.js goes idle. Please commit your slice when it is coherent, and avoid expanding into character/class-conditional code (`setPlayerCharacter`, `createKnight`/`createWizard`, `updateCharacterUi`, `progressionStatsFor`, combat ability functions) until this section is marked done.
-- createRanger model, focus resource, arrow/roll/pierce abilities, progression migration for saved profiles, remote ranger rendering, bow audio cue.
-- Expanded scope (user request): improve character models for all three classes — geometry silhouettes and procedural texture detail (cloth/leather/metal via the shared `createMaterialDetailTexture` system) on both local and remote player models. Follows `docs/ASSET_POLICY.md`: procedural CanvasTexture only, small sizes, shared materials, no external assets.
+Remaining follow-up:
+- Playtest pass on ranger numbers vs Crownring waves (arrow DPS vs wizard at range, pierce value vs burst, roll cost vs knight block) and remote-ranger PvP cone tuning in legacy waves mode.
+- Ranger has no Crownring quest-reward kit hook yet; the Recurve is defined but only obtainable via the same trial claim if added to `grantRpgRewardForQuest` in a future slice.
 
 ## RPG Mechanics Backlog
 
@@ -636,7 +641,9 @@ Done evidence:
 - Procedural Web Audio covers player attacks, blocks, hits, potions, quest moments, level-ups, louder master mix, and light compression.
 - In the current worktree, additional arena/dialogue cues cover Crownring open, wave entering, wave clear, every-third-wave milestone fanfare, yield, infirmary defeat, dialogue selection movement, and dialogue cancel/close.
 - Current audio pass adds bounded biome/city/water/arena ambience, procedural background music, footsteps/hooves, enemy movement sounds, enemy attack tells, fireball launch/impact cues, and remote potion/impact sounds.
-- Latest mix note: ambience should sit far below footsteps, hits, and music. Favor quiet wind and occasional birds; avoid loud broadband noise, low steady rumble, or synth-pad dominance. Music should stay medieval/modal and lightly plucked.
+- Latest mix note: do not reintroduce continuous procedural hum/noise beds or sustained music drones. Keep ambience to sparse one-shots such as birds unless a vetted free-to-use ambience asset with documented license is added. Music should stay procedural, medieval/adventure flavored, and phrase-based with settlement-specific 8-bit motifs.
+- Minimap slice (Claude session): the map canvas moved out of the quest log into a fixed bottom-right circular minimap (`#minimapPanel` in `index.html`, `.minimap-panel`/`.minimap-canvas` in `styles/app.css`). It now shows the actual world — biome regions, lakes, the road network, discovered settlements (Crownford square, Crownring ring, village dots), a home marker — plus a N/E/S/W compass ring and a heading-rotated player arrow. Quest area overlays and the per-quest colors are unchanged. Visible while playing/paused in Exploration (including during Crownring activity), hidden on menu/landing and on sub-720px layouts so deferred touch controls stay unobstructed. Performance note: the static world layer renders once into an offscreen canvas keyed by seed/roads/villages/discovered-count; the 0.16s refresh only blits it and draws quest areas, the player arrow, and the compass. Verified in-browser: world render, arrow movement, pause/menu visibility transitions, no console errors.
+- HUD readout slice (Claude session, user-requested): the KOs kill-count readout is removed entirely (`#koText` no longer exists; `game.kills` is still tracked internally). The XP readout in the top-right is now a progress bar toward the next level (`#xpFill` inside a `.meter`, same fill pattern as HP/Guard, exact numbers available via tooltip `title`) instead of a number. The Kit readout moved out of the top-right panel into a fixed lower-left `#kitReadout` panel (`.kit-panel` in `styles/app.css`); its element ids are unchanged so `kitReadout.hidden`/`kitText` logic in `src/main.js` still applies. Both the kit panel and minimap hide on sub-720px layouts to keep deferred touch controls unobstructed. COORDINATION NOTE for Codex and Cursor: `#koText` and `#xpText` are gone from `index.html` and `src/main.js` — do not reference them in new HUD work; use `#xpFill` (scaleX transform) for XP and the relocated `#kitReadout` for kit display. Verified in-browser with a fresh session: bar at 0/65 XP, kit panel lower-left, no console errors.
 
 Remaining work:
 - Add actual master/SFX/ambience volume controls.

@@ -38,10 +38,8 @@
       <div id="banner" class="panel"></div>
 
       <section class="rightbox panel" aria-label="Expedition status">
-        <div class="readout"><span>KOs</span><strong id="koText">0</strong></div>
         <div class="readout" id="levelReadout"><span>LV</span><strong id="levelText">1</strong></div>
-        <div class="readout" id="xpReadout" hidden><span>XP</span><strong id="xpText">0</strong></div>
-        <div class="readout" id="kitReadout" hidden><span>Kit</span><strong id="kitText">Arming Sword</strong></div>
+        <div class="readout xp-readout" id="xpReadout" hidden><span>XP</span><div class="meter xp-meter"><span id="xpFill"></span></div></div>
         <div class="save-hint" id="saveHint">Local save</div>
         <section class="quest-log" id="questLog" hidden aria-label="Active quests">
           <strong>Quests</strong>
@@ -54,6 +52,11 @@
 
     <div class="minimap-panel" id="minimapPanel" hidden aria-label="World map">
       <canvas class="minimap-canvas" id="questMap" width="352" height="352" aria-label="World minimap with compass"></canvas>
+    </div>
+
+    <div class="kit-panel panel" id="kitReadout" hidden aria-label="Equipped kit">
+      <span>Kit</span>
+      <strong id="kitText">Arming Sword</strong>
     </div>
 
     <div class="talk-prompt panel" id="talkPrompt" hidden>

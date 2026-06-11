@@ -194,6 +194,44 @@ canvas {
   display: none;
 }
 
+.xp-readout {
+  align-items: center;
+}
+
+.xp-meter {
+  flex: 1;
+  min-width: 120px;
+}
+
+#xpFill {
+  background: linear-gradient(90deg, #b98a2e, #f7df9a, #fff3c9);
+  transform: scaleX(0);
+}
+
+.kit-panel {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  pointer-events: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.kit-panel strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.kit-panel[hidden] {
+  display: none;
+}
+
 .save-hint {
   color: rgba(244, 239, 228, 0.54);
   font-size: 10px;
@@ -914,6 +952,10 @@ button[hidden] {
   }
 
   .minimap-panel {
+    display: none;
+  }
+
+  .kit-panel {
     display: none;
   }
 
