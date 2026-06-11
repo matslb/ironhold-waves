@@ -594,6 +594,7 @@ Shipped slice: Crownring sidegrade weapon kits (owner: Cursor agent / RPG Mechan
 - Acquisition: the Crownring trial quest claim unlocks both kits without auto-equip, so switching stays a player choice.
 - `G` cycles the equipped weapon among unlocked kits during exploration, with banner + kit HUD feedback. Persistence reuses `equipment.weapon`/`unlockedEquipment`; multiplayer reuses the existing `weaponId` in player state, so no new messages or storage.
 - Balance note: maul/rod tuning values live in `src/content/rpg.js` and should be revisited after a Crownring playtest.
+- Balance pass (user feedback): baseline wizard lightning nerfed in `defaultCombatTuning` — `lightningDamageMin` 31 -> 28 and `lightningTurnRate` 0.85 -> 0.7, so homing is more forgiving than auto-tracking and DPS sits closer to the ranger's arrow. Cost stays 42 mana. Stormcall Rod still reads as the low-homing/heavy-hit sidegrade at 0.55 turn rate.
 
 Remaining work:
 - Playtest kit balance (maul vs blade, rod vs focus) in Crownring waves.
