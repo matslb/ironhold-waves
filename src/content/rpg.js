@@ -121,7 +121,9 @@ export const perkDefs = {
     name: "Crownford Drill",
     tuning: {
       bashGuardCost: 25,
-      burstManaCost: 28
+      burstManaCost: 28,
+      pierceFocusCost: 31,
+      partingFocusCost: 22
     }
   },
   briarfall_pathcraft: {
@@ -165,7 +167,36 @@ export const defaultCombatTuning = {
   pierceFocusCost: rangerPierceFocusCost,
   pierceDamageMin: 38,
   pierceDamageSpread: 8,
-  rollFocusCost: rangerRollFocusCost
+  rollFocusCost: rangerRollFocusCost,
+  // Level 5-9 kit expansion. Utility slot (F key): resolve / frostbind / parting.
+  // Payoff slot (C key): sweep / stormcrown / heartseeker.
+  resolveCooldown: 16,
+  resolveDuration: 4,
+  resolveDamageTaken: 0.65,
+  sweepGuardCost: 24,
+  sweepCooldown: 6,
+  sweepRange: 3.2,
+  sweepDamageMin: 22,
+  sweepDamageSpread: 6,
+  sweepStun: 0.45,
+  frostbindManaCost: 36,
+  frostbindCooldown: 5,
+  frostbindDamageMin: 12,
+  frostbindDamageSpread: 4,
+  frostbindStun: 1.5,
+  stormcrownManaCost: 56,
+  stormcrownCooldown: 9,
+  stormcrownRadius: 5.2,
+  stormcrownDamageMin: 36,
+  stormcrownDamageSpread: 8,
+  partingFocusCost: 24,
+  partingCooldown: 5,
+  partingDamageMin: 14,
+  partingDamageSpread: 4,
+  heartseekerFocusCost: 40,
+  heartseekerCooldown: 4,
+  heartseekerDamageMin: 48,
+  heartseekerDamageSpread: 12
 };
 
 export const abilityUnlockLevels = {
@@ -177,7 +208,13 @@ export const abilityUnlockLevels = {
   bash: 3,
   burst: 3,
   pierce: 3,
-  potion: 5
+  potion: 5,
+  resolve: 5,
+  parting: 5,
+  frostbind: 6,
+  heartseeker: 7,
+  sweep: 8,
+  stormcrown: 9
 };
 
 export const abilityDisplayNames = {
@@ -189,7 +226,13 @@ export const abilityDisplayNames = {
   bash: "Shield bash",
   burst: "Arcane burst",
   pierce: "Piercing shot",
-  potion: "Potion drop"
+  potion: "Potion drop",
+  resolve: "Warden's Resolve",
+  sweep: "Sweeping Cut",
+  frostbind: "Frostbind Bolt",
+  stormcrown: "Crown of Storms",
+  parting: "Parting Shot",
+  heartseeker: "Heartseeker"
 };
 
 export function xpForLevel(level) {

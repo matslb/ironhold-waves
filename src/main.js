@@ -225,6 +225,17 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       leadGain: 0.0095,
       bassGain: 0.0055
     },
+    "briar-village": {
+      root: 174.61,
+      scale: [0, 2, 3, 5, 7, 10, 12, 14],
+      patterns: [[0, 3, 5, 3], [2, 5, 7, 5], [7, 5, 3, 2, 0]],
+      bass: [0, -2, 3, 2],
+      pace: 0.24,
+      restMin: 3.6,
+      restMax: 6.2,
+      leadGain: 0.0105,
+      bassGain: 0.0054
+    },
     "crownford": {
       root: 196.00,
       scale: [0, 2, 4, 5, 7, 9, 11, 12],
@@ -292,6 +303,17 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       restMin: 6.0,
       restMax: 10.0,
       leadGain: 0.0085,
+      bassGain: 0.0048
+    },
+    "briar-wild": {
+      root: 174.61,
+      scale: [0, 2, 3, 5, 7, 10, 12, 14],
+      patterns: [[0, 2, 3], [5, 3, 2, 0], [2, 5, 7, 5]],
+      bass: [0, -2, 0],
+      pace: 0.33,
+      restMin: 5.4,
+      restMax: 9.6,
+      leadGain: 0.0088,
       bassGain: 0.0048
     }
   };
@@ -534,7 +556,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function playBirdChirp(biome) {
-    const base = biome === "mountain" ? 1760 : biome === "swamp" ? 1240 : 1520;
+    const base = biome === "mountain" ? 1760 : biome === "swamp" ? 1240 : biome === "briar" ? 1380 : 1520;
     const variation = 0.88 + Math.random() * 0.28;
     const first = base * variation;
     const second = first * (1.18 + Math.random() * 0.16);
@@ -556,6 +578,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (biome === "swamp") {
       return { root: 150, gain: 0.008, pace: 0.058, type: "triangle", degrees: [0, 2, -1, 2, 0] };
+    }
+    if (biome === "briar") {
+      return { root: 205, gain: 0.0085, pace: 0.052, type: "triangle", degrees: [0, 2, 3, 5, 2] };
     }
     if (biome === "city") {
       return { root: 240, gain: 0.0095, pace: 0.044, type: "square", degrees: [0, 2, 4, 2, 5] };
@@ -635,6 +660,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (village.biome === "swamp") {
       return "swamp-village";
     }
+    if (village.biome === "briar") {
+      return "briar-village";
+    }
     return village.id === "village-1" ? "meadow-village-west" : "meadow-village-east";
   }
 
@@ -647,6 +675,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (biome === "swamp") {
       return "swamp-wild";
+    }
+    if (biome === "briar") {
+      return "briar-wild";
     }
     return MUSIC_THEME_DEFAULT_ID;
   }
@@ -910,7 +941,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playPositionalSfx("spiderLunge", position, 0.95, 38);
     } else if (enemy.type === "wisp" && previousState !== "pulse" && enemy.state === "pulse") {
       playPositionalSfx("wispPulse", position, 0.9, 42);
-    } else if (enemy.type === "barbarian" && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
+    } else if ((enemy.type === "barbarian" || enemy.type === "briarRaider") && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
       playPositionalSfx(enemy.attackType === "heavy" ? "barbarianHeavy" : "barbarianAttack", position, 0.9, 36);
     }
   }
@@ -1292,6 +1323,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     meadow: new THREE.MeshStandardMaterial({ color: 0x466b3c, roughness: 0.96 }),
     desert: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("dry-sand", "sand", 2.2, 2.2), roughness: 0.98 }),
     mountainGround: new THREE.MeshStandardMaterial({ color: 0x5a625e, map: createMaterialDetailTexture("mountain-ground", "stone", 2, 2), roughness: 0.96 }),
+    briarGround: new THREE.MeshStandardMaterial({ color: 0x2f5637, map: createMaterialDetailTexture("briar-moss", "grass", 2, 2), roughness: 0.98 }),
+    mossRoof: new THREE.MeshStandardMaterial({ color: 0x3f5f35, map: createMaterialDetailTexture("moss-thatch", "thatch", 1.5, 1.5), roughness: 0.96 }),
+    rootwood: new THREE.MeshStandardMaterial({ color: 0x4f3322, map: createMaterialDetailTexture("rootwood", "wood", 1.0, 1.7), roughness: 0.93 }),
+    briarLeaf: new THREE.MeshStandardMaterial({ color: 0x294f2f, roughness: 0.92 }),
+    briarThorn: new THREE.MeshStandardMaterial({ color: 0x6f5f3c, roughness: 0.86 }),
+    charcoal: new THREE.MeshStandardMaterial({ color: 0x1f211f, roughness: 0.96 }),
     cactus: new THREE.MeshStandardMaterial({ color: 0x356c48, roughness: 0.92 }),
     dryBrush: new THREE.MeshStandardMaterial({ color: 0x8d7140, roughness: 0.96 }),
     adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, map: createMaterialDetailTexture("sun-adobe", "plaster", 1.2, 1.2), roughness: 0.92 }),
@@ -1504,7 +1541,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     hurtTimer: 0,
     walkTime: 0,
     bowPivot: null,
-    quiver: null
+    quiver: null,
+    utilityCooldown: 0,
+    payoffCooldown: 0,
+    resolveTimer: 0
   };
 
   try {
@@ -1952,7 +1992,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     } else if (questId === "cityWrits") {
       for (const message of [
         grantPerkToCharacter("knight", "crownford_drill"),
-        grantPerkToCharacter("wizard", "crownford_drill")
+        grantPerkToCharacter("wizard", "crownford_drill"),
+        grantPerkToCharacter("ranger", "crownford_drill")
       ]) {
         if (message) {
           unlocked.push(message);
@@ -1962,7 +2003,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       // Sidegrade kits: unlock without auto-equip so switching stays a choice.
       for (const message of [
         grantEquipmentToCharacter("knight", "knight_crownring_maul", false),
-        grantEquipmentToCharacter("wizard", "wizard_stormcall_rod", false)
+        grantEquipmentToCharacter("wizard", "wizard_stormcall_rod", false),
+        grantEquipmentToCharacter("ranger", "ranger_crownring_recurve", false)
+      ]) {
+        if (message) {
+          unlocked.push(message);
+        }
+      }
+    } else if (questId === "briarStalkers") {
+      for (const message of [
+        grantEquipmentToCharacter("knight", "knight_briarfall_hookblade", false),
+        grantEquipmentToCharacter("wizard", "wizard_briar_focus", false),
+        grantEquipmentToCharacter("ranger", "ranger_briarstring_bow", false),
+        grantPerkToCharacter("knight", "briarfall_pathcraft"),
+        grantPerkToCharacter("wizard", "briarfall_pathcraft"),
+        grantPerkToCharacter("ranger", "briarfall_pathcraft")
       ]) {
         if (message) {
           unlocked.push(message);
@@ -1975,9 +2030,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   function currentKitText() {
     const weapon = equipmentDefs[equippedWeapon()];
     const perks = getCharacterProgress().perks || [];
-    const perkName = perks.includes("crownford_drill") ? " + Drill" : "";
+    const perkName = perks
+      .map(perkId => perkDefs[perkId] && perkDefs[perkId].name)
+      .filter(Boolean)
+      .map(name => name.replace("Crownford ", ""))
+      .join(" + ");
     const tackName = hasRoadwardenTack() ? " + Tack" : "";
-    return (weapon ? weapon.name : "Starter Kit") + perkName + tackName;
+    return (weapon ? weapon.name : "Starter Kit") + (perkName ? " + " + perkName : "") + tackName;
   }
 
   function defaultProgression() {
@@ -2054,6 +2113,23 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       };
     }
     base.exploration.guidanceSeen = !!sourceExploration.guidanceSeen;
+
+    if (base.exploration.quests.briarStalkers && base.exploration.quests.briarStalkers.state === "done") {
+      const backfillEquipment = {
+        knight: "knight_briarfall_hookblade",
+        wizard: "wizard_briar_focus",
+        ranger: "ranger_briarstring_bow"
+      };
+      for (const [character, equipmentId] of Object.entries(backfillEquipment)) {
+        const progress = base.characters[character];
+        if (validEquipmentForCharacter(character, equipmentId) && !progress.unlockedEquipment.includes(equipmentId)) {
+          progress.unlockedEquipment.push(equipmentId);
+        }
+        if (!progress.perks.includes("briarfall_pathcraft")) {
+          progress.perks.push("briarfall_pathcraft");
+        }
+      }
+    }
 
     const sourceActive = source.activeGame && typeof source.activeGame === "object" ? source.activeGame : null;
     if (sourceActive && sourceActive.mode === "exploration") {
@@ -2154,12 +2230,25 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function characterLevelUnlocks(character) {
     if (character === "wizard") {
-      return [{ level: 3, name: "Arcane burst" }, { level: 5, name: "Potion drop" }];
+      return [
+        { level: 3, name: "Arcane burst" },
+        { level: 5, name: "Potion drop" },
+        { level: 6, name: "Frostbind Bolt (F)" },
+        { level: 9, name: "Crown of Storms (C)" }
+      ];
     }
     if (character === "ranger") {
-      return [{ level: 3, name: "Piercing shot" }];
+      return [
+        { level: 3, name: "Piercing shot" },
+        { level: 5, name: "Parting Shot (F)" },
+        { level: 7, name: "Heartseeker (C)" }
+      ];
     }
-    return [{ level: 3, name: "Shield bash" }];
+    return [
+      { level: 3, name: "Shield bash" },
+      { level: 5, name: "Warden's Resolve (F)" },
+      { level: 8, name: "Sweeping Cut (C)" }
+    ];
   }
 
   function nextUnlockText(character = player.character) {
@@ -2957,6 +3046,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
+    const briar = game.exploration.biomes.find(biome => biome.id === "briar");
+    const briar = game.exploration.biomes.find(biome => biome.id === "briar");
     const mountainInfluence = biomeTerrainInfluence(mountain, localX, localZ);
     if (mountainInfluence > 0) {
       const ridge = Math.sin(localX * 0.052 + localZ * 0.018 + seedPhase) * 0.48
@@ -2983,6 +3074,15 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       height -= Math.pow(swampInfluence, 1.5) * 0.34;
       height -= swampInfluence * bogBasin * 0.48;
       height += Math.sin(localX * 0.09 + localZ * 0.04) * swampInfluence * 0.11;
+    }
+    const briarInfluence = biomeTerrainInfluence(briar, localX, localZ);
+    if (briarInfluence > 0) {
+      const hollow = terrainPeakInfluence(localX, localZ, briar.x + 8, briar.z - 6, 74, 1.2);
+      const rootRidge = Math.sin(localX * 0.07 - localZ * 0.041 + seedPhase) * 0.24
+        + Math.cos(localZ * 0.058 + seedPhase * 0.4) * 0.18;
+      height -= Math.pow(briarInfluence, 1.2) * hollow * 0.42;
+      height += briarInfluence * rootRidge * 0.9;
+      height += Math.pow(briarInfluence, 1.65) * 0.48;
     }
 
     if (distance > edgeRise) {
@@ -3087,6 +3187,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mountainFork = { x: 78, z: 112 };
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
+    const briarFork = { x: 98, z: -72 };
     addPathZones([homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 5.8, 7.5, 0.58);
     addPathZones([northFork, { x: -4, z: 104 }, { x: 2, z: 132 }], 6.2, 8, 0.62);
     addPathZones([northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: 124, z: 30 }], 5.8, 7.5, 0.58);
@@ -3100,6 +3201,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (swamp) {
       addPathZones([northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, swampFork, { x: swamp.x + 7, z: swamp.z - 7 }], 5.2, 7.5, 0.5);
+    }
+    if (briar) {
+      addPathZones([meadowEastFork, { x: 76, z: -62 }, briarFork, { x: briar.x - 8, z: briar.z + 8 }], 4.9, 7.2, 0.5);
     }
     zones.push(...landmarkZones);
     if (mountain) {
@@ -3121,6 +3225,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         { x: swamp.x + 10, z: swamp.z - 10, radius: 35, blend: 17, strength: 0.9 },
         { x: swamp.x - 4, z: swamp.z + 3, radius: 13, blend: 8, strength: 0.86 },
         { x: -92, z: 128, radius: 7, blend: 8, strength: 0.72 }
+      );
+    }
+    if (briar) {
+      zones.push(
+        { x: briar.x - 8, z: briar.z + 8, radius: 35, blend: 16, strength: 0.9 },
+        { x: briar.x + 12, z: briar.z - 10, radius: 15, blend: 9, strength: 0.84 },
+        { x: briar.x - 30, z: briar.z + 18, radius: 11, blend: 8, strength: 0.78 },
+        { x: 98, z: -72, radius: 7, blend: 8, strength: 0.72 }
       );
     }
     for (const zone of zones) {
@@ -3396,6 +3508,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (style === "swamp") {
       return { spacing: 20, maxOffset: 6.0, strength: 0.22 };
     }
+    if (style === "briar") {
+      return { spacing: 18, maxOffset: 6.6, strength: 0.24 };
+    }
     return { spacing: 28, maxOffset: 5.35, strength: 0.16 };
   }
 
@@ -3496,6 +3611,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mountainFork = { x: 78, z: 112 };
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
+    const briarFork = { x: 98, z: -72 };
 
     addExplorationRoad(group, [
       homeDoor,
@@ -3533,6 +3649,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       } else if (village.biome === "swamp") {
         entrance = roadEntranceForVillage(village, swampFork);
         addExplorationRoad(group, [northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, { ...swampFork, junction: true, major: true }, { x: swampFork.x - 24, z: swampFork.z + 10 }, entrance], 2.65, "swamp");
+      } else if (village.biome === "briar") {
+        entrance = roadEntranceForVillage(village, briarFork);
+        addExplorationRoad(group, [meadowEastFork, { x: 76, z: -62 }, { ...briarFork, junction: true, major: true }, { x: briarFork.x + 24, z: briarFork.z - 12 }, entrance], 2.55, "briar");
       } else if (localX >= 0) {
         entrance = roadEntranceForVillage(village, meadowEastFork);
         addExplorationRoad(group, [homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, { ...meadowEastFork, junction: true, major: true }, entrance], 2.75, "wild");
@@ -3798,6 +3917,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       addBench(group, x - 2.8, z + 2.4, 0.38, 0.95);
       addBucket(group, x + 1.8, z - 2.6, 0.2, 1.05);
       addLanternPost(group, x + 3.2, z + 0.4, 0.4, 0.88);
+    } else if (village.biome === "briar") {
+      addCharcoalClamp(group, x + 3.4, z - 2.6, -0.35, 0.96);
+      addBench(group, x - 3.2, z + 2.2, 0.52, 0.95);
+      addLanternPost(group, x + 0.7, z + 3.6, -0.24, 0.9);
+      addBramblePatch(group, x - 4.4, z - 1.6, random, 0.85);
     } else {
       addCart(group, x + 3.7, z - 2.8, -0.65, 0.95);
       addBench(group, x - 3.5, z + 1.7, 0.5, 0.95);
@@ -3893,17 +4017,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const desert = biomeId === "desert";
     const mountain = biomeId === "mountain";
     const swamp = biomeId === "swamp";
-    ctx.fillStyle = desert ? "#b99258" : mountain ? "#5d635f" : swamp ? "#31513a" : "#45683b";
+    const briar = biomeId === "briar";
+    ctx.fillStyle = desert ? "#b99258" : mountain ? "#5d635f" : swamp ? "#31513a" : briar ? "#2f5637" : "#45683b";
     ctx.fillRect(0, 0, 256, 256);
     for (let i = 0; i < 850; i += 1) {
       const x = random() * 256;
       const y = random() * 256;
-      const r = 0.8 + random() * (desert ? 3.2 : swamp ? 5.4 : 4.8);
+      const r = 0.8 + random() * (desert ? 3.2 : swamp ? 5.4 : briar ? 5.8 : 4.8);
       ctx.fillStyle = desert
         ? (random() > 0.52 ? "rgba(236, 196, 122, 0.2)" : "rgba(111, 79, 42, 0.14)")
         : swamp
           ? (random() > 0.48 ? "rgba(108, 132, 75, 0.2)" : "rgba(13, 35, 31, 0.22)")
-          : (random() > 0.48 ? "rgba(190, 198, 191, 0.17)" : "rgba(31, 38, 36, 0.18)");
+          : briar
+            ? (random() > 0.44 ? "rgba(101, 132, 70, 0.22)" : "rgba(16, 34, 22, 0.25)")
+            : (random() > 0.48 ? "rgba(190, 198, 191, 0.17)" : "rgba(31, 38, 36, 0.18)");
       ctx.beginPath();
       ctx.arc(x, y, r, 0, TAU);
       ctx.fill();
@@ -3928,12 +4055,22 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ctx.bezierCurveTo(62, y - 28 + random() * 56, 160, y - 26 + random() * 52, 268, y + random() * 30 - 15);
         ctx.stroke();
       }
+    } else if (briar) {
+      for (let i = 0; i < 30; i += 1) {
+        ctx.strokeStyle = random() > 0.52 ? "rgba(98, 124, 66, 0.22)" : "rgba(24, 49, 28, 0.28)";
+        ctx.lineWidth = 2 + random() * 4;
+        ctx.beginPath();
+        const y = random() * 256;
+        ctx.moveTo(-8, y);
+        ctx.bezierCurveTo(52, y - 24 + random() * 48, 154, y - 32 + random() * 64, 264, y + random() * 36 - 18);
+        ctx.stroke();
+      }
     }
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(desert ? 6 : swamp ? 4 : 5, desert ? 6 : swamp ? 4 : 5);
+    texture.repeat.set(desert ? 6 : swamp ? 4 : briar ? 4 : 5, desert ? 6 : swamp ? 4 : briar ? 4 : 5);
     return texture;
   }
 
@@ -4001,7 +4138,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addBiomePatch(group, biome, seed) {
-    const baseMaterial = biome.id === "desert" ? materials.desert : biome.id === "swamp" ? materials.swampGround : materials.mountainGround;
+    const baseMaterial = biome.id === "desert" ? materials.desert : biome.id === "swamp" ? materials.swampGround : biome.id === "briar" ? materials.briarGround : materials.mountainGround;
     const material = baseMaterial.clone();
     material.map = createBiomeTexture(seed, biome.id);
     material.polygonOffset = true;
@@ -4104,6 +4241,41 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return house;
   }
 
+  function addBriarHouse(group, x, z, scale, variant) {
+    const house = new THREE.Group();
+    setExplorationLocalGroundPosition(house, x, z);
+    house.scale.setScalar(scale);
+    const wall = variant % 2 ? materials.rootwood : materials.paleWood;
+    const footing = makeBox(5.25, 0.22, 4.45, materials.stone, 0, 0.11, 0);
+    const back = makeBox(5.0, 2.05, 0.28, wall, 0, 1.2, 2.03);
+    const left = makeBox(0.28, 2.05, 4.25, wall, -2.36, 1.2, 0);
+    const right = makeBox(0.28, 2.05, 4.25, wall, 2.36, 1.2, 0);
+    const frontLeft = makeBox(1.58, 2.05, 0.28, wall, -1.56, 1.2, -2.03);
+    const frontRight = makeBox(1.58, 2.05, 0.28, wall, 1.56, 1.2, -2.03);
+    const lintel = makeBox(1.26, 0.24, 0.3, materials.rootwood, 0, 2.02, -2.05);
+    const roofA = makeBox(5.95, 0.34, 2.82, materials.mossRoof, 0, 3.04, -0.86);
+    const roofB = makeBox(5.95, 0.34, 2.82, materials.mossRoof, 0, 3.04, 0.86);
+    roofA.rotation.x = -0.54;
+    roofB.rotation.x = 0.54;
+    const ridge = makeCylinder(0.07, 0.09, 5.55, 8, materials.rootwood, 0, 3.28, 0);
+    ridge.rotation.z = Math.PI / 2;
+    const door = makeBox(0.92, 1.72, 0.08, materials.darkLeather, 0, 0.92, -2.2);
+    const windowMat = materials.lampGlow.clone();
+    windowMat.opacity = 0.64;
+    const windowA = makeBox(0.5, 0.44, 0.07, windowMat, -1.38, 1.42, -2.22);
+    const rootA = makeCylinder(0.04, 0.08, 1.4, 7, materials.rootwood, -2.34, 0.28, -1.7);
+    rootA.rotation.set(0.7, 0.22, -0.46);
+    const rootB = makeCylinder(0.035, 0.075, 1.18, 7, materials.rootwood, 2.24, 0.24, 1.56);
+    rootB.rotation.set(-0.62, -0.36, 0.52);
+    house.add(footing, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, ridge, door, windowA, rootA, rootB);
+    if (variant % 2 === 1) {
+      house.rotation.y = Math.PI / 2;
+    }
+    group.add(house);
+    addExplorationCollider(x, z, scale * 3.45, "structure");
+    return house;
+  }
+
   function addExplorationHouse(group, x, z, scale, variant, biome = "meadow") {
     if (biome === "desert") {
       return addDesertHouse(group, x, z, scale, variant);
@@ -4113,6 +4285,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (biome === "swamp") {
       return addSwampHouse(group, x, z, scale, variant);
+    }
+    if (biome === "briar") {
+      return addBriarHouse(group, x, z, scale, variant);
     }
     const house = new THREE.Group();
     setExplorationLocalGroundPosition(house, x, z);
@@ -4283,6 +4458,69 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     addExplorationCollider(x, z, 0.72, "tree");
   }
 
+  function addBriarOak(group, x, z, random) {
+    const tree = new THREE.Group();
+    setExplorationLocalGroundPosition(tree, x, z);
+    const height = 2.25 + random() * 1.85;
+    const trunk = makeCylinder(0.24, 0.38, height, 9, materials.rootwood, 0, height / 2, 0);
+    trunk.rotation.z = (random() - 0.5) * 0.16;
+    tree.add(trunk);
+    for (let i = 0; i < 5; i += 1) {
+      const angle = (i / 5) * TAU + random() * 0.5;
+      const branch = makeCylinder(0.05, 0.11, 1.1 + random() * 0.65, 7, materials.rootwood, Math.cos(angle) * 0.42, height * 0.74 + random() * 0.28, Math.sin(angle) * 0.42);
+      branch.rotation.z = Math.cos(angle) * 0.76;
+      branch.rotation.x = -Math.sin(angle) * 0.76;
+      tree.add(branch);
+      const crown = makeSphere(0.86 + random() * 0.34, materials.briarLeaf, Math.cos(angle) * (0.66 + random() * 0.36), height + 0.12 + random() * 0.38, Math.sin(angle) * (0.66 + random() * 0.36));
+      crown.scale.set(1.18, 0.74 + random() * 0.18, 1.08);
+      tree.add(crown);
+    }
+    const moss = makeSphere(0.58, materials.mossRoof, -0.18, height * 0.42, 0.1);
+    moss.scale.set(1.0, 0.28, 0.72);
+    tree.add(moss);
+    tree.rotation.y = random() * TAU;
+    if (Math.hypot(x, z) > 92) {
+      tree.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = false;
+        }
+      });
+    }
+    group.add(tree);
+    addExplorationCollider(x, z, 0.82, "tree");
+  }
+
+  function addBramblePatch(group, x, z, random, scale = 1) {
+    const patch = new THREE.Group();
+    setExplorationLocalGroundPosition(patch, x, z, 0.08);
+    const count = 5 + Math.floor(random() * 5);
+    for (let i = 0; i < count; i += 1) {
+      const angle = random() * TAU;
+      const radius = random() * 0.62 * scale;
+      const vine = makeCylinder(0.018, 0.03, (0.46 + random() * 0.48) * scale, 6, materials.rootwood, Math.cos(angle) * radius, 0.18 + random() * 0.08, Math.sin(angle) * radius);
+      vine.rotation.set((random() - 0.5) * 0.8, random() * TAU, (random() - 0.5) * 0.8);
+      const thorn = makeCone(0.05 * scale, 0.16 * scale, 6, materials.briarThorn, Math.cos(angle) * (radius + 0.1), 0.38 + random() * 0.08, Math.sin(angle) * (radius + 0.1));
+      thorn.rotation.z = (random() - 0.5) * 0.8;
+      patch.add(vine, thorn);
+    }
+    patch.rotation.y = random() * TAU;
+    group.add(patch);
+    addExplorationCollider(x, z, 0.58 * scale, "tree");
+  }
+
+  function addCharcoalClamp(group, x, z, rotation = 0, scale = 1) {
+    const clamp = makeDecorGroup(group, x, z, rotation, scale);
+    const mound = makeCone(0.82, 0.62, 12, materials.charcoal, 0, 0.31, 0);
+    mound.scale.set(1.15, 0.82, 0.92);
+    const vent = makeCylinder(0.06, 0.08, 0.62, 8, materials.darkStone, 0.16, 0.65, -0.08);
+    const logA = makeCylinder(0.07, 0.08, 1.12, 8, materials.rootwood, -0.44, 0.12, 0.52);
+    logA.rotation.z = Math.PI / 2;
+    const logB = makeCylinder(0.06, 0.08, 0.96, 8, materials.rootwood, 0.42, 0.12, 0.5);
+    logB.rotation.z = Math.PI / 2;
+    clamp.add(mound, vent, logA, logB);
+    addExplorationCollider(x, z, 0.9 * scale, "structure");
+  }
+
   function addBogPool(group, x, z, rx, rz, random) {
     const pool = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 36), materials.bogWater.clone());
     setExplorationLocalGroundPosition(pool, x, z, 0.046);
@@ -4387,8 +4625,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       cloth.color.setHex(0x3f5370);
     } else if (biome === "swamp") {
       cloth.color.setHex(0x365f4a);
+    } else if (biome === "briar") {
+      cloth.color.setHex(0x486235);
     }
-    const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : materials.paleWood;
+    const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : biome === "briar" ? materials.mossRoof : materials.paleWood;
     const body = makeCylinder(0.21, 0.26, 0.76, 12, cloth, 0, 0.76, 0);
     const head = makeSphere(0.17, materials.skin, 0, 1.28, 0);
     const hood = makeCone(0.23, 0.31, 12, hoodMat, 0, 1.49, 0);
@@ -4406,6 +4646,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       const reedWrap = makeCylinder(0.19, 0.22, 0.1, 12, materials.reed, 0, 1.18, 0);
       const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
       group.add(reedWrap, satchel);
+    } else if (biome === "briar") {
+      const mossWrap = makeCylinder(0.19, 0.22, 0.1, 12, materials.mossRoof, 0, 1.18, 0);
+      const woodToken = makeBox(0.13, 0.18, 0.05, materials.rootwood, 0.24, 0.8, -0.2);
+      group.add(mossWrap, woodToken);
     }
     const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.16, 0);
     questMarker.visible = !!questId;
@@ -5260,6 +5504,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       addProgressionBoon({ mana: 8, health: 5 });
       player.mana = player.maxMana;
       player.health = player.maxHealth;
+    } else if (quest.id === "briarStalkers") {
+      addProgressionBoon({ health: 4, guard: 5, mana: 5 });
+      player.health = player.maxHealth;
+      player.guard = player.maxGuard;
+      player.mana = player.maxMana;
+      game.potions.push(createHealthPotion(player.position.x + 1.4, player.position.z - 1.0, { kind: "small", healAmount: 32 }));
+      trimPotionDrops();
     } else if (quest.id === "bogRelics") {
       player.health = player.maxHealth;
       player.guard = player.maxGuard;
@@ -5330,6 +5581,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       spiders: { hex: "#d9a648", fill: "rgba(217, 166, 72, 0.17)", stroke: "rgba(217, 166, 72, 0.76)" },
       dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" },
       wisps: { hex: "#8affd2", fill: "rgba(138, 255, 210, 0.17)", stroke: "rgba(138, 255, 210, 0.78)" },
+      briarStalkers: { hex: "#b9d678", fill: "rgba(185, 214, 120, 0.17)", stroke: "rgba(185, 214, 120, 0.78)" },
       bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
       roadwardenTack: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" },
       cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
@@ -5351,6 +5603,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       spiders: "desert",
       dragons: "mountains",
       wisps: "Mistfen",
+      briarStalkers: "Briarfall Woods",
       bogRelics: "Mistfen pools",
       roadwardenTack: "road waymarks",
       cityWrits: "Crownford beacon",
@@ -5408,7 +5661,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (quest.id === "raiders") {
       const positions = game.enemies
-        .filter(enemy => !enemy.dead && enemy.type === "barbarian")
+        .filter(enemy => !enemy.dead && (enemy.type === "barbarian" || enemy.type === "briarRaider"))
         .map(enemy => enemy.position);
       const area = aggregateQuestArea(positions, 40, 58, 150);
       return area ? [{ ...area, color }] : [{ x: game.exploration.origin.x, z: game.exploration.origin.z, radius: 130, color }];
@@ -5418,8 +5671,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         .filter(village => !game.exploration.discovered.has(village.id))
         .map(village => ({ x: village.x, z: village.z, radius: village.radius + 24, color }));
     }
-    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "wisps") {
-      const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" ? "mountain" : "swamp";
+    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "wisps" || quest.id === "briarStalkers") {
+      const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" ? "mountain" : quest.id === "wisps" ? "swamp" : "briar";
       const biome = game.exploration.biomes.find(candidate => candidate.id === biomeId);
       return biome
         ? [{
@@ -5498,7 +5751,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const minimapBase = { key: "", canvas: null };
 
   function minimapWorldKey() {
-    return game.exploration.seed + ":" + game.exploration.roads.length + ":" + game.exploration.villages.length + ":" + game.exploration.discovered.size;
+    return game.exploration.seed + ":" + game.exploration.biomes.length + ":" + game.exploration.roads.length + ":" + game.exploration.villages.length + ":" + game.exploration.discovered.size;
   }
 
   // Static world layer (terrain, lakes, roads, discovered settlements) cached
@@ -5524,7 +5777,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const biomeFills = {
       desert: "rgba(208, 174, 110, 0.55)",
       mountain: "rgba(142, 146, 158, 0.6)",
-      swamp: "rgba(58, 86, 66, 0.78)"
+      swamp: "rgba(58, 86, 66, 0.78)",
+      briar: "rgba(65, 100, 54, 0.78)"
     };
     for (const biome of game.exploration.biomes) {
       const fill = biomeFills[biome.id];
@@ -5765,6 +6019,28 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         4
       ),
       createQuest(
+        "briarStalkers",
+        "Thorns on the Timber Road",
+        "Edda Thorn",
+        "The Briarfall charcoal road is being hunted by thornbound raiders. Break enough of their ambushes and the woodcutters can reopen the lane.",
+        "Defeat thornbound raiders",
+        "Briarfall class kits, Pathcraft perk, boons, and XP",
+        "hunt",
+        6,
+        {
+          rewardXp: 70,
+          conversationTags: ["briar", "woods", "raiders", "gear", "roads"],
+          dialogue: {
+            available: "Briarfall does not mind honest thorns. It is the raiders wearing them that trouble us. Clear six from the timber road and I will show you what our smiths make from rootwood and old iron.",
+            active: "They wait where the lane bends under low branches. Keep your shield close, your spell short, or your bowstring dry.",
+            ready: "The road breathed easier this morning. Bring your hands here; I have kits that suit travelers who know how woods fight back.",
+            readyStatus: "Timber road cleared",
+            done: "Rootwood remembers pressure. So should you. Use the Briarfall kits when control matters more than swagger.",
+            doneStatus: "Edda Thorn has reopened the Briarfall timber road."
+          }
+        }
+      ),
+      createQuest(
         "bogRelics",
         "Relics Under Reed",
         "Noll",
@@ -5813,7 +6089,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         "Marshal Rowan Vale",
         "Crownford's Wayfinder Beacon keeps the old roads honest. Read the four carved waystones and I will mark you as a sworn guide of the high city.",
         "Inspect beacon waystones",
-        "Crownford Drill perk, cheaper bash/burst, boons plus XP",
+        "Crownford Drill perk, class-cost training, boons plus XP",
         "collect",
         4
       ),
@@ -5853,7 +6129,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
-    const flatRadius = biome === "desert" ? 24 : biome === "swamp" ? 25 : biome === "mountain" ? 24 : 23;
+    const flatRadius = biome === "desert" ? 24 : biome === "swamp" ? 25 : biome === "briar" ? 26 : biome === "mountain" ? 24 : 23;
     registerExplorationFlatZone(x, z, flatRadius, 12, null, 0.94);
     const villageGroundY = explorationGroundLocalY(x, z);
     const village = {
@@ -5862,13 +6138,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       z: game.exploration.origin.z + z,
       localX: x,
       localZ: z,
-      radius: biome === "desert" ? 23.5 : biome === "swamp" ? 24.5 : biome === "mountain" ? 23.0 : 22.0,
+      radius: biome === "desert" ? 23.5 : biome === "swamp" ? 24.5 : biome === "briar" ? 25.0 : biome === "mountain" ? 23.0 : 22.0,
       biome
     };
     game.exploration.villages.push(village);
     const houses = [];
-    const baseHouseRadius = biome === "swamp" ? 10.2 : biome === "desert" ? 10.8 : biome === "mountain" ? 10.4 : 9.8;
-    const houseRadiusRange = biome === "swamp" ? 5.8 : 5.2;
+    const baseHouseRadius = biome === "swamp" ? 10.2 : biome === "desert" ? 10.8 : biome === "briar" ? 10.9 : biome === "mountain" ? 10.4 : 9.8;
+    const houseRadiusRange = biome === "swamp" || biome === "briar" ? 5.8 : 5.2;
     for (let i = 0; i < 5; i += 1) {
       const angle = (i / 5) * TAU + random() * 0.34;
       const houseRadius = baseHouseRadius + random() * houseRadiusRange;
@@ -5879,9 +6155,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       house.rotation.y += angle + Math.PI;
       houses.push({ x: hx, z: hz, rotation: house.rotation.y, scale: houseScale });
     }
-    const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.stone;
+    const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : biome === "briar" ? materials.rootwood : materials.stone;
     const well = makeCylinder(0.62, 0.72, 0.62, 16, wellMaterial, x, villageGroundY + 0.31, z);
-    const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.wood, x, villageGroundY + 1.1, z);
+    const beam = makeBox(1.8, 0.16, 0.18, biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : biome === "briar" ? materials.rootwood : materials.wood, x, villageGroundY + 1.1, z);
     const postA = makeBox(0.16, 1.2, 0.16, materials.wood, x - 0.72, villageGroundY + 0.75, z);
     const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, villageGroundY + 0.75, z);
     group.add(well, beam, postA, postB);
@@ -5892,6 +6168,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ? ["Kael", "Brunna", "Sten", "Yrsa", "Hald", "Runa"]
         : biome === "swamp"
           ? ["Mirel", "Noll", "Vessa", "Orrin", "Sable", "Fen"]
+          : biome === "briar"
+            ? ["Edda Thorn", "Moss", "Bran", "Iven", "Hollis", "Wren"]
           : ["Borin", "Nessa", "Calder", "Ira", "Pavel", "Lina", "Oren", "Tamsin", "Rook", "Elia", "Maren", "Voss"];
     for (let i = 0; i < 3; i += 1) {
       const angle = random() * TAU;
@@ -5904,8 +6182,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         questId = "wisps";
       } else if (biome === "swamp" && i === 1) {
         questId = "bogRelics";
+      } else if (biome === "briar" && i === 0) {
+        questId = "briarStalkers";
       }
-      const name = questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : names[(index * 3 + i) % names.length];
+      const name = questId === "spiders" ? "Amara" : questId === "dragons" ? "Kael" : questId === "wisps" ? "Mirel" : questId === "bogRelics" ? "Noll" : questId === "briarStalkers" ? "Edda Thorn" : names[(index * 3 + i) % names.length];
       const npcRadius = 5.2 + random() * 7.4;
       game.npcs.push(createFriendlyNpc(
         game.exploration.origin.x + x + Math.cos(angle) * npcRadius,
@@ -6331,11 +6611,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       rz: 96,
       rotation: -0.44
     };
-    game.exploration.biomes.push(mountain, desert, swamp);
+    const briar = {
+      id: "briar",
+      name: "Briarfall Woods",
+      x: 224 + random() * 10,
+      z: -118 - random() * 10,
+      rx: 112,
+      rz: 92,
+      rotation: -0.18
+    };
+    game.exploration.biomes.push(mountain, desert, swamp, briar);
     setupExplorationFlatZones();
     addBiomePatch(group, desert, seed);
     addBiomePatch(group, mountain, seed);
     addBiomePatch(group, swamp, seed);
+    addBiomePatch(group, briar, seed);
   }
 
   // Exploration enemies get tougher the further they roam from the homestead
@@ -6464,6 +6754,37 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     addExplorationCollider(biome.x + 9, biome.z - 10, 1.65, "structure");
   }
 
+  function addBriarMarkers(group, biome, random) {
+    if (!biome) {
+      return;
+    }
+    const ring = new THREE.Group();
+    setExplorationLocalGroundPosition(ring, biome.x + 12, biome.z - 10, 0.08);
+    const rootRing = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.12, 8, 38), materials.rootwood);
+    rootRing.rotation.x = Math.PI / 2;
+    const standingStoneCount = 6;
+    for (let i = 0; i < standingStoneCount; i += 1) {
+      const angle = (i / standingStoneCount) * TAU + random() * 0.12;
+      const stone = makeBox(0.46, 1.28 + random() * 0.38, 0.32, materials.stone, Math.cos(angle) * 2.75, 0.68, Math.sin(angle) * 2.75);
+      stone.rotation.y = -angle + random() * 0.2;
+      stone.rotation.z = (random() - 0.5) * 0.18;
+      ring.add(stone);
+    }
+    const glow = makeSphere(0.18, materials.lampGlow.clone(), 0, 0.7, 0);
+    ring.add(rootRing, glow);
+    group.add(ring);
+    addExplorationCollider(biome.x + 12, biome.z - 10, 3.2, "structure");
+    addCharcoalClamp(group, biome.x - 30, biome.z + 18, 0.34, 1.2);
+    for (let i = 0; i < 10; i += 1) {
+      const point = randomPointInBiome(random, "briar", 12);
+      if (random() > 0.46) {
+        addBramblePatch(group, point.x, point.z, random, 0.9 + random() * 0.45);
+      } else {
+        addExplorationRock(group, point.x, point.z, random, false);
+      }
+    }
+  }
+
   function setupExplorationWorld() {
     clearExplorationWorld();
     const seed = explorationSeed();
@@ -6480,6 +6801,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mountainBiome = game.exploration.biomes.find(biome => biome.id === "mountain");
     const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
     const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
+    const briarBiome = game.exploration.biomes.find(biome => biome.id === "briar");
 
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
@@ -6520,6 +6842,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
     addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
     addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
+    addExplorationVillage(group, briarBiome.x - 8 + random() * 7, briarBiome.z + 8 + random() * 7, random, 5, "briar");
     addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
     addCrownringCity(group, 158 + random() * 7, 48 + random() * 6, random);
     addRoadwardenTackWaymarks(group, random);
@@ -6545,6 +6868,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     addMountainRoost(group, mountainBiome, random);
     addDesertMarkers(group, desertBiome, random);
     addSwampMarkers(group, swampBiome, random);
+    addBriarMarkers(group, briarBiome, random);
     addExplorationRoadNetwork(group);
 
     for (let i = 0; i < 240; i += 1) {
@@ -6577,10 +6901,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         addBogPool(group, point.x, point.z, 1.3 + random() * 1.6, 0.8 + random() * 1.1, random);
       }
     }
+    for (let i = 0; i < 138; i += 1) {
+      const point = randomPointInBiome(random, "briar", 6);
+      if (random() > 0.42) {
+        addBriarOak(group, point.x, point.z, random);
+      } else if (random() > 0.18) {
+        addBramblePatch(group, point.x, point.z, random, 0.85 + random() * 0.55);
+      } else {
+        addCharcoalClamp(group, point.x, point.z, random() * TAU, 0.72 + random() * 0.32);
+      }
+    }
     for (let i = 0; i < 152; i += 1) {
       const point = randomExplorationPoint(random, 13, game.exploration.radius - 24, (x, z) => {
         const biome = biomeAt(x, z);
-        return biome !== "desert" && biome !== "swamp";
+        return biome !== "desert" && biome !== "swamp" && biome !== "briar";
       });
       addExplorationRock(group, point.x, point.z, random, random() > 0.82);
     }
@@ -6615,6 +6949,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       const world = explorationToWorld(point.x, point.z);
       const wisp = createWisp(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(wisp, world, random, 12 + random() * 5, 9.5);
+    }
+    for (let i = 0; i < 12; i += 1) {
+      const point = randomPointInBiome(random, "briar", 12);
+      const world = explorationToWorld(point.x, point.z);
+      const raider = createBriarRaider(world.x, world.z, 1 + Math.floor(random() * 3));
+      seedExplorationEnemy(raider, world, random, 11 + random() * 6, 8.5);
     }
     updateQuestMarkers();
     updateQuestLog();
@@ -7245,6 +7585,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       player.attackTimer = 0;
       player.blocking = false;
       player.blockHeld = false;
+      player.utilityCooldown = 0;
+      player.payoffCooldown = 0;
+      player.resolveTimer = 0;
+      player.rollTimer = 0;
     }
 
     updateCharacterUi();
@@ -7400,6 +7744,151 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     sessionNote.hidden = !text;
   }
 
+  const helpClassGuide = [
+    {
+      character: "knight",
+      tagline: "Frontline duelist with sword and shield. Guard absorbs hits while blocking and recovers between fights.",
+      abilities: [
+        { id: "slash", keys: "LMB / Space" },
+        { id: "block", keys: "Hold RMB / K" },
+        { id: "bash", keys: "MMB / J" },
+        { id: "resolve", keys: "F" },
+        { id: "sweep", keys: "C" }
+      ]
+    },
+    {
+      character: "wizard",
+      tagline: "Storm caster. Magica fuels every spell and refills over time.",
+      abilities: [
+        { id: "lightning", keys: "LMB / Space / J" },
+        { id: "burst", keys: "RMB / K" },
+        { id: "potion", keys: "MMB / H" },
+        { id: "frostbind", keys: "F" },
+        { id: "stormcrown", keys: "C" }
+      ]
+    },
+    {
+      character: "ranger",
+      tagline: "Skirmisher with bow and tumble roll. Focus powers shots and rolls.",
+      abilities: [
+        { id: "arrow", keys: "LMB / Space" },
+        { id: "roll", keys: "RMB / K" },
+        { id: "pierce", keys: "MMB / J" },
+        { id: "parting", keys: "F" },
+        { id: "heartseeker", keys: "C" }
+      ]
+    }
+  ];
+
+  function helpSection(title) {
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    section.appendChild(heading);
+    helpBody.appendChild(section);
+    return section;
+  }
+
+  function helpParagraph(section, text) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    section.appendChild(paragraph);
+  }
+
+  function helpList(section, items) {
+    const list = document.createElement("ul");
+    for (const item of items) {
+      const row = document.createElement("li");
+      if (item.keys) {
+        const key = document.createElement("span");
+        key.className = "help-key";
+        key.textContent = item.keys;
+        row.appendChild(key);
+      }
+      if (item.label) {
+        const label = document.createElement("strong");
+        label.textContent = item.label;
+        row.appendChild(label);
+        row.appendChild(document.createTextNode(item.text ? " - " + item.text : ""));
+      } else if (item.text) {
+        row.appendChild(document.createTextNode(item.text));
+      }
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+  }
+
+  function buildHelpContent() {
+    helpBody.replaceChildren();
+
+    const basics = helpSection("The Game");
+    helpParagraph(basics, "Ironhold is an exploration RPG. Walk the valley, discover villages and Crownford, and take quests by talking to named NPCs. Quests reward XP, boons, perks, and weapon kits.");
+    helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you.");
+
+    const controls = helpSection("Movement & Controls");
+    helpList(controls, [
+      { keys: "W A S D", text: "Move. Click the game once to capture the mouse for camera look." },
+      { keys: "Mouse / Q / E", text: "Turn the camera." },
+      { keys: "E", label: "Talk", text: "speak to the nearest villager or quest giver." },
+      { keys: "R", label: "Mount", text: "mount or dismount your horse once Rowan's quest grants one." },
+      { keys: "G", label: "Swap kit", text: "cycle between your unlocked weapon kits." },
+      { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5-6)." },
+      { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-9)." },
+      { keys: "H", label: "Potion", text: "wizards drop a shared healing potion." },
+      { keys: "V", text: "Mute or unmute audio." },
+      { keys: "Esc", text: "Pause, resume, or close dialogue." },
+      { keys: "Enter / W / S", text: "Choose and move between dialogue options while talking." }
+    ]);
+
+    const classes = helpSection("Classes & Abilities");
+    for (const entry of helpClassGuide) {
+      helpParagraph(classes, characterDisplayName(entry.character) + " - " + entry.tagline);
+      helpList(classes, entry.abilities.map(ability => {
+        const unlockLevel = abilityUnlockLevels[ability.id] || 1;
+        return {
+          keys: ability.keys,
+          label: abilityDisplayNames[ability.id] || ability.id,
+          text: unlockLevel > 1 ? "unlocks at level " + unlockLevel + "." : "available from the start."
+        };
+      }));
+    }
+
+    const kits = helpSection("Weapon Kits");
+    helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then press G to swap between unlocked kits. Your equipped kit shows in the lower left.");
+    for (const entry of helpClassGuide) {
+      const kitItems = Object.entries(equipmentDefs)
+        .filter(([, def]) => def && def.character === entry.character && def.name)
+        .map(([id, def]) => ({
+          label: def.name,
+          text: defaultWeaponByCharacter[entry.character] === id ? "starting kit." : "earned in the world."
+        }));
+      if (kitItems.length > 0) {
+        helpParagraph(kits, characterDisplayName(entry.character) + " kits:");
+        helpList(kits, kitItems);
+      }
+    }
+
+    const arena = helpSection("The Crownring Arena");
+    helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each kill grants XP, every cleared wave pays a bonus, and every third wave lands a milestone reward.");
+    helpList(arena, [
+      { keys: "Y", label: "Yield", text: "leave mid-wave with your kill XP but no wave bonus. Yielding is respected, not shameful." },
+      { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues." },
+      { text: "Online, everyone fights the same waves. Joiners arriving mid-wave wait at the infirmary and enter at the next bell." }
+    ]);
+  }
+
+  function openHelpPanel() {
+    buildHelpContent();
+    startCard.hidden = true;
+    helpPanel.hidden = false;
+    playSfx("ui", 0.8);
+  }
+
+  function closeHelpPanel() {
+    helpPanel.hidden = true;
+    startCard.hidden = false;
+  }
+
   function addRosterRow(name, detail, id = "") {
     const row = document.createElement("div");
     row.className = "roster-row";
@@ -7460,6 +7949,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     characterSelect.hidden = activeSessionMenu || !(hostPhase || joinReady);
     startButton.hidden = activeSessionMenu || !(hostPhase || joinReady);
     resumeButton.hidden = !pausePhase;
+    helpButton.hidden = !pausePhase;
+    if (!pausePhase && !helpPanel.hidden) {
+      closeHelpPanel();
+    }
     closeRoomButton.hidden = !((online.role === "host" && (pausePhase || hostPhase)) || (pausePhase && !online.role));
     leaveRoomButton.hidden = !(online.role === "join" && (pausePhase || joinReady));
     restartButton.hidden = true;
@@ -8061,6 +8554,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy = createSpider(state.x, state.z, wave);
     } else if (state.type === "wisp") {
       enemy = createWisp(state.x, state.z, wave);
+    } else if (state.type === "briarRaider") {
+      enemy = createBriarRaider(state.x, state.z, wave);
     } else {
       enemy = createBarbarian(state.x, state.z, wave);
     }
@@ -8440,7 +8935,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function explorationRewardForEnemy(enemy) {
-    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12;
+    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : enemy.type === "briarRaider" ? 13 : 12;
     return Math.round(base * (enemy.xpMul || 1));
   }
 
@@ -8452,6 +8947,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       progress.push("dragons");
     } else if (enemy.type === "wisp") {
       progress.push("wisps");
+    } else if (enemy.type === "briarRaider") {
+      progress.push("briarStalkers");
     }
     return progress;
   }
@@ -9026,9 +9523,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
     const claimedProfile = sanitizedCombatProfile(nextCharacter, state.weaponId, state.perks);
-    if (!remote.combatProfile || remote.combatProfile.character !== claimedProfile.character) {
-      remote.combatProfile = claimedProfile;
-    }
+    remote.combatProfile = claimedProfile;
     remote.weaponId = remote.combatProfile.weaponId;
     remote.perks = remote.combatProfile.perks.slice();
     remote.targetPosition.set(
@@ -9146,23 +9641,25 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
     const actionColor = action === "bash" ? 0xffd889 : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
     spawnImpact(source, actionColor, action === "burst" ? 18 : action === "bash" ? 14 : 10);
-    if (action === "lightning") {
+    if (action === "lightning" || action === "frostbind") {
       playPositionalSfx("lightning", source, 0.82, 42);
-    } else if (action === "burst") {
-      playPositionalSfx("burst", source, 0.82, 36);
+    } else if (action === "burst" || action === "stormcrown") {
+      playPositionalSfx("burst", source, action === "stormcrown" ? 1.0 : 0.82, 36);
     } else if (action === "bash") {
       playPositionalSfx("bash", source, 0.82, 32);
-    } else if (action === "arrow" || action === "pierce") {
-      playPositionalSfx(action, source, 0.8, 36);
+    } else if (action === "arrow" || action === "pierce" || action === "heartseeker" || action === "parting") {
+      playPositionalSfx(action === "heartseeker" ? "pierce" : "arrow", source, 0.8, 36);
     } else if (action === "roll") {
       playPositionalSfx("roll", source, 0.7, 24);
+    } else if (action === "resolve") {
+      playPositionalSfx("block", source, 0.8, 28);
     } else {
       playPositionalSfx("slash", source, 0.78, 30);
     }
-    if (action === "lightning") {
+    if (action === "lightning" || action === "frostbind") {
       spawnRemoteLightningVisual(source, state.yaw || 0);
-    } else if (action === "arrow" || action === "pierce") {
-      spawnRemoteArrowVisual(source, state.yaw || 0, action === "pierce");
+    } else if (action === "arrow" || action === "pierce" || action === "heartseeker") {
+      spawnRemoteArrowVisual(source, state.yaw || 0, action !== "arrow");
     }
     if (options.broadcast) {
       broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
@@ -9186,12 +9683,47 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       weaponId: profile.weaponId,
       perks: profile.perks
     });
-    if (action === "burst") {
+    if (action === "burst" || action === "stormcrown") {
+      const crown = action === "stormcrown";
+      const radius = crown ? tuning.stormcrownRadius + 0.1 : 3.45;
       for (const enemy of game.enemies) {
-        if (!enemy.dead && enemy.position.distanceTo(source) < 3.45 + enemy.radius) {
+        if (!enemy.dead && enemy.position.distanceTo(source) < radius + enemy.radius) {
           const direction = enemy.position.clone().sub(source).normalize();
-          damageEnemy(enemy, Math.max(16, tuning.burstDamageMin - 4), direction, 0.55, sourceId);
+          const damage = crown ? tuning.stormcrownDamageMin : Math.max(16, tuning.burstDamageMin - 4);
+          damageEnemy(enemy, damage, direction, crown ? 0.6 : 0.55, sourceId);
+          if (crown) {
+            enemy.velocity.addScaledVector(direction, 3.5);
+          }
         }
+      }
+      return;
+    }
+
+    if (action === "resolve") {
+      return;
+    }
+
+    if (action === "sweep" || action === "parting") {
+      const sweep = action === "sweep";
+      const range = sweep ? tuning.sweepRange : 2.5;
+      const minDot = sweep ? 0.26 : 0.5;
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
+          continue;
+        }
+        const damage = sweep ? tuning.sweepDamageMin : tuning.partingDamageMin;
+        damageEnemy(enemy, damage, forward, sweep ? tuning.sweepStun : 0.4, sourceId);
+        enemy.velocity.addScaledVector(forward, sweep ? 4.6 : 7.5);
+      }
+      return;
+    }
+
+    if (action === "frostbind") {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.frostbindDamageMin, forward, tuning.frostbindStun, sourceId);
       }
       return;
     }
@@ -9226,8 +9758,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     let bestDistance = Infinity;
     const range = action === "lightning" ? tuning.remoteLightningRange
       : action === "arrow" ? 15
+      : action === "heartseeker" ? 18
       : tuning.slashRange + 0.15;
-    const minDot = action === "lightning" ? 0.34 : action === "arrow" ? 0.6 : 0.18;
+    const minDot = action === "lightning" ? 0.34 : action === "arrow" ? 0.6 : action === "heartseeker" ? 0.85 : 0.18;
     for (const enemy of game.enemies) {
       if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
         continue;
@@ -9243,8 +9776,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ? tuning.lightningDamageMin + tuning.lightningDamageBonus - 1
         : action === "arrow"
         ? tuning.arrowDamageMin + tuning.arrowDamageBonus - 2
+        : action === "heartseeker"
+        ? tuning.heartseekerDamageMin
         : tuning.slashDamageMin + tuning.slashDamageBonus - 4;
-      damageEnemy(best, damage, forward, action === "lightning" ? 0.35 : action === "arrow" ? 0.25 : tuning.slashKnockback, sourceId);
+      damageEnemy(best, damage, forward, action === "lightning" ? 0.35 : action === "arrow" ? 0.25 : action === "heartseeker" ? 0.8 : tuning.slashKnockback, sourceId);
     }
   }
 
@@ -9253,20 +9788,43 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     let hit = false;
-    if (action === "roll") {
+    if (action === "roll" || action === "resolve") {
       return;
     }
-    if (action === "burst") {
-      hit = player.position.distanceTo(source) < 3.35;
+    if (action === "burst" || action === "stormcrown") {
+      hit = player.position.distanceTo(source) < (action === "stormcrown" ? 5.2 : 3.35);
     } else {
-      const range = action === "lightning" ? 14.0 : action === "arrow" ? 13.0 : action === "pierce" ? 15.0 : action === "bash" ? 2.55 : 2.7;
-      const minDot = action === "lightning" ? 0.55 : action === "arrow" || action === "pierce" ? 0.72 : action === "bash" ? 0.24 : 0.18;
+      const range = action === "lightning" ? 14.0
+        : action === "arrow" ? 13.0
+        : action === "pierce" || action === "frostbind" ? 15.0
+        : action === "heartseeker" ? 16.0
+        : action === "bash" ? 2.55
+        : action === "sweep" ? 3.2
+        : action === "parting" ? 2.5
+        : 2.7;
+      const minDot = action === "lightning" ? 0.55
+        : action === "arrow" || action === "pierce" || action === "frostbind" ? 0.72
+        : action === "heartseeker" ? 0.85
+        : action === "bash" ? 0.24
+        : action === "sweep" ? 0.26
+        : action === "parting" ? 0.5
+        : 0.18;
       hit = pointInAttackCone(source, yaw, player.position.clone(), range, minDot);
     }
     if (!hit) {
       return;
     }
-    const damage = action === "lightning" ? 22 : action === "burst" ? 18 : action === "arrow" ? 17 : action === "pierce" ? 24 : action === "bash" ? 14 : 24;
+    const damage = action === "lightning" ? 22
+      : action === "burst" ? 18
+      : action === "arrow" ? 17
+      : action === "pierce" ? 24
+      : action === "bash" ? 14
+      : action === "sweep" ? 16
+      : action === "frostbind" ? 10
+      : action === "stormcrown" ? 26
+      : action === "parting" ? 10
+      : action === "heartseeker" ? 32
+      : 24;
     const guardDamage = action === "bash" ? 36 : damage + 12;
     applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
   }
@@ -9651,6 +10209,32 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return enemy;
   }
 
+  function createBriarRaider(x, z, wave) {
+    const enemy = createBarbarian(x, z, wave);
+    enemy.type = "briarRaider";
+    enemy.health = Math.round(enemy.health * 0.86);
+    enemy.maxHealth = enemy.health;
+    enemy.speed *= 1.12;
+    enemy.radius *= 0.96;
+    if (enemy.hpFill && enemy.hpFill.material && enemy.hpFill.material.color) {
+      enemy.hpFill.material.color.setHex(0xb9d678);
+    }
+    const vineCollar = makeCylinder(0.56, 0.6, 0.12, 12, materials.briarLeaf.clone(), 0, 1.82, 0);
+    const shoulderRoot = makeCylinder(0.05, 0.08, 1.02, 7, materials.rootwood, -0.42, 1.7, -0.05);
+    shoulderRoot.rotation.z = Math.PI / 2.25;
+    const shoulderThorn = makeCone(0.07, 0.24, 7, materials.briarThorn, 0.48, 1.8, -0.03);
+    shoulderThorn.rotation.z = -Math.PI / 2.5;
+    const helmLeaf = makeBox(0.46, 0.08, 0.08, materials.briarLeaf.clone(), 0, 2.44, -0.04);
+    helmLeaf.rotation.z = 0.16;
+    const axeHook = makeCone(0.09, 0.34, 7, materials.briarThorn, 0.18, 0.03, -1.38);
+    axeHook.rotation.x = Math.PI / 2;
+    enemy.group.add(vineCollar, shoulderRoot, shoulderThorn, helmLeaf);
+    if (enemy.weaponPivot) {
+      enemy.weaponPivot.add(axeHook);
+    }
+    return enemy;
+  }
+
   function createDragon(x, z, wave) {
     const scale = modelScale.dragonBase + Math.random() * 0.07 + Math.min(wave * 0.008, 0.05);
     const model = createDragonModel(scale);
@@ -9840,7 +10424,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.yaw = yawFromDirection(direction);
     enemy.velocity.x = lerp(enemy.velocity.x, direction.x * speed, 1 - Math.pow(0.01, dt));
     enemy.velocity.z = lerp(enemy.velocity.z, direction.z * speed, 1 - Math.pow(0.01, dt));
-    if (enemy.type === "barbarian") {
+    if (enemy.type === "barbarian" || enemy.type === "briarRaider") {
       enemy.walkTime += dt * speed;
     }
   }
@@ -10174,6 +10758,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const mounted = isPlayerMounted();
     player.attackCooldown = Math.max(0, player.attackCooldown - dt);
     player.secondaryCooldown = Math.max(0, player.secondaryCooldown - dt);
+    player.utilityCooldown = Math.max(0, player.utilityCooldown - dt);
+    player.payoffCooldown = Math.max(0, player.payoffCooldown - dt);
+    player.resolveTimer = Math.max(0, player.resolveTimer - dt);
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.rollTimer = Math.max(0, player.rollTimer - dt);
     if (player.character === "wizard" || player.character === "ranger") {
@@ -10183,9 +10770,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     } else {
       const wantsBlock = !mounted && (player.blockHeld || keys.has("KeyK"));
       player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
-      if (player.blocking) {
+      if (player.blocking && player.resolveTimer <= 0) {
         player.guard = Math.max(0, player.guard - dt * 8);
-      } else if (!(player.attacking && player.attackKind === "bash")) {
+      } else if (player.resolveTimer > 0 || !(player.attacking && player.attackKind === "bash")) {
+        // Warden's Resolve keeps guard regenerating even while blocking.
         player.guard = Math.min(player.maxGuard, player.guard + dt * 22);
       }
     }
@@ -10260,6 +10848,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         : player.attackKind === "bash" ? t > 0.26
         : player.attackKind === "arrow" ? t > 0.3
         : player.attackKind === "pierce" ? t > 0.42
+        : player.attackKind === "frostbind" ? t > 0.32
+        : player.attackKind === "stormcrown" ? t > 0.45
+        : player.attackKind === "heartseeker" ? t > 0.6
+        : player.attackKind === "sweep" ? t > 0.4
         : t > 0.34 && t < 0.68;
       if (!player.attackHitDone && hitFrame) {
         player.attackHitDone = true;
@@ -10269,7 +10861,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
           performWizardBurst();
         } else if (player.attackKind === "bash") {
           performShieldBash();
-        } else if (player.attackKind === "arrow" || player.attackKind === "pierce") {
+        } else if (player.attackKind === "frostbind") {
+          launchFrostbindBolt();
+        } else if (player.attackKind === "stormcrown") {
+          performCrownOfStorms();
+        } else if (player.attackKind === "sweep") {
+          performSweepingCut();
+        } else if (player.attackKind === "arrow" || player.attackKind === "pierce" || player.attackKind === "heartseeker") {
           launchArrow(player.attackKind);
         } else {
           performPlayerAttack();
@@ -10353,10 +10951,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       player.castGlow.material.opacity = 0.28 + swing * 0.7;
     }
     if (player.burstRing) {
-      const burst = player.attackKind === "burst";
+      const burst = player.attackKind === "burst" || player.attackKind === "stormcrown";
       player.burstRing.visible = burst;
       if (burst) {
-        const scale = 0.75 + smoothstep(0.12, 0.92, t) * 3.45;
+        const reach = player.attackKind === "stormcrown" ? 5.8 : 3.45;
+        const scale = 0.75 + smoothstep(0.12, 0.92, t) * reach;
         player.burstRing.scale.set(scale, scale, scale);
         player.burstRing.material.opacity = 0.72 * (1 - smoothstep(0.42, 1, t));
       }
@@ -10604,6 +11203,244 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return true;
   }
 
+  function abilityReadyForUse() {
+    return game.state === "playing" && questDialog.hidden && !isPlayerMounted();
+  }
+
+  // Utility slot (F): Warden's Resolve / Frostbind Bolt / Parting Shot.
+  function startUtilityAbility() {
+    if (!abilityReadyForUse() || player.utilityCooldown > 0) {
+      return false;
+    }
+    const tuning = combatTuningFor();
+    if (player.character === "knight") {
+      if (!hasAbility("resolve")) {
+        showAbilityLocked("resolve");
+        return false;
+      }
+      player.resolveTimer = tuning.resolveDuration;
+      player.utilityCooldown = tuning.resolveCooldown;
+      spawnImpact(player.position, 0xffd889, 18);
+      showBanner("Warden's Resolve", 1.6);
+      playSfx("block", 1.15);
+      sendOnlineAction("resolve");
+      return true;
+    }
+    if (player.character === "wizard") {
+      if (player.attacking) {
+        return false;
+      }
+      if (!hasAbility("frostbind")) {
+        showAbilityLocked("frostbind");
+        return false;
+      }
+      if (player.mana < tuning.frostbindManaCost) {
+        showBanner("Not enough magica");
+        return false;
+      }
+      player.mana -= tuning.frostbindManaCost;
+      player.utilityCooldown = tuning.frostbindCooldown;
+      player.attacking = true;
+      player.attackKind = "frostbind";
+      player.attackTimer = 0;
+      player.attackDuration = 0.5;
+      player.attackCooldown = 0.6;
+      player.attackHitDone = false;
+      playSfx("lightning", 0.8);
+      sendOnlineAction("frostbind");
+      return true;
+    }
+    if (player.character === "ranger") {
+      if (!hasAbility("parting")) {
+        showAbilityLocked("parting");
+        return false;
+      }
+      if (player.mana < tuning.partingFocusCost) {
+        showBanner("Not enough focus");
+        return false;
+      }
+      player.mana -= tuning.partingFocusCost;
+      player.utilityCooldown = tuning.partingCooldown;
+      performPartingShot(tuning);
+      return true;
+    }
+    return false;
+  }
+
+  // Payoff slot (C): Sweeping Cut / Crown of Storms / Heartseeker.
+  function startPayoffAbility() {
+    if (!abilityReadyForUse() || player.payoffCooldown > 0 || player.attacking || player.attackCooldown > 0) {
+      return false;
+    }
+    const tuning = combatTuningFor();
+    if (player.character === "knight") {
+      if (!hasAbility("sweep")) {
+        showAbilityLocked("sweep");
+        return false;
+      }
+      if (player.guard < tuning.sweepGuardCost) {
+        showBanner("Not enough guard");
+        return false;
+      }
+      player.guard -= tuning.sweepGuardCost;
+      player.payoffCooldown = tuning.sweepCooldown;
+      player.blockHeld = false;
+      player.blocking = false;
+      player.attacking = true;
+      player.attackKind = "sweep";
+      player.attackTimer = 0;
+      player.attackDuration = 0.62;
+      player.attackCooldown = 0.7;
+      player.attackHitDone = false;
+      playSfx("slash", 1.15);
+      sendOnlineAction("sweep");
+      return true;
+    }
+    if (player.character === "wizard") {
+      if (!hasAbility("stormcrown")) {
+        showAbilityLocked("stormcrown");
+        return false;
+      }
+      if (player.mana < tuning.stormcrownManaCost) {
+        showBanner("Not enough magica");
+        return false;
+      }
+      player.mana -= tuning.stormcrownManaCost;
+      player.payoffCooldown = tuning.stormcrownCooldown;
+      player.attacking = true;
+      player.attackKind = "stormcrown";
+      player.attackTimer = 0;
+      player.attackDuration = 0.62;
+      player.attackCooldown = 0.7;
+      player.attackHitDone = false;
+      playSfx("burst", 1.2);
+      sendOnlineAction("stormcrown");
+      return true;
+    }
+    if (player.character === "ranger") {
+      if (!hasAbility("heartseeker")) {
+        showAbilityLocked("heartseeker");
+        return false;
+      }
+      if (player.mana < tuning.heartseekerFocusCost) {
+        showBanner("Not enough focus");
+        return false;
+      }
+      player.mana -= tuning.heartseekerFocusCost;
+      player.payoffCooldown = tuning.heartseekerCooldown;
+      player.attacking = true;
+      player.attackKind = "heartseeker";
+      player.attackTimer = 0;
+      player.attackDuration = 0.7;
+      player.attackCooldown = 0.85;
+      player.attackHitDone = false;
+      playSfx("pierce", 1.1);
+      sendOnlineAction("heartseeker");
+      return true;
+    }
+    return false;
+  }
+
+  function performPartingShot(tuning = combatTuningFor("ranger")) {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > 2.5 + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        if (forward.dot(tmpVec2) < 0.5) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.partingDamageMin + Math.floor(Math.random() * tuning.partingDamageSpread), forward, 0.4);
+        enemy.velocity.addScaledVector(forward, 7.5);
+      }
+    }
+    spawnImpact(player.position.clone().addScaledVector(forward, 1.2), 0xd6c08a, 14);
+    // Spring backward, away from facing.
+    player.velocity.addScaledVector(forward, -10);
+    player.rollTimer = Math.max(player.rollTimer, 0.3);
+    playSfx("arrow", 1.05);
+    sendOnlineAction("parting");
+  }
+
+  function performSweepingCut() {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    const tuning = combatTuningFor("knight");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > tuning.sweepRange + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        // Wide ~150 degree arc.
+        if (forward.dot(tmpVec2) < 0.26) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.sweepDamageMin + Math.floor(Math.random() * tuning.sweepDamageSpread), tmpVec2.clone(), tuning.sweepStun);
+        enemy.velocity.addScaledVector(tmpVec2, 4.6);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position.clone().addScaledVector(forward, 1.1), hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 18 : 10);
+  }
+
+  function performCrownOfStorms() {
+    const tuning = combatTuningFor("wizard");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead) {
+          continue;
+        }
+        const direction = tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(direction.x, direction.z));
+        if (distance > tuning.stormcrownRadius + enemy.radius) {
+          continue;
+        }
+        direction.y = 0;
+        direction.multiplyScalar(1 / distance);
+        damageEnemy(enemy, tuning.stormcrownDamageMin + Math.floor(Math.random() * tuning.stormcrownDamageSpread), direction.clone(), 0.6);
+        enemy.velocity.addScaledVector(direction, 3.5);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position, hitAny ? 0x7ae8ff : 0xbff8ff, hitAny ? 34 : 20);
+  }
+
+  function launchFrostbindBolt() {
+    const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
+    const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+    const tuning = combatTuningFor("wizard");
+    const projectile = createLightningProjectile(source, direction.multiplyScalar(22), {
+      life: 1.6,
+      damage: tuning.frostbindDamageMin + Math.floor(Math.random() * tuning.frostbindDamageSpread),
+      stun: tuning.frostbindStun,
+      turnRate: 0
+    });
+    projectile.pierce = true;
+    projectile.hitIds = new Set();
+    // Icy tint to read differently from lightning.
+    if (projectile.shell) {
+      projectile.shell.material = materials.wisp.clone();
+      projectile.core.material = materials.wispCore.clone();
+    }
+    game.playerProjectiles.push(tagArenaActor(projectile));
+  }
+
   function performPlayerAttack() {
     const forward = forwardFromYaw(player.yaw, tmpVec);
     const tuning = combatTuningFor("knight");
@@ -10733,15 +11570,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
     const tuning = combatTuningFor("ranger");
     const pierce = kind === "pierce";
-    const velocity = direction.clone().multiplyScalar(tuning.arrowSpeed * (pierce ? 1.15 : 1));
-    const damage = pierce
+    const heartseeker = kind === "heartseeker";
+    const speedMul = heartseeker ? 1.23 : pierce ? 1.15 : 1;
+    const velocity = direction.clone().multiplyScalar(tuning.arrowSpeed * speedMul);
+    const damage = heartseeker
+      ? tuning.heartseekerDamageMin + Math.floor(Math.random() * tuning.heartseekerDamageSpread)
+      : pierce
       ? tuning.pierceDamageMin + Math.floor(Math.random() * tuning.pierceDamageSpread)
       : tuning.arrowDamageMin + tuning.arrowDamageBonus + Math.floor(Math.random() * tuning.arrowDamageSpread);
     game.playerProjectiles.push(tagArenaActor(createArrowProjectile(source, velocity, {
       damage,
       pierce,
-      stun: pierce ? 0.4 : 0.22,
-      life: pierce ? 1.7 : tuning.arrowLife
+      stun: heartseeker ? 0.8 : pierce ? 0.4 : 0.22,
+      life: heartseeker ? 1.9 : pierce ? 1.7 : tuning.arrowLife
     })));
   }
 
@@ -10930,7 +11771,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.stunned = Math.max(enemy.stunned, stun);
     enemy.velocity.addScaledVector(direction, 4.3);
     const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.position;
-    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : 0xffd19b;
+    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : enemy.type === "briarRaider" ? 0xb9d678 : 0xffd19b;
     spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
     playSfx("enemyHit", enemy.type === "dragon" ? 1.2 : 0.9);
     broadcastOnlineEffect({
@@ -11706,6 +12547,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playSfx("hit", 1);
     }
 
+    if (player.resolveTimer > 0) {
+      finalDamage = Math.ceil(finalDamage * combatTuningFor("knight").resolveDamageTaken);
+    }
     player.health = Math.max(0, player.health - finalDamage);
     player.hurtTimer = 0.42;
     player.velocity.addScaledVector(direction, 4.4 + extraPush * 7);
@@ -12046,7 +12890,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         if (game.state === "playing") {
           openSessionMenu();
         } else if (game.state === "paused") {
-          resumeSession();
+          if (!helpPanel.hidden) {
+            closeHelpPanel();
+          } else {
+            resumeSession();
+          }
         }
         return;
       }
@@ -12096,6 +12944,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         } else {
           startAttack();
         }
+      }
+      if (event.code === "KeyF") {
+        event.preventDefault();
+        startUtilityAbility();
+      }
+      if (event.code === "KeyC") {
+        event.preventDefault();
+        startPayoffAbility();
       }
       if (event.code === "KeyK") {
         event.preventDefault();
@@ -12223,6 +13079,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     joinSessionButton.addEventListener("click", startJoinSessionFlow);
     backMenuButton.addEventListener("click", backToSessionLanding);
     resumeButton.addEventListener("click", resumeSession);
+    helpButton.addEventListener("click", openHelpPanel);
+    helpBackButton.addEventListener("click", closeHelpPanel);
     closeRoomButton.addEventListener("click", closeRoomAndReturn);
     leaveRoomButton.addEventListener("click", () => leaveRoomToMenu());
 
