@@ -260,6 +260,7 @@ import {
       colliders: [],
       roads: [],
       city: null,
+      arenaCity: null,
       horse: null,
       discovered: new Set(),
       completed: false,
@@ -1240,9 +1241,12 @@ import {
   }
 
   function crownfordInfirmaryPosition() {
-    const city = game.exploration.city;
+    const city = game.exploration.arenaCity || game.exploration.city;
     if (!city) {
       return game.exploration.spawn.clone();
+    }
+    if (city.infirmaryLocal) {
+      return explorationToWorld(city.infirmaryLocal.x, city.infirmaryLocal.z, new THREE.Vector3());
     }
     return explorationToWorld(city.localX + 25, city.localZ - 12, new THREE.Vector3());
   }
@@ -1360,6 +1364,7 @@ import {
     game.exploration.colliders.length = 0;
     game.exploration.roads.length = 0;
     game.exploration.city = null;
+    game.exploration.arenaCity = null;
     game.exploration.discovered = new Set();
     game.exploration.completed = false;
     resetArenaActivityState();
@@ -1760,9 +1765,14 @@ import {
       const cityGate = city.roadAnchor || { x: city.localX, z: city.localZ - 44 };
       addExplorationRoad(group, [northFork, { x: -4, z: northFork.z + 18 }, { x: cityGate.x * 0.45, z: cityGate.z - 27 }, { x: cityGate.x - 4, z: cityGate.z - 12 }, cityGate], 3.25, "formal");
     }
+    const arenaCity = game.exploration.arenaCity;
+    if (arenaCity) {
+      const arenaGate = arenaCity.roadAnchor || { x: arenaCity.localX - 34, z: arenaCity.localZ - 18 };
+      addExplorationRoad(group, [northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: arenaGate.x - 18, z: arenaGate.z - 9 }, arenaGate], 3.05, "formal");
+    }
 
     for (const village of game.exploration.villages) {
-      if (village.id === "crownford") {
+      if (village.id === "crownford" || village.id === "crownring") {
         continue;
       }
       const localX = village.localX ?? (village.x - game.exploration.origin.x);
@@ -1955,6 +1965,13 @@ import {
       addBannerPole(group, gate.x + 7.4, gate.z - 2.8, -0.12, 0.96);
       addCrateStack(group, gate.x - 10.2, gate.z + 4.4, 0.18, 0.84);
       addBarrel(group, gate.x + 10.2, gate.z + 4.6, -0.12, 0.84);
+    }
+    const arenaCity = game.exploration.arenaCity;
+    if (arenaCity) {
+      const gate = arenaCity.roadAnchor || { x: arenaCity.localX - 34, z: arenaCity.localZ - 18 };
+      addBannerPole(group, gate.x - 5.8, gate.z - 2.1, 0.08, 0.88);
+      addBannerPole(group, gate.x + 5.8, gate.z - 2.1, -0.08, 0.88);
+      addLanternPost(group, gate.x - 8.2, gate.z + 1.7, 0.18, 0.78);
     }
   }
 
@@ -2988,6 +3005,11 @@ import {
   function updateQuestMarkers() {
     for (const npc of game.npcs) {
       if (!npc.questMarker || !npc.questId) {
+        if (npc.questMarker && npcOffersCrownringService(npc)) {
+          npc.questMarker.visible = !arenaActivityActive();
+          npc.questMarker.scale.setScalar(1.22);
+          npc.questMarker.material.color.setHex(0xffd889);
+        }
         continue;
       }
       const quest = getQuest(npc.questId);
@@ -3141,6 +3163,10 @@ import {
     return (quest.dialogue && quest.dialogue.doneStatus) || "Reward claimed. The valley already feels a little friendlier.";
   }
 
+  function npcOffersCrownringService(npc) {
+    return !!npc && npc.serviceType === "crownring";
+  }
+
   function refreshQuestDialog() {
     const npc = game.dialogNpc;
     if (!npc) {
@@ -3150,10 +3176,15 @@ import {
     questDialogTitle.textContent = npc.name;
     questAcceptButton.hidden = true;
     questClaimButton.hidden = true;
-    questServiceButton.hidden = npc.name !== "Marshal Rowan Vale" || arenaActivityActive();
+    questServiceButton.hidden = !npcOffersCrownringService(npc) || arenaActivityActive();
 
     if (!quest) {
-      if (npc.biome === "desert") {
+      if (npcOffersCrownringService(npc)) {
+        questDialogBody.textContent = "The Crownring is open to any sworn traveler. Step through the steward's gate, fight as many waves as you dare, then yield before pride empties your flask.";
+        questDialogStatus.textContent = arenaActivityActive() ? "The Crownring is already active." : "Press Enter on the service button to enter the Crownring.";
+        questServiceButton.hidden = arenaActivityActive();
+        questServiceButton.textContent = "Enter Crownring";
+      } else if (npc.biome === "desert") {
         questDialogBody.textContent = "The dunes shift by the hour. Walk near the cactus shade and listen for legs under the sand.";
       } else if (npc.biome === "mountain") {
         questDialogBody.textContent = "Smoke over the ridges means dragons are awake. Keep low when the wind goes warm.";
@@ -3177,7 +3208,7 @@ import {
     } else if (quest.state === "ready") {
       questClaimButton.hidden = false;
     }
-    if (npc.name === "Marshal Rowan Vale" && !arenaActivityActive()) {
+    if (npcOffersCrownringService(npc) && !arenaActivityActive()) {
       questServiceButton.hidden = false;
       questServiceButton.textContent = "Enter Crownring";
     }
@@ -3909,6 +3940,98 @@ import {
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 23, game.exploration.origin.z + z + 8, random, 9.5, "Mason Vale", null, "city"));
   }
 
+  function addCrownringCity(group, x, z, random) {
+    const city = {
+      id: "crownring",
+      name: "Crownring",
+      x: game.exploration.origin.x + x,
+      z: game.exploration.origin.z + z,
+      localX: x,
+      localZ: z,
+      roadAnchor: { x: x - 34, z: z - 18 },
+      infirmaryLocal: { x: x - 19, z: z + 12 },
+      radius: 31,
+      biome: "city"
+    };
+    game.exploration.arenaCity = city;
+    game.exploration.villages.push(city);
+
+    addCityPavement(group, x, z, 52, 38);
+    addCityPavement(group, x - 34, z - 18, 19, 4.5, -0.08);
+
+    const wallSegments = [
+      [-16, -24, 25, 0.72],
+      [16, -24, 25, 0.72],
+      [-16, 24, 25, 0.72],
+      [16, 24, 25, 0.72],
+      [-29, -9, 0.72, 24],
+      [-29, 13, 0.72, 18],
+      [29, -9, 0.72, 24],
+      [29, 13, 0.72, 18]
+    ];
+    for (const [wx, wz, ww, wd] of wallSegments) {
+      const wall = makeBox(ww, 2.12, wd, materials.cityWall, x + wx, 1.06, z + wz);
+      group.add(wall);
+      addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
+    }
+    for (const [tx, tz] of [[-29, -24], [29, -24], [-29, 24], [29, 24]]) {
+      const tower = makeCylinder(0.85, 1.0, 3.4, 14, materials.cityWall, x + tx, 1.7, z + tz);
+      const cap = makeCone(1.15, 1.25, 14, materials.cityRoof, x + tx, 3.98, z + tz);
+      group.add(tower, cap);
+      addExplorationCollider(x + tx, z + tz, 1.28, "structure");
+    }
+
+    const court = makeCylinder(8.6, 8.9, 0.14, 32, materials.darkStone, x, 0.11, z);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(7.35, 0.24, 8, 56), materials.cityWall);
+    ring.position.set(x, 0.32, z);
+    ring.rotation.x = Math.PI / 2;
+    addShadow(ring);
+    const sand = makeCylinder(6.85, 6.95, 0.055, 32, materials.sand, x, 0.2, z);
+    group.add(court, ring, sand);
+    for (let i = 0; i < 10; i += 1) {
+      const angle = (i / 10) * TAU;
+      const px = x + Math.cos(angle) * 9.8;
+      const pz = z + Math.sin(angle) * 9.8;
+      const post = makeCylinder(0.07, 0.1, 1.15, 7, materials.wood, px, 0.68, pz);
+      const pennant = makeBox(0.08, 0.72, 0.42, i % 2 ? materials.cityBannerRed : materials.blue, 0, 0.28, -0.22);
+      pennant.rotation.y = angle;
+      post.add(pennant);
+      group.add(post);
+    }
+    const stands = [
+      [0, -13.4, 16, 2.6],
+      [0, 13.4, 16, 2.6],
+      [-13.2, 0, 2.6, 14],
+      [13.2, 0, 2.6, 14]
+    ];
+    for (const [sx, sz, sw, sd] of stands) {
+      const bench = makeBox(sw, 0.74, sd, materials.wood, x + sx, 0.54, z + sz);
+      const base = makeBox(sw + 0.6, 0.22, sd + 0.5, materials.darkStone, x + sx, 0.18, z + sz);
+      group.add(base, bench);
+      addExplorationLineColliders(x + sx, z + sz, sw, sd, "structure");
+    }
+
+    addCityHouse(group, x - 19, z + 12, 0.82, 8, -Math.PI / 2);
+    addCityHouse(group, x + 20, z + 12, 0.86, 9, Math.PI / 2);
+    addStable(group, x - 20, z - 11);
+    addBannerPole(group, x - 24, z - 20, 0.16, 0.92);
+    addBannerPole(group, x + 24, z - 20, -0.16, 0.92);
+    addLanternPost(group, x - 10, z - 18, 0.2, 0.82);
+    addLanternPost(group, x + 10, z - 18, -0.2, 0.82);
+    addCart(group, x + 21, z - 8, -0.35, 0.86);
+    addCrateStack(group, x + 23, z - 4, 0.2, 0.78);
+    addBarrel(group, x - 22, z - 4, -0.2, 0.82);
+    addBucket(group, x - 17, z + 7, 0.4, 0.82);
+
+    const steward = createFriendlyNpc(game.exploration.origin.x + x - 3.4, game.exploration.origin.z + z - 11.6, random, 8.5, "Steward Bryn", null, "city");
+    steward.serviceType = "crownring";
+    steward.questMarker.visible = true;
+    steward.questMarker.material.color.setHex(0xffd889);
+    game.npcs.push(steward);
+    game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 19, game.exploration.origin.z + z + 8.5, random, 7.5, "Physicker Maud", null, "city"));
+    game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 18.5, game.exploration.origin.z + z + 8.0, random, 7.5, "Quartermaster Pell", null, "city"));
+  }
+
   function isExplorationBlocked(localX, localZ) {
     if (Math.hypot(localX, localZ) < 11) {
       return true;
@@ -4135,6 +4258,7 @@ import {
     addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
     addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
     addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
+    addCrownringCity(group, 158 + random() * 7, 48 + random() * 6, random);
     syncVillageQuestProgress({ silent: true });
     addSwampQuestItems(group, swampBiome, random);
 
