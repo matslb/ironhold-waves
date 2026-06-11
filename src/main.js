@@ -59,6 +59,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const onlineStatus = document.getElementById("onlineStatus");
   const sessionNote = document.getElementById("sessionNote");
   const resumeButton = document.getElementById("resumeButton");
+  const helpButton = document.getElementById("helpButton");
+  const helpPanel = document.getElementById("helpPanel");
+  const helpBody = document.getElementById("helpBody");
+  const helpBackButton = document.getElementById("helpBackButton");
+  const startCard = document.querySelector(".start-card");
   const closeRoomButton = document.getElementById("closeRoomButton");
   const leaveRoomButton = document.getElementById("leaveRoomButton");
   const roomRoster = document.getElementById("roomRoster");
@@ -2187,7 +2192,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         maxHealth: 68 + steps * 5 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 64 + steps * 6 + (boons.mana || 0),
-        manaRegen: 18 + steps * 0.7,
+        manaRegen: 13.5 + steps * 0.5,
         potionCooldownMax: 18
       };
     }
@@ -6333,6 +6338,39 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     addBiomePatch(group, swamp, seed);
   }
 
+  // Exploration enemies get tougher the further they roam from the homestead
+  // spawn: tier 1 near home, tier 2 (veteran) mid-map, tier 3 (dread) at the rim.
+  function applyEnemyTier(enemy, world) {
+    const radius = Math.max(1, game.exploration.radius);
+    const distance = Math.hypot(world.x - game.exploration.origin.x, world.z - game.exploration.origin.z);
+    const danger = distance / radius;
+    if (danger < 0.34) {
+      enemy.tier = 1;
+      return;
+    }
+    const dread = danger >= 0.62;
+    enemy.tier = dread ? 3 : 2;
+    enemy.health = Math.round(enemy.health * (dread ? 2.1 : 1.45));
+    enemy.maxHealth = enemy.health;
+    enemy.speed *= dread ? 1.22 : 1.12;
+    enemy.damageMul = dread ? 1.85 : 1.4;
+    enemy.xpMul = dread ? 2.4 : 1.6;
+    enemy.radius *= dread ? 1.16 : 1.08;
+    applyEnemyTierVisual(enemy);
+  }
+
+  function applyEnemyTierVisual(enemy) {
+    if (enemy.tierVisualApplied || !enemy.tier || enemy.tier < 2) {
+      return;
+    }
+    enemy.tierVisualApplied = true;
+    const dread = enemy.tier === 3;
+    enemy.group.scale.multiplyScalar(dread ? 1.16 : 1.08);
+    if (enemy.hpFill && enemy.hpFill.material) {
+      enemy.hpFill.material.color.setHex(dread ? 0xff705c : 0xffd166);
+    }
+  }
+
   function seedExplorationEnemy(enemy, world, random, awareness, homeRadius = 9) {
     enemy.exploration = true;
     world.y = explorationGroundWorldY(world.x, world.z);
@@ -6344,6 +6382,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.patrolTarget = world.clone();
     enemy.state = "patrol";
     enemy.cooldown = 0.8 + random() * 1.8;
+    applyEnemyTier(enemy, world);
     game.enemies.push(enemy);
     return enemy;
   }
@@ -7951,6 +7990,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       hoverHeight: enemy.hoverHeight || 0,
       desiredRange: enemy.desiredRange || 0,
       exploration: !!enemy.exploration,
+      tier: enemy.tier || 1,
       activityType: enemy.activityType || "",
       activityId: enemy.activityId || ""
     };
@@ -8054,6 +8094,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.hoverHeight = state.hoverHeight || enemy.hoverHeight || 0;
     enemy.desiredRange = state.desiredRange || enemy.desiredRange || 0;
     enemy.exploration = !!state.exploration;
+    if ((state.tier || 1) > (enemy.tier || 1)) {
+      enemy.tier = state.tier;
+      applyEnemyTierVisual(enemy);
+    }
     enemy.activityType = state.activityType || "";
     enemy.activityId = state.activityId || "";
     enemy.lastWorldSeen = clock.elapsedTime;
@@ -8396,7 +8440,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function explorationRewardForEnemy(enemy) {
-    return enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12;
+    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : 12;
+    return Math.round(base * (enemy.xpMul || 1));
   }
 
   function explorationProgressForEnemy(enemy) {
@@ -10421,7 +10466,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       player.mana -= cost;
       player.attackKind = "arrow";
       player.attackDuration = 0.34;
-      player.attackCooldown = 0.4;
+      player.attackCooldown = 0.55;
       playSfx("arrow", 0.95);
     } else {
       player.attackKind = "slash";
@@ -10552,7 +10597,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     player.attackKind = "pierce";
     player.attackTimer = 0;
     player.attackDuration = 0.52;
-    player.attackCooldown = 0.85;
+    player.attackCooldown = 1.1;
     player.attackHitDone = false;
     playSfx("pierce", 1.05);
     sendOnlineAction("pierce");
@@ -11014,7 +11059,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.attackHitDone = true;
       if (playerDistance < 2.05) {
         const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
-        applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), 16, 22, hitDirection, 0.18);
+        const mul = enemy.damageMul || 1;
+        applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), Math.round(19 * mul), Math.round(25 * mul), hitDirection, 0.18);
       }
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
@@ -11103,7 +11149,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.attackHitDone = true;
       if (playerDistance < 2.65) {
         const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
-        applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), 15, 24, hitDirection, 0.16);
+        const mul = enemy.damageMul || 1;
+        applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), Math.round(18 * mul), Math.round(27 * mul), hitDirection, 0.16);
         spawnImpact(tmpVec.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z, 1.0), enemy.position.z), 0x8affd2, 16);
       }
     }
@@ -11563,8 +11610,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       speed,
       turnRate: 0.82,
       life: 4.2,
-      damage: 24 + Math.min(game.wave * 2, 12),
-      guardDamage: 36 + Math.min(game.wave * 2, 14),
+      damage: Math.round((26 + Math.min(game.wave * 2, 12)) * (enemy.damageMul || 1)),
+      guardDamage: Math.round((38 + Math.min(game.wave * 2, 14)) * (enemy.damageMul || 1)),
       targetId: targetInfo.id
     });
     if (enemy.activityType === "arena") {
@@ -11602,7 +11649,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.weaponPivot.rotation.set(-1.25 + strike * 2.25, -0.18, -0.62 + wind * 0.74);
       if (!enemy.attackHitDone && t > 0.58) {
         enemy.attackHitDone = true;
-        tryHitPlayer(enemy, 34, 47, 2.45, 0.22);
+        const mul = enemy.damageMul || 1;
+        tryHitPlayer(enemy, Math.round(38 * mul), Math.round(52 * mul), 2.45, 0.22);
       }
     } else {
       const wind = clamp(t / 0.36, 0, 1);
@@ -11610,7 +11658,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.weaponPivot.rotation.set(-0.18 + strike * 0.7, -0.45 + strike * 1.65, -0.72 + wind * 0.38);
       if (!enemy.attackHitDone && t > 0.34) {
         enemy.attackHitDone = true;
-        tryHitPlayer(enemy, 17, 23, 2.05, 0.0);
+        const mul = enemy.damageMul || 1;
+        tryHitPlayer(enemy, Math.round(20 * mul), Math.round(26 * mul), 2.05, 0.0);
       }
     }
 

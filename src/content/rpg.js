@@ -1,7 +1,7 @@
 export const knightBashGuardCost = 30;
 export const wizardLightningManaCost = 42;
 export const wizardBurstManaCost = 32;
-export const rangerArrowFocusCost = 14;
+export const rangerArrowFocusCost = 16;
 export const rangerPierceFocusCost = 34;
 export const rangerRollFocusCost = 22;
 export const progressStorageKey = "ironholdProgressV2";
@@ -41,6 +41,19 @@ export const equipmentDefs = {
       bashKnockback: 1.3
     }
   },
+  knight_briarfall_hookblade: {
+    character: "knight",
+    name: "Briarfall Hookblade",
+    // Woodland sidegrade: more control and bash value, less raw reach than the
+    // Roadwarden Blade.
+    tuning: {
+      slashRange: 2.58,
+      slashDamageBonus: 1,
+      slashKnockback: 0.7,
+      bashDamageMin: 21,
+      bashKnockback: 1.42
+    }
+  },
   wizard_oak_staff: {
     character: "wizard",
     name: "Oak Staff",
@@ -51,6 +64,17 @@ export const equipmentDefs = {
     name: "Wayfinder Focus",
     tuning: {
       lightningDamageBonus: 2
+    }
+  },
+  wizard_briar_focus: {
+    character: "wizard",
+    name: "Briar Focus",
+    // Converts some long-range efficiency into stronger close magic.
+    tuning: {
+      lightningManaCost: 46,
+      lightningDamageBonus: 1,
+      burstManaCost: 28,
+      burstDamageMin: 29
     }
   },
   ranger_ash_bow: {
@@ -66,6 +90,16 @@ export const equipmentDefs = {
       arrowDamageBonus: 5,
       arrowFocusCost: 18,
       pierceDamageMin: 44
+    }
+  },
+  ranger_briarstring_bow: {
+    character: "ranger",
+    name: "Briarstring Bow",
+    tuning: {
+      arrowDamageBonus: 2,
+      arrowLife: 1.75,
+      pierceFocusCost: 30,
+      rollFocusCost: 20
     }
   },
   wizard_stormcall_rod: {
@@ -88,6 +122,14 @@ export const perkDefs = {
     tuning: {
       bashGuardCost: 25,
       burstManaCost: 28
+    }
+  },
+  briarfall_pathcraft: {
+    name: "Briarfall Pathcraft",
+    tuning: {
+      bashGuardCost: 27,
+      burstManaCost: 29,
+      rollFocusCost: 20
     }
   }
 };
@@ -115,7 +157,7 @@ export const defaultCombatTuning = {
   burstDamageMin: 24,
   burstDamageSpread: 6,
   arrowFocusCost: rangerArrowFocusCost,
-  arrowDamageMin: 26,
+  arrowDamageMin: 18,
   arrowDamageSpread: 6,
   arrowDamageBonus: 0,
   arrowSpeed: 26,
