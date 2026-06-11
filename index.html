@@ -8019,7 +8019,11 @@
         });
 
         document.addEventListener("pointerlockchange", () => {
+          const wasPointerActive = game.pointerActive;
           game.pointerActive = document.pointerLockElement === document.body;
+          if (wasPointerActive && !game.pointerActive && game.state === "playing") {
+            openSessionMenu();
+          }
         });
 
         renderer.domElement.addEventListener("click", () => {
