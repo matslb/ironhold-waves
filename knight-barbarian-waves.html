@@ -859,7 +859,7 @@
   <div id="overlay">
     <section class="start-card panel">
       <h1>Ironhold Waves</h1>
-      <p id="overlayCopy">The north gate has fallen. Hold the ring until the last raider drops.</p>
+      <p id="overlayCopy">The arena gates are open. Survive each wave and recover before the next charge.</p>
       <div class="character-select" role="radiogroup" aria-label="Choose character">
         <button class="character-card selected" type="button" data-character="knight" role="radio" aria-checked="true">
           <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg></span>
@@ -2477,6 +2477,15 @@
         return "Start as " + className;
       }
 
+      function updateModeDescription() {
+        const descriptions = {
+          solo: "The arena gates are open. Survive each wave and recover before the next charge.",
+          ffa: "Enter a four-digit room and outplay the other champion in the arena.",
+          exploration: "Step out from the homestead, meet villagers, take quests, and roam the wilds."
+        };
+        overlayCopy.textContent = descriptions[game.mode] || descriptions.solo;
+      }
+
       function setGameMode(mode) {
         if (!["solo", "ffa", "exploration"].includes(mode)) {
           mode = "solo";
@@ -2494,6 +2503,7 @@
           card.setAttribute("aria-checked", selected ? "true" : "false");
         });
         startButton.textContent = getStartButtonText();
+        updateModeDescription();
         if (mode === "solo") {
           updateOnlineStatus("Offline");
         } else if (online.connected) {
