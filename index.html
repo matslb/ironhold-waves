@@ -1057,7 +1057,7 @@
       <div class="session-select" id="sessionSelect" aria-label="Session action">
         <button class="session-card" id="startSessionButton" type="button">
           <strong>Start New Session</strong>
-          <span>Wipe local progress, open a room, then choose mode and hero.</span>
+          <span>Wipe local progress, open an exploration room, then choose your hero.</span>
         </button>
         <button class="session-card" id="resumeGameButton" type="button" hidden>
           <strong>Resume Game</strong>
@@ -1087,10 +1087,6 @@
         <span class="online-status" id="onlineStatus">Choose start or join</span>
       </div>
       <div class="mode-select" id="modeSelect" role="radiogroup" aria-label="Choose game mode" hidden>
-        <button class="mode-card" type="button" data-mode="solo" role="radio" aria-checked="false">
-          <strong>Arena Waves</strong>
-          <span>Co-op survival</span>
-        </button>
         <button class="mode-card" type="button" data-mode="exploration" role="radio" aria-checked="false">
           <strong>Exploration</strong>
           <span>Open world</span>
@@ -1110,7 +1106,7 @@
       </div>
       <div class="session-note" id="sessionNote" hidden></div>
       <div class="button-row">
-        <button id="startButton" hidden>Start Arena Waves</button>
+        <button id="startButton" hidden>Start Exploration</button>
         <button id="resumeButton" hidden>Resume</button>
         <button id="closeRoomButton" class="secondary" hidden>Close Room</button>
         <button id="leaveRoomButton" class="secondary" hidden>Leave Room</button>
@@ -1340,7 +1336,7 @@
         menuPhase: "landing",
         pausedFromPlay: false,
         selectedCharacter: "knight",
-        mode: "solo",
+        mode: "exploration",
         arenaGroup: null,
         explorationGroup: null,
         npcs: [],
@@ -1375,7 +1371,7 @@
         flow: "join",
         roomCode: "",
         lastRoomCode: "",
-        lastRoomMode: "solo",
+        lastRoomMode: "exploration",
         hostId: "",
         sendTimer: 0,
         worldSendTimer: 0,
@@ -2526,6 +2522,7 @@
       function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null, biome = "meadow") {
         const group = new THREE.Group();
         group.position.set(x, 0, z);
+        group.scale.setScalar(1.18);
         const cloth = materials.npcCloth.clone();
         if (biome === "desert") {
           cloth.color.setHex(0xb8894f);
@@ -2555,7 +2552,7 @@
           const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
           group.add(reedWrap, satchel);
         }
-        const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 1.92, 0);
+        const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.25, 0);
         questMarker.visible = !!questId;
         group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
         scene.add(group);
@@ -3256,7 +3253,7 @@
           dragons: "mountains",
           wisps: "Mistfen",
           bogRelics: "Mistfen pools",
-          cityWrits: "Wayfinder Beacon",
+          cityWrits: "Crownford beacon",
           citySanctuary: "church district"
         };
         return hints[quest.id] || "";
@@ -3515,8 +3512,8 @@
           createQuest(
             "cityWrits",
             "The Beacon Writs",
-            "Marshal Orlan",
-            "The Wayfinder Beacon keeps the old roads honest. Read the four carved waystones and I will mark you as a sworn guide of the high city.",
+            "Marshal Rowan Vale",
+            "Crownford's Wayfinder Beacon keeps the old roads honest. Read the four carved waystones and I will mark you as a sworn guide of the high city.",
             "Inspect beacon waystones",
             "Guard and magica boons plus XP",
             "collect",
@@ -3543,7 +3540,7 @@
           const angle = (i / 5) * TAU + random() * 0.45;
           const hx = x + Math.cos(angle) * (5.0 + random() * 4.0);
           const hz = z + Math.sin(angle) * (5.0 + random() * 4.0);
-          const house = addExplorationHouse(group, hx, hz, 0.72 + random() * 0.14, i, biome);
+          const house = addExplorationHouse(group, hx, hz, 0.94 + random() * 0.18, i, biome);
           house.rotation.y += angle + Math.PI;
         }
         const wellMaterial = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "swamp" ? materials.swampPlank : materials.stone;
@@ -3761,9 +3758,10 @@
         }
       }
 
-      function addArenaCity(group, x, z, random) {
+      function addCrownfordCity(group, x, z, random) {
         const city = {
-          id: "arena-city",
+          id: "crownford",
+          name: "Crownford",
           x: game.exploration.origin.x + x,
           z: game.exploration.origin.z + z,
           localX: x,
@@ -3809,12 +3807,12 @@
         addCityChurch(group, x + 25, z - 3);
 
         const houseData = [
-          [-25, -20, 0.86, 0, 0.2],
-          [-13, -25, 0.8, 1, -0.16],
-          [13, -24, 0.82, 2, 0.12],
-          [25, 20, 0.84, 3, Math.PI],
-          [10, 26, 0.78, 4, Math.PI + 0.2],
-          [-9, 28, 0.82, 5, Math.PI - 0.18]
+          [-25, -20, 1.04, 0, 0.2],
+          [-13, -25, 1.0, 1, -0.16],
+          [13, -24, 1.02, 2, 0.12],
+          [25, 20, 1.04, 3, Math.PI],
+          [10, 26, 0.98, 4, Math.PI + 0.2],
+          [-9, 28, 1.02, 5, Math.PI - 0.18]
         ];
         for (const [hx, hz, scale, variant, rotation] of houseData) {
           addCityHouse(group, x + hx, z + hz, scale, variant, rotation);
@@ -3822,7 +3820,7 @@
 
         addCityQuestItems(group, city, random);
 
-        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Orlan", "cityWrits", "city"));
+        game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Rowan Vale", "cityWrits", "city"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 25, game.exploration.origin.z + z - 10, random, 8.5, "Sister Edda", "citySanctuary", "city"));
         game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 23, game.exploration.origin.z + z + 8, random, 9.5, "Mason Vale", null, "city"));
       }
@@ -4048,7 +4046,7 @@
         addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
         addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
         addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
-        addArenaCity(group, 12 + random() * 5, 132 + random() * 6, random);
+        addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
         syncVillageQuestProgress({ silent: true });
         addSwampQuestItems(group, swampBiome, random);
 
@@ -4128,8 +4126,8 @@
           const dragon = createDragon(world.x, world.z, 1 + Math.floor(random() * 2));
           dragon.health *= 0.72;
           dragon.maxHealth = dragon.health;
-          dragon.hoverHeight = 2.05 + random() * 0.45;
-          dragon.desiredRange = 8.2 + random() * 1.8;
+          dragon.hoverHeight = 2.75 + random() * 0.45;
+          dragon.desiredRange = 9.2 + random() * 2.0;
           seedExplorationEnemy(dragon, world, random, 18 + random() * 7, 18);
         }
         for (let i = 0; i < 11; i += 1) {
@@ -4679,24 +4677,15 @@
       function getStartButtonText() {
         const className = player.character === "wizard" ? "Wizard" : "Knight";
         const prefix = online.role === "join" ? "Join" : "Start";
-        if (game.mode === "exploration") {
-          return prefix + " Exploration as " + className;
-        }
-        return prefix + " Arena Waves as " + className;
+        return prefix + " Exploration as " + className;
       }
 
       function updateModeDescription() {
-        const descriptions = {
-          solo: "Hold the arena together. Friends can join the room, or you can fight the waves alone.",
-          exploration: "Step out from the homestead, meet villagers, take quests, and roam the wilds."
-        };
-        overlayCopy.textContent = descriptions[game.mode] || descriptions.solo;
+        overlayCopy.textContent = "Step out from the homestead, meet villagers, take quests, and roam the wilds.";
       }
 
       function setGameMode(mode) {
-        if (!["solo", "exploration"].includes(mode)) {
-          mode = "solo";
-        }
+        mode = "exploration";
         game.mode = mode;
         modeCards.forEach(card => {
           const selected = card.dataset.mode === mode;
@@ -4754,7 +4743,7 @@
       }
 
       function modeDisplayName(mode = game.mode) {
-        return mode === "exploration" ? "Exploration" : "Arena Waves";
+        return "Exploration";
       }
 
       function roomIsOpen() {
@@ -4817,7 +4806,7 @@
         }
         backMenuButton.hidden = phase === "landing" || pausePhase;
         onlinePanel.hidden = !showOnlinePanel;
-        modeSelect.hidden = !hostPhase;
+        modeSelect.hidden = true;
         characterSelect.hidden = !(hostPhase || joinReady);
         startButton.hidden = !(hostPhase || joinReady);
         resumeButton.hidden = !pausePhase;
@@ -4838,7 +4827,7 @@
           setSessionNote("");
           updateOnlineStatus(online.lastRoomCode ? "Last room " + online.lastRoomCode + " ready to rejoin" : "Choose start or join");
         } else if (hostPhase) {
-          overlayCopy.textContent = "Choose a mode, pick your character, then start. Share the room code whenever friends are joining.";
+          overlayCopy.textContent = "Pick your character, then start Exploration. Share the room code whenever friends are joining.";
           setSessionNote(online.roomCode ? "Room " + online.roomCode + " - " + modeDisplayName() : "Creating room");
         } else if (joinPhase) {
           overlayCopy.textContent = "Enter the host's four digit code. Your saved progress stays with you.";
@@ -4873,7 +4862,7 @@
         syncPlayerName();
         resetLocalProgression();
         setPlayerCharacter("knight", true);
-        setGameMode("solo");
+        setGameMode("exploration");
         setOnlineFlow("host");
         setMenuPhase("hostSetup");
         hostOnlineGame().catch(error => updateOnlineStatus(error.message || "Host failed"));
@@ -4900,7 +4889,7 @@
         if (activeGame) {
           setPlayerCharacter(activeGame.character, true);
         }
-        setGameMode("solo");
+        setGameMode("exploration");
         setOnlineFlow("join");
         if (!roomCodeInput.value && online.lastRoomCode) {
           roomCodeInput.value = online.lastRoomCode;
@@ -6265,7 +6254,7 @@
           broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
         }
 
-        if (options.damageEnemies && (game.mode === "exploration" || game.mode === "solo")) {
+        if (options.damageEnemies && game.mode === "exploration") {
           applyRemoteActionToEnemies(action, source, state.yaw || 0, forward, state.id || online.localId);
         }
       }
@@ -6675,7 +6664,7 @@
       }
 
       function createBarbarian(x, z, wave) {
-        const scale = 0.92 + Math.random() * 0.18 + Math.min(wave * 0.01, 0.14);
+        const scale = 0.98 + Math.random() * 0.16 + Math.min(wave * 0.01, 0.12);
         const model = createBarbarianModel(scale);
         const enemy = {
           ...model,
@@ -6705,7 +6694,7 @@
       }
 
       function createDragon(x, z, wave) {
-        const scale = 0.82 + Math.random() * 0.18 + Math.min(wave * 0.012, 0.16);
+        const scale = 1.12 + Math.random() * 0.18 + Math.min(wave * 0.012, 0.16);
         const model = createDragonModel(scale);
         const enemy = {
           ...model,
@@ -6714,7 +6703,7 @@
           velocity: new THREE.Vector3(),
           yaw: 0,
           scale,
-          hoverHeight: 2.35 + Math.random() * 0.35,
+          hoverHeight: 2.55 + Math.random() * 0.38,
           desiredRange: 8.0 + Math.random() * 2.2,
           health: 92 + wave * 14,
           maxHealth: 92 + wave * 14,
@@ -6737,7 +6726,7 @@
       }
 
       function createSpider(x, z, wave) {
-        const scale = 0.92 + Math.random() * 0.16;
+        const scale = 1.45 + Math.random() * 0.18;
         const model = createSpiderModel(scale);
         const enemy = {
           ...model,
@@ -8935,7 +8924,7 @@
       setupLighting();
       setupArena();
       setPlayerCharacter("knight", true);
-      setGameMode("solo");
+      setGameMode("exploration");
       setMenuPhase("landing");
       setupInput();
       window.addEventListener("resize", onResize);
