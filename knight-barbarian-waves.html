@@ -722,10 +722,43 @@
       text-align: left;
     }
 
+    .quest-row {
+      position: relative;
+      padding-left: 12px;
+      line-height: 1.32;
+    }
+
+    .quest-row::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.45em;
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--quest-color, #9fffd1);
+      box-shadow: 0 0 10px var(--quest-color, #9fffd1);
+    }
+
     .quest-log strong {
       color: #f7df9a;
       font-size: 12px;
       text-transform: uppercase;
+    }
+
+    .quest-map {
+      width: 168px;
+      height: 168px;
+      justify-self: end;
+      margin-top: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      background: rgba(5, 9, 10, 0.66);
+      box-shadow: inset 0 0 18px rgba(122, 232, 255, 0.08);
+    }
+
+    .quest-map[hidden] {
+      display: none;
     }
 
     @media (max-width: 720px) {
@@ -803,6 +836,7 @@
         <section class="quest-log" id="questLog" hidden aria-label="Active quests">
           <strong>Quests</strong>
           <div id="questLogItems"></div>
+          <canvas class="quest-map" id="questMap" width="176" height="176" hidden aria-label="Quest area map"></canvas>
         </section>
       </section>
     </div>
@@ -971,6 +1005,8 @@
       const questCloseButton = document.getElementById("questCloseButton");
       const questLog = document.getElementById("questLog");
       const questLogItems = document.getElementById("questLogItems");
+      const questMap = document.getElementById("questMap");
+      const questMapCtx = questMap.getContext("2d");
       const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
       const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
@@ -2268,11 +2304,185 @@
         questLog.hidden = game.mode !== "exploration" || visibleQuests.length === 0;
         for (const quest of visibleQuests) {
           const row = document.createElement("div");
+          row.className = "quest-row";
+          row.style.setProperty("--quest-color", questColor(quest.id).hex);
+          const hint = questLocationHint(quest);
           row.textContent = quest.state === "ready"
             ? quest.title + ": return to " + quest.giver
-            : quest.title + ": " + questProgressText(quest);
+            : quest.title + ": " + questProgressText(quest) + (hint ? " - " + hint : "");
           questLogItems.appendChild(row);
         }
+        updateQuestMap();
+      }
+
+      function questColor(id) {
+        const colors = {
+          herbs: { hex: "#9fffd1", fill: "rgba(159, 255, 209, 0.18)", stroke: "rgba(159, 255, 209, 0.78)" },
+          horse: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.18)", stroke: "rgba(255, 216, 137, 0.78)" },
+          raiders: { hex: "#ff9f5d", fill: "rgba(255, 159, 93, 0.16)", stroke: "rgba(255, 159, 93, 0.72)" },
+          villages: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.72)" },
+          spiders: { hex: "#d9a648", fill: "rgba(217, 166, 72, 0.17)", stroke: "rgba(217, 166, 72, 0.76)" },
+          dragons: { hex: "#ff705c", fill: "rgba(255, 112, 92, 0.16)", stroke: "rgba(255, 112, 92, 0.76)" }
+        };
+        return colors[id] || { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.76)" };
+      }
+
+      function questLocationHint(quest) {
+        if (quest.state === "ready") {
+          return "return to " + quest.giver;
+        }
+        const hints = {
+          herbs: "lake shores",
+          horse: "meadow oats",
+          raiders: "open wilds",
+          villages: "settlements",
+          spiders: "desert",
+          dragons: "mountains"
+        };
+        return hints[quest.id] || "";
+      }
+
+      function questGiverPosition(quest) {
+        const npc = game.npcs.find(candidate => candidate.questId === quest.id || candidate.name === quest.giver);
+        return npc ? { x: npc.group.position.x, z: npc.group.position.z } : null;
+      }
+
+      function aggregateQuestArea(positions, padding, minRadius, maxRadius) {
+        if (!positions.length) {
+          return null;
+        }
+        let x = 0;
+        let z = 0;
+        for (const position of positions) {
+          x += position.x;
+          z += position.z;
+        }
+        x /= positions.length;
+        z /= positions.length;
+        let radius = minRadius;
+        for (const position of positions) {
+          radius = Math.max(radius, Math.hypot(position.x - x, position.z - z) + padding);
+        }
+        return { x, z, radius: Math.min(radius, maxRadius) };
+      }
+
+      function questMapAreas(quest) {
+        const color = questColor(quest.id);
+        if (quest.state === "ready") {
+          const giver = questGiverPosition(quest);
+          return giver ? [{ ...giver, radius: 10, color, ready: true }] : [];
+        }
+        if (quest.id === "herbs") {
+          return game.exploration.lakes.map(lake => ({
+            x: lake.x,
+            z: lake.z,
+            rx: lake.rx + 14,
+            rz: lake.rz + 14,
+            color
+          }));
+        }
+        if (quest.id === "horse") {
+          const positions = game.questItems
+            .filter(item => item.questId === "horse")
+            .map(item => item.position);
+          const area = aggregateQuestArea(positions, 28, 38, 92);
+          return area ? [{ ...area, color }] : [];
+        }
+        if (quest.id === "raiders") {
+          const positions = game.enemies
+            .filter(enemy => !enemy.dead && enemy.type === "barbarian")
+            .map(enemy => enemy.position);
+          const area = aggregateQuestArea(positions, 40, 58, 150);
+          return area ? [{ ...area, color }] : [{ x: game.exploration.origin.x, z: game.exploration.origin.z, radius: 130, color }];
+        }
+        if (quest.id === "villages") {
+          return game.exploration.villages
+            .filter(village => !game.exploration.discovered.has(village.id))
+            .map(village => ({ x: village.x, z: village.z, radius: village.radius + 24, color }));
+        }
+        if (quest.id === "spiders" || quest.id === "dragons") {
+          const biome = game.exploration.biomes.find(candidate => candidate.id === (quest.id === "spiders" ? "desert" : "mountain"));
+          return biome
+            ? [{
+              x: game.exploration.origin.x + biome.x,
+              z: game.exploration.origin.z + biome.z,
+              rx: biome.rx + 18,
+              rz: biome.rz + 18,
+              color
+            }]
+            : [];
+        }
+        return [];
+      }
+
+      function projectQuestMapPoint(worldX, worldZ, size, center, scale) {
+        return {
+          x: center + (worldX - game.exploration.origin.x) * scale,
+          y: center + (worldZ - game.exploration.origin.z) * scale
+        };
+      }
+
+      function drawQuestMapArea(ctx, area, size, center, scale) {
+        const point = projectQuestMapPoint(area.x, area.z, size, center, scale);
+        ctx.save();
+        ctx.beginPath();
+        if (area.rx && area.rz) {
+          ctx.ellipse(point.x, point.y, Math.max(5, area.rx * scale), Math.max(5, area.rz * scale), 0, 0, TAU);
+        } else {
+          ctx.arc(point.x, point.y, Math.max(area.ready ? 4 : 7, area.radius * scale), 0, TAU);
+        }
+        ctx.fillStyle = area.color.fill;
+        ctx.strokeStyle = area.color.stroke;
+        ctx.lineWidth = area.ready ? 2.4 : 1.4;
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function updateQuestMap() {
+        const visibleQuests = game.quests.filter(quest => quest.state === "active" || quest.state === "ready");
+        const visible = game.mode === "exploration" && visibleQuests.length > 0;
+        questMap.hidden = !visible;
+        if (!visible) {
+          return;
+        }
+        const ctx = questMapCtx;
+        const size = questMap.width;
+        const center = size / 2;
+        const mapRadius = size * 0.43;
+        const scale = mapRadius / game.exploration.radius;
+        ctx.clearRect(0, 0, size, size);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(center, center, mapRadius + 8, 0, TAU);
+        ctx.clip();
+        ctx.fillStyle = "rgba(6, 12, 13, 0.82)";
+        ctx.fillRect(0, 0, size, size);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(center, center, mapRadius, 0, TAU);
+        ctx.stroke();
+        for (const quest of visibleQuests) {
+          for (const area of questMapAreas(quest)) {
+            drawQuestMapArea(ctx, area, size, center, scale);
+          }
+        }
+        const playerPoint = projectQuestMapPoint(player.position.x, player.position.z, size, center, scale);
+        ctx.fillStyle = "#f4efe4";
+        ctx.strokeStyle = "rgba(5, 9, 10, 0.9)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(playerPoint.x, playerPoint.y, 4.2, 0, TAU);
+        ctx.stroke();
+        ctx.fill();
+        ctx.strokeStyle = "#f4efe4";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(playerPoint.x, playerPoint.y);
+        ctx.lineTo(playerPoint.x - Math.sin(player.yaw) * 10, playerPoint.y - Math.cos(player.yaw) * 10);
+        ctx.stroke();
+        ctx.restore();
       }
 
       function setupExplorationQuests() {
@@ -5849,6 +6059,7 @@
             updateQuestItems(dt);
             updateHorse(dt);
             updateTalkPrompt();
+            updateQuestMap();
           }
           updateParticles(dt);
           updateOnline(dt);
