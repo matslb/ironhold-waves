@@ -9,6 +9,8 @@
       ".git/**",
       ".gitignore",
       "_config.yml",
+      "404.html",
+      "README.md",
       "docs/**",
       "node_modules/**",
       "package.json",

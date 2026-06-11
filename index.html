@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    if (location.hostname === "matslb.github.io") {
+      location.replace("https://ironhold-game.web.app/" + location.search + location.hash);
+    }
+  </script>
   <title>Ironhold</title>
   <style>
     :root {
