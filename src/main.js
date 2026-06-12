@@ -4706,7 +4706,6 @@ import {
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
     const briarFork = { x: 98, z: -72 };
-    const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     addPathZones([homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 5.8, 7.5, 0.58);
     addPathZones([northFork, { x: -4, z: 104 }, { x: 2, z: 132 }], 6.2, 8, 0.62);
     addPathZones([northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: 124, z: 30 }], 5.8, 7.5, 0.58);
