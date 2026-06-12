@@ -17531,6 +17531,125 @@ import {
     updateWildsDirector(dt);
   }
 
+  function updateSpecialActivityEnemy(enemy, dt, distance, direction) {
+    if (enemy.type === "spider") {
+      if (enemy.stunned > 0) {
+        enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
+        enemy.telegraph.visible = false;
+      } else if (enemy.state === "lunge") {
+        enemy.yaw = yawFromDirection(direction);
+        updateSpiderAttack(enemy, dt, distance, direction);
+      } else {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(direction);
+        if (distance < 1.45 + enemy.radius && enemy.cooldown <= 0) {
+          beginSpiderAttack(enemy);
+        } else {
+          const desired = tmpVec2.copy(direction).multiplyScalar(enemy.speed * 1.02);
+          enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.018, dt));
+          enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.018, dt));
+          enemy.telegraph.visible = false;
+        }
+      }
+      return true;
+    }
+    if (enemy.type === "wisp") {
+      if (enemy.stunned > 0) {
+        enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+        enemy.telegraph.visible = false;
+        enemy.floatRoot.scale.setScalar(1);
+      } else if (enemy.state === "pulse") {
+        enemy.yaw = yawFromDirection(direction);
+        updateWispAttack(enemy, dt, distance, direction);
+      } else if (enemy.state === "hex") {
+        enemy.yaw = yawFromDirection(direction);
+        updateWispHexAttack(enemy, dt);
+      } else {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(direction);
+        if (distance < 2.7 && enemy.cooldown <= 0) {
+          beginWispAttack(enemy);
+        } else if (distance >= 4.2 && distance < 16 && enemy.cooldown <= 0) {
+          beginWispHexAttack(enemy);
+        } else {
+          const desired = tmpVec2.set(0, 0, 0);
+          if (distance > 4.8) {
+            desired.copy(direction).multiplyScalar(enemy.speed);
+          } else if (distance < 3.2) {
+            desired.copy(direction).multiplyScalar(-enemy.speed * 0.78);
+          } else {
+            desired.set(-direction.z, 0, direction.x).multiplyScalar(enemy.speed * 0.5);
+          }
+          enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.017, dt));
+          enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.017, dt));
+          enemy.telegraph.visible = false;
+        }
+      }
+      return true;
+    }
+    if (enemy.type === "banditArcher") {
+      if (enemy.stunned > 0) {
+        enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+        enemy.telegraph.visible = false;
+      } else if (enemy.state === "draw") {
+        enemy.yaw = yawFromDirection(direction);
+        updateBanditAttack(enemy, dt);
+      } else {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(direction);
+        if (distance < 16 && distance > 3.2 && enemy.cooldown <= 0) {
+          beginBanditAttack(enemy);
+        } else {
+          rangedKiterMove(enemy, dt, distance, direction, 0.36);
+          enemy.walkTime += dt * enemy.speed * (enemy.velocity.length() > 0.3 ? 1 : 0.4);
+          enemy.telegraph.visible = false;
+        }
+      }
+      return true;
+    }
+    if (enemy.type === "sandViper") {
+      if (enemy.stunned > 0) {
+        enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+        enemy.telegraph.visible = false;
+      } else if (enemy.state === "spit") {
+        enemy.yaw = yawFromDirection(direction);
+        updateViperAttack(enemy, dt);
+      } else {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(direction);
+        if (distance < 14 && distance > 2.6 && enemy.cooldown <= 0) {
+          beginViperAttack(enemy);
+        } else {
+          rangedKiterMove(enemy, dt, distance, direction, 0.46);
+          enemy.telegraph.visible = false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function updateActivityEnemyAnimation(enemy, dt) {
+    if (enemy.type === "dragon") {
+      updateDragonAnimation(enemy, dt);
+    } else if (enemy.type === "spider") {
+      updateSpiderAnimation(enemy, dt);
+    } else if (enemy.type === "wisp") {
+      updateWispAnimation(enemy, dt);
+    } else if (enemy.type === "briarBeast") {
+      updateBriarBeastAnimation(enemy, dt);
+    } else if (enemy.type === "sandViper") {
+      updateViperAnimation(enemy, dt);
+    } else if (enemy.leftLeg && enemy.rightLeg) {
+      const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
+      enemy.leftLeg.rotation.x = legSwing;
+      enemy.rightLeg.rotation.x = -legSwing;
+      if (enemy.chest) {
+        enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+      }
+    }
+  }
+
   function updateEnemies(dt) {
     const activity = activeCombatActivity();
     if (game.mode === "exploration" && !activity) {
@@ -17560,7 +17679,7 @@ import {
         updateEnemyEntrance(enemy, dt);
       } else if (enemy.type === "dragon") {
         updateDragonEnemy(enemy, dt, distance, direction);
-      } else {
+      } else if (!updateSpecialActivityEnemy(enemy, dt, distance, direction)) {
         if (enemy.stunned > 0) {
           enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
           enemy.telegraph.visible = false;
@@ -17568,7 +17687,7 @@ import {
           if (distance < 1.6 + enemy.radius && enemy.cooldown <= 0) {
             beginEnemyAttack(enemy, Math.random() < 0.37 ? "heavy" : "slash");
           } else {
-            const desired = direction.multiplyScalar(enemy.speed);
+            const desired = tmpVec2.copy(direction).multiplyScalar(enemy.speed);
             enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.01, dt));
             enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.01, dt));
             if (enemy.type !== "briarBeast") {
@@ -17611,16 +17730,7 @@ import {
         enemy.group.position.copy(enemy.position);
       }
       applyEnemyVisualYaw(enemy, dt);
-      if (enemy.type === "dragon") {
-        updateDragonAnimation(enemy, dt);
-      } else if (enemy.type === "briarBeast") {
-        updateBriarBeastAnimation(enemy, dt);
-      } else {
-        const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
-        enemy.leftLeg.rotation.x = legSwing;
-        enemy.rightLeg.rotation.x = -legSwing;
-        enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
-      }
+      updateActivityEnemyAnimation(enemy, dt);
       updateEnemyMovementAudio(enemy, dt);
     }
 
