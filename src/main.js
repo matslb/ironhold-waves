@@ -9429,7 +9429,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     const remote = online.remotePlayers.get(message.id);
-    const name = sanitizePlayerName(message.name || (remote && remote.name) || "Player");
+    const remoteName = remote && remote.nameTag ? remote.nameTag.text : "";
+    const name = sanitizePlayerName(message.name || remoteName || "Player");
     const color = chatColorFor(message.id, message.color);
     pushChatMessage(name, text, color, now);
     refreshChatPanel();
