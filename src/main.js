@@ -36,6 +36,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const kitReadout = document.getElementById("kitReadout");
   const kitText = document.getElementById("kitText");
   const kitStats = document.getElementById("kitStats");
+  const buffsPanel = document.getElementById("buffsPanel");
+  const buffsList = document.getElementById("buffsList");
   const saveHint = document.getElementById("saveHint");
   const attackIcon = document.getElementById("attackIcon");
   const blockIcon = document.getElementById("blockIcon");
@@ -7014,16 +7016,16 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const radius = Math.max(1, game.exploration.radius);
     const distance = Math.hypot(world.x - game.exploration.origin.x, world.z - game.exploration.origin.z);
     const danger = distance / radius;
-    if (danger < 0.34) {
+    if (danger < 0.25) {
       enemy.tier = 1;
       return;
     }
-    const dread = danger >= 0.62;
+    const dread = danger >= 0.5;
     enemy.tier = dread ? 3 : 2;
     enemy.health = Math.round(enemy.health * (dread ? 2.1 : 1.45));
     enemy.maxHealth = enemy.health;
     enemy.speed *= dread ? 1.22 : 1.12;
-    enemy.damageMul = dread ? 1.85 : 1.4;
+    enemy.damageMul = (enemy.damageMul || 1) * (dread ? 1.85 : 1.4);
     enemy.xpMul = dread ? 2.4 : 1.6;
     enemy.tierScale = dread ? 1.16 : 1.08;
     enemy.radius *= enemy.tierScale;
@@ -7335,13 +7337,13 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
       mob.health *= 0.82;
       mob.maxHealth = mob.health;
-      seedExplorationEnemy(mob, world, random, 11 + random() * 7, 9.5);
+      seedExplorationEnemy(mob, world, random, 14 + random() * 8, 9.5);
     }
     for (let i = 0; i < 13; i += 1) {
       const point = randomPointInBiome(random, "desert", 13);
       const world = explorationToWorld(point.x, point.z);
       const spider = createSpider(world.x, world.z, 1 + Math.floor(random() * 2));
-      seedExplorationEnemy(spider, world, random, 10 + random() * 5, 7.5);
+      seedExplorationEnemy(spider, world, random, 13 + random() * 6, 7.5);
     }
     for (let i = 0; i < 5; i += 1) {
       const point = randomPointInBiome(random, "mountain", 16);
@@ -7351,19 +7353,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       dragon.maxHealth = dragon.health;
       dragon.hoverHeight = 2.55 + random() * 0.34;
       dragon.desiredRange = 9.2 + random() * 2.0;
-      seedExplorationEnemy(dragon, world, random, 18 + random() * 7, 18);
+      seedExplorationEnemy(dragon, world, random, 21 + random() * 8, 18);
     }
     for (let i = 0; i < 11; i += 1) {
       const point = randomPointInBiome(random, "swamp", 12);
       const world = explorationToWorld(point.x, point.z);
       const wisp = createWisp(world.x, world.z, 1 + Math.floor(random() * 2));
-      seedExplorationEnemy(wisp, world, random, 12 + random() * 5, 9.5);
+      seedExplorationEnemy(wisp, world, random, 15 + random() * 6, 9.5);
     }
     for (let i = 0; i < 12; i += 1) {
       const point = randomPointInBiome(random, "briar", 12);
       const world = explorationToWorld(point.x, point.z);
       const beast = createBriarBeast(world.x, world.z, 1 + Math.floor(random() * 3));
-      seedExplorationEnemy(beast, world, random, 11 + random() * 6, 8.5);
+      seedExplorationEnemy(beast, world, random, 14 + random() * 7, 8.5);
     }
     updateQuestMarkers();
     updateQuestLog();
@@ -8657,6 +8659,72 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     roomRoster.hidden = !showRoster;
   }
 
+  function activeEffectEntries() {
+    const entries = [];
+    if (player.resolveTimer > 0) {
+      const reduction = Math.round((1 - combatTuningFor("knight").resolveDamageTaken) * 100);
+      entries.push({ label: "Warden's Resolve", value: "-" + reduction + "% damage, " + Math.ceil(player.resolveTimer) + "s" });
+    }
+    const kit = equipmentDefs[equippedWeapon()];
+    if (kit && kit.summary && kit.summary !== "Balanced") {
+      entries.push({ label: kit.name, value: kit.summary });
+    }
+    if (game.mode === "exploration" && progression && progression.exploration) {
+      const boons = progression.exploration.boons || {};
+      const boonParts = [];
+      if (boons.health) {
+        boonParts.push("+" + boons.health + " HP");
+      }
+      if (boons.guard) {
+        boonParts.push("+" + boons.guard + " guard");
+      }
+      if (boons.mana) {
+        boonParts.push("+" + boons.mana + " magica");
+      }
+      if (boonParts.length) {
+        entries.push({ label: "Exploration boons", value: boonParts.join(" ") });
+      }
+      if (progression.exploration.potionCooldownBonus > 0) {
+        entries.push({ label: "Potion drill", value: "-" + progression.exploration.potionCooldownBonus + "s potion cooldown" });
+      }
+      for (const perkId of getCharacterProgress().perks || []) {
+        const perk = perkDefs[perkId];
+        if (perk) {
+          entries.push({ label: perk.name, value: "reduced ability costs" });
+        }
+      }
+      if (isPlayerMounted()) {
+        const mountId = (game.exploration.horse && game.exploration.horse.mountId) || currentMountId();
+        entries.push({
+          label: "Mounted: " + (mountDisplayNames[mountId] || "Horse"),
+          value: mountId === "drake" ? "+12% ride speed" : hasRoadwardenTack() ? "+8% ride speed" : "base ride speed"
+        });
+      }
+    }
+    return entries;
+  }
+
+  // Rebuilt only when the pause menu opens or changes phase; no per-frame cost.
+  function updateActiveBuffsPanel(visible) {
+    if (!buffsPanel || !buffsList) {
+      return;
+    }
+    const entries = visible ? activeEffectEntries() : [];
+    buffsList.textContent = "";
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = "buff-row";
+      const label = document.createElement("span");
+      label.textContent = entry.label;
+      const value = document.createElement("span");
+      value.className = "buff-value";
+      value.textContent = entry.value;
+      row.append(label, value);
+      buffsList.append(row);
+    }
+    buffsPanel.hidden = entries.length === 0;
+  }
+
   function updateSessionMenu() {
     const phase = game.menuPhase;
     const hostPhase = phase === "hostSetup";
@@ -8738,6 +8806,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
 
     startButton.textContent = getStartButtonText();
+    updateActiveBuffsPanel(pausePhase);
     updateRoomRoster();
   }
 
@@ -10965,9 +11034,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       velocity: new THREE.Vector3(),
       yaw: 0,
       scale,
-      health: 70 + wave * 12,
-      maxHealth: 70 + wave * 12,
-      speed: 2.05 + Math.random() * 0.42 + Math.min(wave * 0.035, 0.4),
+      health: 70 + wave * 16,
+      maxHealth: 70 + wave * 16,
+      speed: 2.05 + Math.random() * 0.42 + Math.min(wave * 0.05, 0.55),
+      damageMul: 1 + Math.min(wave * 0.045, 0.65),
       radius: 0.65 * scale,
       cooldown: 0.6 + Math.random() * 1.2,
       state: "chase",
@@ -11115,9 +11185,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       scale,
       hoverHeight: 2.68 + Math.random() * 0.36,
       desiredRange: 8.8 + Math.random() * 2.2,
-      health: 92 + wave * 14,
-      maxHealth: 92 + wave * 14,
-      speed: 2.8 + Math.min(wave * 0.035, 0.44),
+      health: 92 + wave * 19,
+      maxHealth: 92 + wave * 19,
+      speed: 2.8 + Math.min(wave * 0.05, 0.6),
+      damageMul: 1 + Math.min(wave * 0.04, 0.6),
       radius: 1.38 * scale,
       cooldown: 1.0 + Math.random() * 1.4,
       state: "chase",
@@ -11464,6 +11535,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function dropDragonHealthPotion(enemy) {
+    // Arena dragons always pay out (wave sustain); open-world dragons only sometimes.
+    if (game.mode === "exploration" && !arenaActivityActive() && Math.random() > 0.6) {
+      return;
+    }
     const dropPosition = enemy.position.clone();
     if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
@@ -11473,7 +11548,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
       kind: "small",
-      healAmount: 18,
+      healAmount: 14,
       activityType: arenaActivityActive() ? "arena" : "",
       activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
     }));
@@ -12656,8 +12731,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.dead = true;
       if (enemy.type === "dragon") {
         dropDragonHealthPotion(enemy);
-      } else if (game.mode === "exploration" && !arenaActivityActive() && Math.random() < (enemy.type === "spider" ? 0.2 : enemy.type === "wisp" ? 0.24 : 0.3)) {
-        game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 18 }));
+      } else if (game.mode === "exploration" && !arenaActivityActive() && Math.random() < (enemy.type === "spider" ? 0.13 : enemy.type === "wisp" ? 0.16 : 0.2)) {
+        game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 14 }));
         trimPotionDrops();
       }
       scene.remove(enemy.group);
@@ -12717,7 +12792,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       updateEnemyMovementAudio(enemy, dt);
       return;
     }
-    const active = playerDistance < enemy.awareness || ((enemy.state === "chase" || enemy.state === "fire") && playerDistance < enemy.awareness * 1.75);
+    const active = playerDistance < enemy.awareness || ((enemy.state === "chase" || enemy.state === "fire") && playerDistance < enemy.awareness * 2.1);
     if (active) {
       if (enemy.state === "patrol") {
         enemy.state = "chase";
@@ -12776,7 +12851,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.05 + Math.random() * 0.75;
+      enemy.cooldown = 0.8 + Math.random() * 0.6;
       enemy.telegraph.visible = false;
     }
   }
@@ -12824,7 +12899,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.yaw = yawFromDirection(playerDirection);
       updateSpiderAttack(enemy, dt, playerDistance, playerDirection);
     } else {
-      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.55);
+      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.9);
       if (shouldChase) {
         enemy.state = "chase";
         enemy.yaw = yawFromDirection(playerDirection);
@@ -12890,7 +12965,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.35 + Math.random() * 0.9;
+      enemy.cooldown = 1.05 + Math.random() * 0.7;
       enemy.telegraph.visible = false;
       enemy.floatRoot.scale.setScalar(1);
     }
@@ -12920,7 +12995,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.yaw = yawFromDirection(playerDirection);
       updateWispAttack(enemy, dt, playerDistance, playerDirection);
     } else {
-      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.7);
+      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 2.0);
       if (shouldChase) {
         enemy.state = "chase";
         enemy.yaw = yawFromDirection(playerDirection);
@@ -13081,7 +13156,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         enemy.yaw = yawFromDirection(playerDirection);
         updateEnemyAttack(enemy, dt, playerDistance, playerDirection);
       } else {
-        const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.65);
+        const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 2.0);
         if (shouldChase) {
           enemy.state = "chase";
           enemy.yaw = yawFromDirection(playerDirection);
@@ -13245,7 +13320,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (game.enemies.length === 0 && game.state === "playing") {
       if (game.nextWaveIn <= 0) {
         dropWaveHealthPotion();
-        game.nextWaveIn = arenaActivityActive() ? 6.0 : 4.0;
+        game.nextWaveIn = arenaActivityActive() ? 4.5 : 4.0;
         if (arenaActivityActive()) {
           const activity = game.exploration.arenaActivity;
           activity.phase = "intermission";
@@ -13331,7 +13406,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.8 + Math.random() * 1.3;
+      enemy.cooldown = 1.4 + Math.random() * 1.0;
     }
     if (distance > enemy.desiredRange + 2.5) {
       enemy.velocity.addScaledVector(direction, dt * enemy.speed * 0.55);
@@ -13412,7 +13487,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
       enemy.attackType = null;
-      enemy.cooldown = heavy ? 1.2 + Math.random() * 0.7 : 0.72 + Math.random() * 0.55;
+      enemy.cooldown = heavy ? 0.95 + Math.random() * 0.55 : 0.55 + Math.random() * 0.45;
       enemy.telegraph.visible = false;
       if (enemy.type === "briarBeast") {
         enemy.weaponPivot.rotation.set(0, 0, 0);

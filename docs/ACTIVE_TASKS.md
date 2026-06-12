@@ -666,7 +666,19 @@ Shipped slice: horse model polish + Skyhatched Drake mount quest + M mount cycli
 - Help panel: controls list updated (R text generalized, new M row). NOTE: the in-flight Codex Help expansion (`helpPermanentRewardItems`, kit tuning rows) was uncommitted foreign work, so the quest-rewards list does NOT yet mention the Skyhatched Brood - whoever owns that block should add: "The Skyhatched Brood: Skyhatched Drake mount, slightly faster than a horse, and XP."
 - Verified: `npm run check` green; user playtested live - quest completes, drake is granted and rides, M swaps mounts.
 
+Shipped slice: difficulty tuning pass + pause-menu Active Effects panel (owner: Cursor agent)
+- Difficulty pass (user: "still too easy", explicitly no enemy-count increases). All changes are tuning values in `src/main.js`:
+  - Tier bands moved inward in `applyEnemyTier`: veteran now starts at 25% of the map radius (was 34%), dread at 50% (was 62%). Tier damage multipliers now COMPOSE with any base `damageMul` (`(enemy.damageMul || 1) * 1.4/1.85`) instead of overwriting it.
+  - Awareness radii on seeded exploration enemies (in the world-build `seedExplorationEnemy` calls): barbarians 11+0-7 -> 14+0-8, spiders 10+0-5 -> 13+0-6, dragons 18+0-7 -> 21+0-8, wisps 12+0-5 -> 15+0-6, briarbeasts 11+0-6 -> 14+0-7.
+  - Lock-on: chase-drop ranges widened — humanoid 1.65x -> 2.0x awareness, spider 1.55x -> 1.9x, wisp 1.7x -> 2.0x, dragon 1.75x -> 2.1x.
+  - Post-attack cooldowns shortened: humanoid heavy 1.2+0-0.7 -> 0.95+0-0.55, slash 0.72+0-0.55 -> 0.55+0-0.45; spider lunge 1.05+0-0.75 -> 0.8+0-0.6; wisp pulse 1.35+0-0.9 -> 1.05+0-0.7; dragon fire 1.8+0-1.3 -> 1.4+0-1.0.
+  - Fewer freebies: exploration kill-drop chance 0.3/0.24/0.2 -> 0.2 (humanoid) / 0.16 (wisp) / 0.13 (spider); small-potion heal 18 -> 14. Open-world dragon potion drop is no longer guaranteed (60% chance); arena dragons still always drop (wave sustain), but at 14 heal.
+  - Arena wave scaling: barbarian HP 70+12/wave -> 70+16/wave, dragon 92+14/wave -> 92+19/wave; per-wave speed growth 0.035 (cap 0.4/0.44) -> 0.05 (cap 0.55/0.6); both now gain a wave damage multiplier (barbarian 1+0.045/wave cap 1.65, dragon 1+0.04/wave cap 1.6). Arena intermission 6.0s -> 4.5s.
+  - Knight sanity check: a blocked veteran heavy still chunks guard (52 base guard damage x 1.4+), so guard breaks fast under tier pressure; Warden's Resolve remains a 4s window, not a permanent buff. Wizard 48HP / ranger 54HP means unblocked dread heavies are near-lethal — intended.
+- Active Effects panel (user request): the pause menu now shows a compact lower-left `.buffs-panel` (`#buffsPanel` in `index.html`) listing: timed buffs with remaining seconds (Warden's Resolve damage reduction), the equipped kit's sidegrade summary tag (skipped for "Balanced" starter kits), exploration boon totals (+HP/+guard/+magica), potion-cooldown training, perk names, and the active mount bonus while mounted. Built by `activeEffectEntries()`/`updateActiveBuffsPanel()` in `src/main.js`, refreshed only from `updateSessionMenu` when the pause phase opens (no per-frame cost), hidden when empty, on other menu phases, and sub-720px (same pattern as the kit/minimap panels). It sits opposite the bottom-right room roster, so no collision.
+
 Remaining work:
+- Playtest the new difficulty numbers, especially wizard/ranger survival in veteran bands that now start at 25% radius.
 - Playtest kit balance (maul vs blade, rod vs focus) in Crownring waves, now including the new kit stat modifiers.
 - Playtest wizard/ranger survivability after the health cut, especially against tier 2/3 packs and dragon fireballs.
 - Two-client smoke test: remote weapon model swap when a teammate presses G mid-session, ally dots on the minimap, and the remote drake model after a teammate presses M.

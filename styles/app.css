@@ -757,6 +757,46 @@ canvas {
   text-transform: uppercase;
 }
 
+.buffs-panel {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  width: min(300px, calc(100vw - 48px));
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  pointer-events: auto;
+}
+
+.buffs-panel[hidden] {
+  display: none;
+}
+
+.buffs-panel > strong {
+  color: #f7df9a;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.buffs-list {
+  display: grid;
+  gap: 6px;
+}
+
+.buff-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.buff-row .buff-value {
+  color: rgba(244, 236, 215, 0.72);
+  text-align: right;
+}
+
 .room-roster {
   position: fixed;
   right: 24px;
@@ -1047,6 +1087,10 @@ button[hidden] {
   }
 
   .kit-panel {
+    display: none;
+  }
+
+  .buffs-panel {
     display: none;
   }
 
