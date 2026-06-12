@@ -1423,9 +1423,14 @@ import {
     return texture;
   }
 
+  const OUTDOOR_SKY_COLOR = 0x82bee8;
+  const OUTDOOR_FOG_COLOR = 0x9ac7e8;
+  const DUNGEON_SKY_COLOR = 0x111820;
+  const DUNGEON_FOG_COLOR = 0x151a1f;
+
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x82bee8);
-  scene.fog = new THREE.FogExp2(0x9ac7e8, 0.018);
+  scene.background = new THREE.Color(OUTDOOR_SKY_COLOR);
+  scene.fog = new THREE.FogExp2(OUTDOOR_FOG_COLOR, 0.018);
 
   const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 520);
   camera.position.set(0, 6, 10);
@@ -1672,6 +1677,7 @@ import {
     mode: "exploration",
     arenaGroup: null,
     dungeonGroup: null,
+    skyGroup: null,
     explorationGroup: null,
     npcs: [],
     questItems: [],
@@ -3433,6 +3439,24 @@ import {
     return true;
   }
 
+  function applyOutdoorAtmosphere(fogDensity) {
+    scene.background.set(OUTDOOR_SKY_COLOR);
+    scene.fog.color.set(OUTDOOR_FOG_COLOR);
+    scene.fog.density = fogDensity;
+    if (game.skyGroup) {
+      game.skyGroup.visible = true;
+    }
+  }
+
+  function applyDungeonAtmosphere() {
+    scene.background.set(DUNGEON_SKY_COLOR);
+    scene.fog.color.set(DUNGEON_FOG_COLOR);
+    scene.fog.density = 0.026;
+    if (game.skyGroup) {
+      game.skyGroup.visible = false;
+    }
+  }
+
   function enterLocalArenaActivity() {
     const activity = game.exploration.arenaActivity;
     if (!activity.active) {
@@ -3444,7 +3468,7 @@ import {
     parkHorseNear(player.position);
     clearPlayerProjectiles();
     setArenaVisible(true);
-    scene.fog.density = 0.018;
+    applyOutdoorAtmosphere(0.018);
     player.position.set(activity.center?.x || 0, 0, activity.center?.z || 0);
     player.velocity.set(0, 0, 0);
     player.yaw = 0;
@@ -3462,7 +3486,7 @@ import {
     }
     const recovery = crownfordInfirmaryPosition();
     setArenaVisible(false);
-    scene.fog.density = 0.0065;
+    applyOutdoorAtmosphere(0.0065);
     parkHorseNear(recovery);
     player.position.copy(recovery);
     player.velocity.set(0, 0, 0);
@@ -3480,7 +3504,7 @@ import {
       ? crownfordInfirmaryPosition()
       : new THREE.Vector3(activity.localReturnPosition?.x ?? activity.returnPosition?.x ?? game.exploration.spawn.x, 0, activity.localReturnPosition?.z ?? activity.returnPosition?.z ?? game.exploration.spawn.z);
     setArenaVisible(false);
-    scene.fog.density = 0.0065;
+    applyOutdoorAtmosphere(0.0065);
     game.wave = 0;
     game.nextWaveIn = 0;
     player.position.copy(returnPosition);
@@ -3512,7 +3536,7 @@ import {
     parkHorseNear(player.position);
     clearPlayerProjectiles();
     setDungeonVisible(true);
-    scene.fog.density = 0.026;
+    applyDungeonAtmosphere();
     player.position.set(activity.center?.x || 0, 0, activity.center?.z || 0);
     player.velocity.set(0, 0, 0);
     player.yaw = 0;
@@ -3530,7 +3554,7 @@ import {
     }
     const recovery = dungeonRecoveryPosition(game.exploration.dungeonActivity.dungeonId || BELLWATER_DUNGEON_ID);
     setDungeonVisible(false);
-    scene.fog.density = 0.0065;
+    applyOutdoorAtmosphere(0.0065);
     parkHorseNear(recovery);
     player.position.copy(recovery);
     player.velocity.set(0, 0, 0);
@@ -3551,7 +3575,7 @@ import {
       ? fallback
       : new THREE.Vector3(activity.localReturnPosition?.x ?? activity.returnPosition?.x ?? fallback.x, 0, activity.localReturnPosition?.z ?? activity.returnPosition?.z ?? fallback.z);
     setDungeonVisible(false);
-    scene.fog.density = 0.0065;
+    applyOutdoorAtmosphere(0.0065);
     player.position.copy(returnPosition);
     player.velocity.set(0, 0, 0);
     player.hurtTimer = 0;
@@ -3838,7 +3862,7 @@ import {
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
     clearPlayerProjectiles();
     setArenaVisible(true);
-    scene.fog.density = 0.018;
+    applyOutdoorAtmosphere(0.018);
     game.wave = 0;
     game.nextWaveIn = 0;
     player.position.set(0, 0, 0);
@@ -4033,7 +4057,7 @@ import {
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
     clearPlayerProjectiles();
     setDungeonVisible(true);
-    scene.fog.density = 0.026;
+    applyDungeonAtmosphere();
     player.position.set(0, 0, 0);
     player.velocity.set(0, 0, 0);
     player.yaw = 0;
@@ -9886,10 +9910,19 @@ import {
     });
   }
 
+  function addSkyObject(object) {
+    if (!game.skyGroup) {
+      game.skyGroup = new THREE.Group();
+      scene.add(game.skyGroup);
+    }
+    game.skyGroup.add(object);
+    return object;
+  }
+
   function setupSkyDetails() {
     const sun = new THREE.Mesh(new THREE.SphereGeometry(4.2, 28, 18), materials.sunDisc);
     sun.position.set(29, 14, -38);
-    scene.add(sun);
+    addSkyObject(sun);
 
     const cloudData = [
       [-20, 8.5, -28, 1.25],
@@ -9921,7 +9954,7 @@ import {
       cloud.add(puff);
     }
     cloud.rotation.y = Math.random() * TAU;
-    scene.add(cloud);
+    addSkyObject(cloud);
   }
 
   function addArenaObject(object) {
@@ -9968,6 +10001,14 @@ import {
   }
 
   function setupDungeonInterior() {
+    const backdrop = new THREE.Mesh(
+      new THREE.BoxGeometry(DUNGEON_RADIUS * 6.6, 46, DUNGEON_RADIUS * 6.6),
+      new THREE.MeshBasicMaterial({ color: DUNGEON_SKY_COLOR, side: THREE.BackSide, fog: false, depthWrite: false })
+    );
+    backdrop.position.set(0, 18, 0);
+    backdrop.renderOrder = -100;
+    addDungeonObject(backdrop);
+
     const floorMaterial = materials.darkStone.clone();
     floorMaterial.roughness = 1;
     const floor = new THREE.Mesh(new THREE.CircleGeometry(DUNGEON_RADIUS + 2.2, 72), floorMaterial);
@@ -10033,7 +10074,6 @@ import {
     ];
     for (const [x, z] of torchPositions) {
       const post = makeCylinder(0.08, 0.1, 1.45, 8, materials.wood, x, 1.12, z);
-      post.rotation.z = Math.PI / 2;
       const flame = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.44, 10), materials.fireCore.clone());
       flame.position.set(x, 1.95, z);
       const light = new THREE.PointLight(0xff9f4a, 0.95, 9, 1.9);
@@ -15005,7 +15045,7 @@ import {
     if (game.mode === "exploration") {
       setArenaVisible(false);
       setDungeonVisible(false);
-      scene.fog.density = 0.0065;
+      applyOutdoorAtmosphere(0.0065);
       setupExplorationWorld();
       if (isJoinedClient()) {
         clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
@@ -15015,7 +15055,7 @@ import {
     } else {
       setArenaVisible(true);
       setDungeonVisible(false);
-      scene.fog.density = 0.018;
+      applyOutdoorAtmosphere(0.018);
       clearExplorationWorld();
       player.position.set(0, 0, 0);
     }
