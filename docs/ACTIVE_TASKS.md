@@ -265,6 +265,40 @@ Remaining work:
 - Playtest travel to Briarfall, complete `briarStalkers`, and verify the reward loop with each class.
 - Two-client smoke test for host-owned briarbacks and kit display after gear switching.
 
+### T-011: Player Room Chat
+
+Primary owner: UI / UX Agent (Cursor session)
+
+Reviewer: Multiplayer / Netcode Agent
+
+Status: `[~] Active`
+
+Done evidence:
+- Peer-broadcast text chat between players in the same online room, built on the existing MQTT layer. No host authority: every client renders the messages it receives, and the local sender echoes its own message at send time (the central `handleOnlineMessage` drops self-id messages, so the echo is added in `submitChatInput`).
+- New message kind on the shared transport. `sendOnlineMessage` already stamps `id`, `mode`, `roomPhase`, and `sentAt`, so the chat payload only adds the chat-specific fields:
+
+```js
+// kind === "chat"
+{
+  kind: "chat",
+  name,   // sanitized display name (sanitizePlayerName)
+  text,   // sanitized body, trimmed, control chars/angle brackets stripped, <= 140 chars
+  color,  // integer 0xRRGGBB, the speaker's remotePalette(id).glow (minimap/nametag color)
+  ts      // Date.now() at send
+}
+```
+
+- Handled in `handleOnlineMessage` as an early `if (message.kind === "chat")` branch (added alongside the existing kinds, no refactor of the dispatch). Incoming text is re-sanitized, dropped if empty, and lightly rate-limited per sender (`chatSenderAllowed`: max 5 messages / 5s per `id`); local sends are additionally gap-limited (700ms). Sender color falls back to `remotePalette(id).glow` if the payload color is missing/invalid; name falls back to the known remote player name then "Player".
+- UX: compact transient log fixed in the UPPER-LEFT, below the status panel (`#chatPanel`/`#chatLog` in `index.html`, `.chat-panel` in `styles/app.css`). This corner is clear in both play (kit lower-left, minimap lower-right) and pause (buffs lower-left, roster lower-right), avoiding all existing HUD collisions. Shows the last 5 messages; lines fade out ~6.5s after arrival during play, and the backlog stays fully visible while the chat input is open or while paused. Panel only appears when `online.connected`, hidden in solo play, hidden on sub-720px touch layouts like the other corner panels.
+- Input: `Enter` opens a one-line input during play (Enter was unbound for gameplay; quest dialogue uses Enter only when a dialogue is open, and chat is gated on `questDialog.hidden`). While the input is focused, the global keydown handler early-returns so WASD/Space/abilities are suppressed, and combat mouse + camera look are gated on `chat.open`. Enter sends, Escape cancels; closing re-grabs pointer lock and a short `suppressPauseUntil` window keeps the Escape-driven pointer-lock drop from bouncing into the pause menu (`pauseForControlLoss`). Pointer lock is kept while typing, so sending with Enter returns to play seamlessly.
+- Help panel: the Movement & Controls list documents the `Enter` chat key.
+
+COORDINATION NOTE for Codex and Claude: the `"chat"` kind is additive and host-agnostic; it does not touch host authority, world snapshots, or any existing kind. If you add roster/presence UI, incoming chat names are available via `online.remotePlayers.get(id).name`. Keep the payload shape above stable for cross-agent compatibility.
+
+Remaining work:
+- Two-client smoke test of send/receive, fade timing, rate-limit, and Escape-to-cancel pointer-lock return.
+- Optional: surface a subtle "new message" cue when the log is faded, and optional roster integration.
+
 ## Phase 1: Remove Arena As A Top-Level Mode
 
 Primary owner: UI / UX Agent
