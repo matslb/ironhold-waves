@@ -7493,8 +7493,17 @@ import {
     return false;
   }
 
-  function syncVillageQuestProgress({ silent = true } = {}) {
-    reconcileQuestProgress(getQuest("villages"), { silent });
+  function syncVillageQuestProgress({ silent = true, updateUi = false } = {}) {
+    const quest = getQuest("villages");
+    const changed = reconcileQuestProgress(quest, { silent });
+    if (changed && updateUi) {
+      updateQuestLog();
+      updateQuestMarkers();
+      if (questDialog.hidden === false && game.dialogNpc && game.dialogNpc.questId === "villages") {
+        refreshQuestDialog();
+      }
+    }
+    return changed;
   }
 
   function questProgressText(quest) {
@@ -8529,7 +8538,7 @@ import {
         "Map the Hearths",
         "Sella",
         "There are more settlements beyond the old hills. Find them, mark the routes, and the whole valley gets smaller.",
-        "Discover villages",
+        "Discover settlements",
         "A full recovery potion and faster potion cooldown",
         "discover",
         3,
@@ -17296,7 +17305,7 @@ import {
   }
 
   function updateExplorationGoals() {
-    if (arenaActivityActive()) {
+    if (localPlayerInSharedActivity()) {
       return;
     }
     for (const village of game.exploration.villages) {
@@ -17309,9 +17318,9 @@ import {
       if (!alreadyDiscovered) {
         game.exploration.discovered.add(village.id);
         spawnImpact(new THREE.Vector3(village.x, explorationGroundWorldY(village.x, village.z), village.z), 0xffd889, 24);
-        showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length + " - respawn set");
+        showBanner(villageDisplayName(village) + " found " + discoveredVillageCount() + "/" + game.exploration.villages.length + " - respawn set");
         awardExplorationXp(20);
-        syncVillageQuestProgress({ silent: false });
+        syncVillageQuestProgress({ silent: false, updateUi: true });
         saveProgress();
       } else if (respawnChanged) {
         showBanner("Respawn set: " + villageDisplayName(village), 2.3);
@@ -17319,7 +17328,7 @@ import {
       }
     }
 
-    if (!game.exploration.completed && game.exploration.villages.length > 0 && game.exploration.discovered.size === game.exploration.villages.length && game.enemies.length === 0) {
+    if (!game.exploration.completed && allDiscoverableVillagesFound() && game.enemies.length === 0) {
       game.exploration.completed = true;
       game.potions.push(createHealthPotion(player.position.x + 1.8, player.position.z + 1.2, { kind: "full" }));
       trimPotionDrops();
@@ -17455,7 +17464,6 @@ import {
 
     game.enemies = game.enemies.filter(enemy => !enemy.dead);
     updateWildsDirector(dt);
-    updateExplorationGoals();
   }
 
   function updateEnemies(dt) {
@@ -18222,6 +18230,7 @@ import {
       updatePotions(dt);
       if (game.mode === "exploration") {
         if (!localPlayerInSharedActivity()) {
+          updateExplorationGoals();
           updateQuestItems(dt);
           updateHorse(dt);
           updateTalkPrompt();
