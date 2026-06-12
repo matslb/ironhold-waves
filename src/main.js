@@ -88,6 +88,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const questMap = document.getElementById("questMap");
   const questMapCtx = questMap.getContext("2d");
   const minimapPanel = document.getElementById("minimapPanel");
+  const chatPanel = document.getElementById("chatPanel");
+  const chatLog = document.getElementById("chatLog");
+  const chatForm = document.getElementById("chatForm");
+  const chatInput = document.getElementById("chatInput");
   const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
   const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
@@ -1543,6 +1547,25 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     presenceTimer: 0,
     remotePlayers: new Map(),
     kickedIds: new Set()
+  };
+
+  // Peer-broadcast room chat. Messages ride the existing MQTT layer as
+  // { kind: "chat", name, text, color, ts }; every client renders what it
+  // receives and locally echoes its own sends (handleOnlineMessage drops
+  // self-id messages, so the echo is added at send time).
+  const CHAT_MAX_LEN = 140;
+  const CHAT_HISTORY = 5;
+  const CHAT_FADE_MS = 6500;
+  const CHAT_SEND_GAP_MS = 700;
+  const CHAT_BURST_WINDOW_MS = 5000;
+  const CHAT_BURST_LIMIT = 5;
+  const chat = {
+    open: false,
+    panelShown: false,
+    messages: [],
+    lastSentAt: 0,
+    suppressPauseUntil: 0,
+    senders: new Map()
   };
 
   const player = {
@@ -8545,6 +8568,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-9)." },
       { keys: "H", label: "Potion", text: "wizards drop a shared healing potion." },
       { keys: "V", text: "Mute or unmute audio." },
+      { keys: "Enter", label: "Chat", text: "in an online room, open the one-line chat to message your party. Enter sends, Esc cancels. Movement and attacks are paused while you type." },
       { keys: "Esc", text: "Pause, resume, or close dialogue." },
       { keys: "Enter / W / S", text: "Choose and move between dialogue options while talking." }
     ]);
@@ -8880,9 +8904,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function pauseForControlLoss() {
-    if (game.state === "playing") {
-      openSessionMenu();
+    if (game.state !== "playing") {
+      return;
     }
+    // Don't pause for the pointer-lock drop that chat typing/closing causes.
+    if (chat.open || performance.now() < chat.suppressPauseUntil) {
+      return;
+    }
+    openSessionMenu();
   }
 
   function resumeSession() {
@@ -9201,6 +9230,210 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       action,
       state: serializePlayerState()
     });
+  }
+
+  function sanitizeChatText(value) {
+    if (typeof value !== "string") {
+      return "";
+    }
+    // Strip control chars and angle brackets (rendering already uses
+    // textContent, so this is defense in depth), collapse whitespace, trim,
+    // and hard-cap the length so a peer cannot spam a wall of text.
+    return value
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+      .replace(/[<>]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, CHAT_MAX_LEN);
+  }
+
+  function chatColorFor(id, preferredColor) {
+    if (typeof preferredColor === "number" && Number.isFinite(preferredColor)) {
+      return Math.max(0, Math.min(0xffffff, Math.floor(preferredColor)));
+    }
+    // Same glow used for minimap ally dots and nametags, so a speaker reads
+    // as the same color everywhere.
+    return remotePalette(id || "remote").glow;
+  }
+
+  function chatColorToCss(color) {
+    return "#" + (color & 0xffffff).toString(16).padStart(6, "0");
+  }
+
+  function chatSenderAllowed(id, now) {
+    const key = id || "anon";
+    const recent = (chat.senders.get(key) || []).filter(ts => now - ts < CHAT_BURST_WINDOW_MS);
+    if (recent.length >= CHAT_BURST_LIMIT) {
+      chat.senders.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    chat.senders.set(key, recent);
+    return true;
+  }
+
+  function pushChatMessage(name, text, color, ts) {
+    chat.messages.push({
+      name: name || "Player",
+      text,
+      color: color & 0xffffff,
+      ts: ts || Date.now()
+    });
+    if (chat.messages.length > 40) {
+      chat.messages.splice(0, chat.messages.length - 40);
+    }
+    renderChatLog();
+  }
+
+  function renderChatLog() {
+    if (!chatLog) {
+      return;
+    }
+    const visible = chat.messages.slice(-CHAT_HISTORY);
+    chatLog.replaceChildren();
+    for (const message of visible) {
+      const row = document.createElement("div");
+      row.className = "chat-msg";
+      row.dataset.ts = String(message.ts);
+      const name = document.createElement("span");
+      name.className = "chat-name";
+      name.style.color = chatColorToCss(message.color);
+      name.textContent = message.name;
+      const body = document.createElement("span");
+      body.textContent = message.text;
+      row.appendChild(name);
+      row.appendChild(body);
+      chatLog.appendChild(row);
+    }
+    refreshChatFade();
+  }
+
+  function refreshChatFade() {
+    if (!chatLog) {
+      return;
+    }
+    // Full backlog stays visible while the input is open or while paused;
+    // during live play each line fades a few seconds after arrival.
+    const holdOpen = chat.open || game.state === "paused";
+    const now = Date.now();
+    for (const row of chatLog.children) {
+      const ts = Number(row.dataset.ts) || 0;
+      const faded = !holdOpen && now - ts > CHAT_FADE_MS;
+      row.classList.toggle("chat-msg--faded", faded);
+    }
+  }
+
+  function chatAvailable() {
+    return online.connected && (game.state === "playing" || game.state === "paused");
+  }
+
+  function refreshChatPanel() {
+    if (!chatPanel) {
+      return;
+    }
+    if (!chatAvailable()) {
+      if (chat.open) {
+        closeChatInput(true);
+      }
+      if (chat.messages.length && !online.connected) {
+        chat.messages.length = 0;
+        chat.senders.clear();
+        renderChatLog();
+      }
+      if (chat.panelShown) {
+        chatPanel.hidden = true;
+        chat.panelShown = false;
+      }
+      return;
+    }
+    if (!chat.panelShown) {
+      chatPanel.hidden = false;
+      chat.panelShown = true;
+    }
+    refreshChatFade();
+  }
+
+  function openChatInput() {
+    if (!chatAvailable() || chat.open || !chatForm || !chatInput) {
+      return;
+    }
+    chat.open = true;
+    chatPanel.hidden = false;
+    chat.panelShown = true;
+    chatForm.hidden = false;
+    chatInput.value = "";
+    // Drop any held movement/attack so typing never leaks into gameplay.
+    keys.clear();
+    player.blockHeld = false;
+    refreshChatFade();
+    window.setTimeout(() => {
+      try {
+        chatInput.focus({ preventScroll: true });
+      } catch (error) {
+        chatInput.focus();
+      }
+    }, 0);
+  }
+
+  function closeChatInput(silent = false) {
+    if (!chat.open) {
+      return;
+    }
+    chat.open = false;
+    if (chatForm) {
+      chatForm.hidden = true;
+    }
+    if (chatInput) {
+      chatInput.value = "";
+      chatInput.blur();
+    }
+    refreshChatFade();
+    if (!silent && game.state === "playing") {
+      // Escape force-drops pointer lock; re-grab control and keep the
+      // resulting pointerlockchange from bouncing us into the pause menu.
+      chat.suppressPauseUntil = performance.now() + 1500;
+      requestGamePointerLock();
+    }
+  }
+
+  function submitChatInput() {
+    if (!chatInput) {
+      return;
+    }
+    const text = sanitizeChatText(chatInput.value);
+    chatInput.value = "";
+    if (!text) {
+      closeChatInput();
+      return;
+    }
+    const now = Date.now();
+    if (now - chat.lastSentAt < CHAT_SEND_GAP_MS || !chatSenderAllowed(online.localId, now)) {
+      closeChatInput();
+      return;
+    }
+    chat.lastSentAt = now;
+    const name = sanitizePlayerName(player.name);
+    const color = chatColorFor(online.localId);
+    pushChatMessage(name, text, color, now);
+    sendOnlineMessage({ kind: "chat", name, text, color, ts: now });
+    closeChatInput();
+  }
+
+  function handleIncomingChat(message) {
+    const text = sanitizeChatText(message && message.text);
+    if (!text) {
+      return;
+    }
+    const now = Date.now();
+    if (!chatSenderAllowed(message.id, now)) {
+      return;
+    }
+    const remote = online.remotePlayers.get(message.id);
+    const remoteName = remote && remote.nameTag ? remote.nameTag.text : "";
+    const name = sanitizePlayerName(message.name || remoteName || "Player");
+    const color = chatColorFor(message.id, message.color);
+    pushChatMessage(name, text, color, now);
+    refreshChatPanel();
   }
 
   function messageFromKnownHost(message) {
@@ -9819,6 +10052,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (online.role === "host" && message.id && online.kickedIds.has(message.id)) {
       sendOnlineMessage({ kind: "kick", targetId: message.id });
+      return;
+    }
+    if (message.kind === "chat") {
+      handleIncomingChat(message);
       return;
     }
     if (message.kind === "host" && (!message.sentAt || Date.now() - message.sentAt > 45000)) {
@@ -13875,9 +14112,21 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     window.addEventListener("pointerdown", unlockAudio, { once: true });
     window.addEventListener("keydown", unlockAudio, { once: true });
     window.addEventListener("keydown", event => {
+      if (chat.open) {
+        // Chat input is focused: let it own the keyboard so typing never
+        // moves, attacks, or triggers abilities. The input's own listener
+        // handles Enter/Escape.
+        return;
+      }
       if (event.repeat && event.code !== "Space" && questDialog.hidden) return;
       if (!questDialog.hidden) {
         handleQuestDialogKey(event);
+        return;
+      }
+      if ((event.code === "Enter" || event.code === "NumpadEnter")
+        && game.state === "playing" && online.connected && questDialog.hidden) {
+        event.preventDefault();
+        openChatInput();
         return;
       }
       if (event.code === "Escape") {
@@ -13971,7 +14220,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     });
 
     window.addEventListener("mousedown", event => {
-      if (game.state !== "playing" || !questDialog.hidden) return;
+      if (game.state !== "playing" || !questDialog.hidden || chat.open) return;
       if (event.button === 0) {
         startAttack();
       }
@@ -13998,7 +14247,32 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
     window.addEventListener("contextmenu", event => event.preventDefault());
 
+    if (chatForm && chatInput) {
+      chatForm.addEventListener("submit", event => {
+        event.preventDefault();
+        submitChatInput();
+      });
+      chatInput.addEventListener("keydown", event => {
+        // Keep typing local to the input; gameplay/global handlers stay quiet.
+        event.stopPropagation();
+        if (event.code === "Escape") {
+          event.preventDefault();
+          closeChatInput();
+        } else if (event.code === "Enter" || event.code === "NumpadEnter") {
+          event.preventDefault();
+          submitChatInput();
+        }
+      });
+      chatInput.addEventListener("blur", () => {
+        if (chat.open) {
+          closeChatInput(true);
+        }
+      });
+      window.setInterval(refreshChatPanel, 450);
+    }
+
     window.addEventListener("mousemove", event => {
+      if (chat.open) return;
       if (document.pointerLockElement === document.body) {
         game.cameraYaw -= event.movementX * 0.0026;
         game.cameraPitch = clamp(game.cameraPitch - event.movementY * 0.0014, -0.45, -0.05);
