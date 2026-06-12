@@ -4,12 +4,15 @@ export const wizardBurstManaCost = 36;
 export const rangerArrowFocusCost = 18;
 export const rangerPierceFocusCost = 38;
 export const rangerRollFocusCost = 22;
+export const sentinelShoveVigorCost = 16;
+export const sentinelMoulinetVigorCost = 26;
 export const progressStorageKey = "ironholdProgressV2";
 
 export const defaultWeaponByCharacter = {
   knight: "knight_arming_sword",
   wizard: "wizard_oak_staff",
-  ranger: "ranger_ash_bow"
+  ranger: "ranger_ash_bow",
+  sentinel: "sentinel_ironshod_halberd"
 };
 
 // Each kit has combat tuning plus at most 1-2 light stat modifiers (kit*
@@ -124,6 +127,27 @@ export const equipmentDefs = {
       kitManaRegenMul: 1.07
     }
   },
+  sentinel_ironshod_halberd: {
+    character: "sentinel",
+    name: "Ironshod Halberd",
+    summary: "Balanced",
+    tuning: {}
+  },
+  sentinel_crownring_partisan: {
+    character: "sentinel",
+    name: "Crownring Partisan",
+    summary: "+thrust dmg +reach +HP / costlier shove -speed",
+    // Sidegrade vs Ironshod Halberd: a longer, heavier parade-ground point.
+    // More reach and thrust damage, but the haft work costs more and slows you.
+    tuning: {
+      thrustDamageBonus: 4,
+      thrustRange: 3.9,
+      shoveVigorCost: 20,
+      skewerDamageMin: 38,
+      kitHealthBonus: 6,
+      kitMoveSpeedMul: 0.97
+    }
+  },
   wizard_stormcall_rod: {
     character: "wizard",
     name: "Stormcall Rod",
@@ -148,7 +172,8 @@ export const perkDefs = {
       bashGuardCost: 25,
       burstManaCost: 32,
       pierceFocusCost: 35,
-      partingFocusCost: 22
+      partingFocusCost: 22,
+      shoveVigorCost: 14
     }
   },
   briarfall_pathcraft: {
@@ -156,7 +181,8 @@ export const perkDefs = {
     tuning: {
       bashGuardCost: 27,
       burstManaCost: 33,
-      rollFocusCost: 20
+      rollFocusCost: 20,
+      moulinetVigorCost: 23
     }
   }
 };
@@ -190,11 +216,47 @@ export const defaultCombatTuning = {
   arrowSpeed: 26,
   arrowLife: 1.5,
   pierceFocusCost: rangerPierceFocusCost,
-  pierceDamageMin: 32,
+  pierceDamageMin: 30,
   pierceDamageSpread: 8,
+  // Flaming Arrow burn: a short ember tick on each enemy the shaft passes
+  // through. Total burn (ticks * tick damage) plus the base shift above keeps
+  // the ability near its old single-target value while honoring the fire
+  // fantasy. Host-authoritative; ticks resolve through damageEnemy.
+  pierceBurnTicks: 3,
+  pierceBurnTickDamage: 2,
+  pierceBurnTickInterval: 0.8,
   rollFocusCost: rangerRollFocusCost,
-  // Level 5-9 kit expansion. Utility slot (F key): resolve / frostbind / parting.
-  // Payoff slot (C key): sweep / stormcrown / heartseeker.
+  // Sentinel halberd kit. Vigor reuses the mana fields. Thrust is the free
+  // bread-and-butter poke; everything else spends vigor.
+  thrustRange: 3.6,
+  thrustDamageMin: 24,
+  thrustDamageSpread: 6,
+  thrustDamageBonus: 0,
+  thrustKnockback: 0.35,
+  shoveVigorCost: sentinelShoveVigorCost,
+  shoveDamageMin: 8,
+  shoveDamageSpread: 4,
+  shoveStun: 0.35,
+  shoveVelocity: 7.5,
+  moulinetVigorCost: sentinelMoulinetVigorCost,
+  moulinetRadius: 3.0,
+  moulinetDamageMin: 18,
+  moulinetDamageSpread: 6,
+  moulinetCooldown: 1.15,
+  hookVigorCost: 22,
+  hookCooldown: 7,
+  hookRange: 7.5,
+  hookDamageMin: 8,
+  hookDamageSpread: 4,
+  hookStun: 0.7,
+  hookPull: 6.5,
+  skewerVigorCost: 34,
+  skewerCooldown: 8,
+  skewerRange: 6.0,
+  skewerDamageMin: 34,
+  skewerDamageSpread: 9,
+  // Level 5-9 kit expansion. Utility slot (F key): resolve / frostbind / parting / hook.
+  // Payoff slot (C key): sweep / stormcrown / heartseeker / skewer.
   resolveCooldown: 16,
   resolveDuration: 4,
   resolveDamageTaken: 0.65,
@@ -250,18 +312,23 @@ export const abilityUnlockLevels = {
   slash: 1,
   lightning: 1,
   arrow: 1,
+  thrust: 1,
   block: 1,
   roll: 1,
+  shove: 1,
   potion: 1,
   bash: 3,
   pierce: 3,
+  moulinet: 3,
   burst: 4,
   resolve: 5,
   parting: 5,
   frostbind: 5,
+  hook: 5,
   heartseeker: 7,
   sweep: 8,
-  stormcrown: 8
+  stormcrown: 8,
+  skewer: 8
 };
 
 export const abilityDisplayNames = {
@@ -279,7 +346,39 @@ export const abilityDisplayNames = {
   frostbind: "Frostbind Bolt",
   stormcrown: "Crown of Storms",
   parting: "Parting Shot",
-  heartseeker: "Heartseeker"
+  heartseeker: "Heartseeker",
+  thrust: "Halberd Thrust",
+  shove: "Haft Shove",
+  moulinet: "Moulinet",
+  hook: "Billhook Pull",
+  skewer: "Skewer Charge"
+};
+
+// One-line help descriptions, keyed by ability id. Mechanics first, flavor
+// second; describe behavior, not tuning values (exact numbers live in the
+// Help panel's kit tuning readout and shift during balance passes). New
+// abilities should land here alongside their abilityDisplayNames entry.
+export const abilityDescriptions = {
+  slash: "Quick sword arc that bites everything in front of you; every clean hit steadies your guard.",
+  block: "Hold to raise the shield: frontal blows wear down guard instead of health, though guard drains while you hold the wall.",
+  bash: "Spend guard to slam the shield forward, knocking enemies back hard and buying the line a breath.",
+  resolve: "Plant your feet for a few seconds of hardened resolve: every blow lands softer and guard keeps recovering even while you block.",
+  sweep: "Spend guard on a wide waist-high cut that staggers and pushes back everything across your front.",
+  lightning: "Hurl a crackling bolt that bends toward its mark mid-flight and jolts whatever it strikes.",
+  burst: "Detonate raw magic around your own body, throwing back everything that crowds the caster.",
+  potion: "Set a healing draught at your heels that you or any wounded companion can claim; it heals more, recharges faster, and reaches farther as you level.",
+  frostbind: "Loose a straight bolt of binding frost that pierces through a line of enemies and holds each one in place for a breath.",
+  stormcrown: "Call the storm down in a crown around the caster, blasting and scattering every enemy near you.",
+  arrow: "Loose a cheap, fast arrow dead straight along your aim - no homing, just your eye.",
+  roll: "Spend focus to tumble in your movement direction; it repositions your feet but stops no blows.",
+  pierce: "Drive an ember-tipped shaft through a whole line of enemies, leaving each one burning for a moment.",
+  parting: "Fire a point-blank shot that kicks nearby enemies away while springing you backward out of reach.",
+  heartseeker: "Draw a single heavy arrow that flies faster and hits far harder than a Quick Shot - one precise, staggering payoff.",
+  thrust: "Free long-reaching jab down the haft line - narrow as a fence rail, so square your point first.",
+  shove: "Push the haft wide at arm's length, staggering and shoving back whatever presses in - your space-maker.",
+  moulinet: "Whirl the halberd in a full circle, cutting everything around you; the answer to being surrounded.",
+  hook: "Catch the nearest enemy along your spear-line with the billhook and drag it onto your point, briefly stunned.",
+  skewer: "Lunge forward on a burst of speed, skewering everything caught along the charge line."
 };
 
 export function xpForLevel(level) {

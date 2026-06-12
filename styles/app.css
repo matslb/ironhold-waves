@@ -167,6 +167,16 @@ canvas {
     linear-gradient(135deg, #7fce6a 0 48%, #2c4a2a 49% 100%);
 }
 
+#hud.sentinel-mode #guardFill {
+  background: linear-gradient(90deg, #6b6f8e, #aab3cc, #e8ecf7);
+}
+
+#hud.sentinel-mode .crest {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.7) 0 13%, transparent 14%),
+    linear-gradient(135deg, #aab3cc 0 48%, #3a3f57 49% 100%);
+}
+
 .rightbox {
   padding: 12px 14px;
   min-width: 230px;
@@ -358,6 +368,25 @@ canvas {
   cursor: default;
 }
 
+.herb-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  text-transform: uppercase;
+}
+
+.herb-readout strong {
+  color: #b9e08a;
+  font-size: 11px;
+}
+
+.herb-readout[hidden] {
+  display: none;
+}
+
 .save-hint {
   color: rgba(244, 239, 228, 0.54);
   font-size: 10px;
@@ -385,10 +414,102 @@ canvas {
   transform: translateY(0);
 }
 
+.activity-result {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%) scale(0.97);
+  width: min(520px, calc(100vw - 32px));
+  padding: 22px 26px 20px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+  z-index: 1;
+  pointer-events: none;
+  border-top: 2px solid rgba(213, 170, 80, 0.55);
+  opacity: 0;
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.activity-result.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.activity-result[hidden] {
+  display: none;
+}
+
+.result-kicker {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.result-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #f7df9a;
+}
+
+.result-flavor {
+  margin: 0;
+  max-width: 42ch;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.result-rows {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #f7df9a;
+}
+
+.result-rows .result-row-muted {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.activity-result.victory {
+  border-top-color: rgba(213, 170, 80, 0.8);
+}
+
+.activity-result.victory .result-title {
+  color: #f7df9a;
+}
+
+.activity-result.defeat {
+  border-top-color: rgba(217, 67, 63, 0.75);
+}
+
+.activity-result.defeat .result-title {
+  color: #ff8272;
+}
+
+.activity-result.withdraw {
+  border-top-color: rgba(83, 166, 216, 0.7);
+}
+
+.activity-result.withdraw .result-title {
+  color: #a8e9ff;
+}
+
 .reticle {
   position: absolute;
   left: 50%;
-  top: 50%;
+  /* Above vertical center for the over-the-shoulder eye-line. Fallback only:
+     the authoritative value is RETICLE_NDC_Y in src/main.js, which overrides
+     this at startup so the aim ray and the visual can never drift apart. */
+  top: 38%;
   width: 20px;
   height: 20px;
   transform: translate(-50%, -50%);
@@ -501,6 +622,42 @@ canvas {
   line-height: 1;
 }
 
+.action .cooldown-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  background: rgba(6, 8, 9, 0.58);
+  transform: scaleY(0);
+  transform-origin: bottom;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.action .cooldown-time {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  text-align: center;
+  color: rgba(244, 239, 228, 0.94);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.action.empowered {
+  color: #ffe9b0;
+  border-color: rgba(255, 216, 137, 0.85);
+  background: rgba(213, 170, 80, 0.26);
+  box-shadow: inset 0 0 0 1px rgba(255, 220, 150, 0.35), 0 0 14px rgba(255, 209, 120, 0.45);
+}
+
+.action.empowered .cooldown-time {
+  color: #f7df9a;
+}
+
 .action[hidden] {
   display: none;
 }
@@ -552,11 +709,11 @@ canvas {
 }
 
 .help-card {
-  width: min(760px, 100%);
-  max-height: min(78vh, 640px);
-  padding: 22px;
+  width: min(880px, 100%);
+  max-height: min(84vh, 720px);
+  padding: 24px 26px 20px;
   display: grid;
-  gap: 14px;
+  gap: 16px;
   grid-template-rows: auto 1fr auto;
   text-align: left;
 }
@@ -565,8 +722,16 @@ canvas {
   display: none;
 }
 
+/* Help gets full attention: hide the pause-flank panels while it is open. */
+#overlay:has(.help-card:not([hidden])) .buffs-panel,
+#overlay:has(.help-card:not([hidden])) .room-roster {
+  display: none;
+}
+
 .help-card h2 {
   margin: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(213, 170, 80, 0.24);
   color: #f7df9a;
   font-size: 22px;
   text-transform: uppercase;
@@ -577,15 +742,40 @@ canvas {
 .help-body {
   overflow-y: auto;
   display: grid;
-  gap: 16px;
-  padding-right: 8px;
+  gap: 14px;
+  padding-right: 10px;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(213, 170, 80, 0.34) rgba(255, 255, 255, 0.05);
+}
+
+.help-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.help-body::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.help-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(213, 170, 80, 0.34);
+}
+
+.help-body section {
+  padding: 14px 16px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .help-body h3 {
-  margin: 0 0 4px;
+  margin: 0 0 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   color: #f7df9a;
   font-size: 14px;
   text-transform: uppercase;
@@ -593,16 +783,42 @@ canvas {
 }
 
 .help-body p {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   color: var(--muted);
+}
+
+/* Class intros and kit headers that follow a previous list get extra air. */
+.help-body ul + p {
+  margin-top: 14px;
 }
 
 .help-body ul {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 0;
+  list-style: none;
   color: var(--muted);
   display: grid;
-  gap: 4px;
+  gap: 7px;
+}
+
+.help-body li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+/* Rows without a key tag (kits, perks, rewards) get a small gold marker. */
+.help-body li:not(:has(.help-key))::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(213, 170, 80, 0.6);
+}
+
+.help-line {
+  min-width: 0;
 }
 
 .help-body li strong {
@@ -610,16 +826,28 @@ canvas {
   font-weight: 800;
 }
 
+/* Generic pattern for an ability row's longer description line, in case
+   help content lands it as a dedicated element. */
+.help-body li .help-desc {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .help-key {
   display: inline-block;
-  padding: 1px 7px;
-  margin-right: 6px;
+  flex: 0 0 auto;
+  min-width: 34px;
+  padding: 2px 8px;
+  margin-right: 0;
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ink);
+  border: 1px solid rgba(122, 232, 255, 0.3);
+  background: rgba(122, 232, 255, 0.1);
+  color: #cdeefb;
   font-size: 11px;
   font-weight: 800;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -864,6 +1092,72 @@ canvas {
   text-transform: uppercase;
 }
 
+/* ---- Pause / session menu layout ----
+   Scoped to #overlay[data-phase="pause"] (set by updateSessionMenu) so the
+   landing, host, and join phases keep the wide card untouched. */
+
+#overlay[data-phase="pause"] .start-card {
+  width: min(480px, 100%);
+  padding: 26px 28px 22px;
+}
+
+#overlay[data-phase="pause"] .start-card h1 {
+  font-size: clamp(24px, 3vw, 32px);
+  letter-spacing: 0.05em;
+}
+
+#overlay[data-phase="pause"] .start-card > p {
+  max-width: 44ch;
+  margin: 4px auto 14px;
+  font-size: 12.5px;
+}
+
+#overlay[data-phase="pause"] .online-panel.session-management {
+  margin: 14px 0 0;
+  padding-top: 14px;
+  gap: 10px;
+}
+
+#overlay[data-phase="pause"] .session-note {
+  display: inline-block;
+  margin: 12px auto 0;
+  padding: 5px 14px;
+  border: 1px solid rgba(213, 170, 80, 0.32);
+  border-radius: 999px;
+  background: rgba(213, 170, 80, 0.1);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+#overlay[data-phase="pause"] .session-note[hidden] {
+  display: none;
+}
+
+/* Primary action on its own row; Help and the destructive room action
+   share the row below a separator. */
+#overlay[data-phase="pause"] .start-card .button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#overlay[data-phase="pause"] #resumeButton {
+  grid-column: 1 / -1;
+  min-height: 54px;
+  font-size: 16px;
+}
+
+#overlay[data-phase="pause"] #closeRoomButton,
+#overlay[data-phase="pause"] #leaveRoomButton,
+#overlay[data-phase="pause"] #restartButton {
+  color: #ffd4cc;
+  border-color: rgba(255, 112, 92, 0.36);
+  background: rgba(120, 35, 28, 0.22);
+}
+
 .buffs-panel {
   position: fixed;
   left: 24px;
@@ -1093,30 +1387,75 @@ button[hidden] {
   line-height: 1.45;
 }
 
+/* Conversation hierarchy: small gold speaker tag, dominant NPC speech,
+   muted cyan echo of the player's question, gold quest-status meta line. */
+.quest-dialog .dialog-speaker {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(247, 223, 154, 0.92);
+}
+
+.dialog-exchange {
+  display: grid;
+  gap: 6px;
+}
+
+.quest-dialog .dialog-player-line {
+  padding-left: 10px;
+  border-left: 2px solid rgba(122, 232, 255, 0.4);
+  color: rgba(205, 238, 251, 0.78);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.quest-dialog .dialog-player-line[hidden] {
+  display: none;
+}
+
+.quest-dialog .dialog-npc-line {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.quest-dialog .dialog-status-line {
+  color: rgba(247, 223, 154, 0.88);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.quest-dialog .dialog-status-line:empty {
+  display: none;
+}
+
 .quest-ask {
   display: grid;
-  gap: 8px;
-  padding-top: 10px;
+  gap: 6px;
+  padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.13);
   pointer-events: auto;
 }
 
 .ask-topics {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
 .ask-chip {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 11px;
+  gap: 6px;
+  padding: 4px 10px 4px 5px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(12, 18, 28, 0.55);
   color: var(--ink);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   line-height: 1.4;
   cursor: pointer;
 }
@@ -1131,13 +1470,13 @@ button[hidden] {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 4px;
-  border-radius: 5px;
+  border-radius: 999px;
   background: rgba(122, 232, 255, 0.22);
   color: #cdeefb;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .ask-hint {
@@ -1147,15 +1486,64 @@ button[hidden] {
   line-height: 1.35 !important;
 }
 
+.bench-options {
+  display: grid;
+  gap: 6px;
+}
+
+.bench-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 0;
+  padding: 8px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(12, 18, 28, 0.55);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  justify-content: flex-start;
+  pointer-events: auto;
+}
+
+.bench-option .bench-option-cost {
+  margin-left: auto;
+  color: #b9e08a;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bench-option.short .bench-option-cost {
+  color: rgba(244, 239, 228, 0.42);
+}
+
+.bench-option.selected {
+  color: #17100a;
+  border-color: rgba(122, 232, 255, 0.86);
+  background: linear-gradient(180deg, #f7df9a, #d5aa50);
+}
+
+.bench-option.selected .bench-option-cost {
+  color: #17100a;
+}
+
 .quest-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: end;
   flex-wrap: wrap;
 }
 
 .quest-actions button {
   pointer-events: none;
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 11px;
+  border-radius: 7px;
 }
 
 .quest-actions button.selected {

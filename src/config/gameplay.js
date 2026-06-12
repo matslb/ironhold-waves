@@ -30,6 +30,13 @@ export const PLAYER_REGEN_RATE = 1.8;
 export const PLAYER_REGEN_THREAT_RADIUS = 18;
 export const POTION_INVENTORY_CAPACITY = 3;
 export const POTION_SLOT_UNLOCK_LEVELS = [2, 5, 8];
+// Gatherable valley herbs: personal counted material capped low so the pouch
+// stays a light first inventory boundary instead of loot spam.
+export const HERB_POUCH_CAP = 9;
+// A wizard Healing Draught must sit on the ground this long before a
+// full-health player may pocket it, so the caster cannot vacuum a support
+// drop back up the moment it lands.
+export const WIZARD_DRAUGHT_POCKET_DELAY = 2;
 
 // Host-only Wilds Director: killed enemies schedule timed refills at their seed
 // point, applied by a budgeted round-robin tick that stays far from players.
@@ -46,6 +53,19 @@ export const WILDS_AREA_RADIUS = 48;
 export const WILDS_DIRECTOR_INTERVAL = 1.25;
 export const WILDS_CHECKS_PER_TICK = 12;
 export const WILDS_SPAWNS_PER_TICK = 1;
+
+// Player-count population scaling (T-020): the host scales respawn pacing by
+// the number of room members actually playing in the overworld (host + remote
+// `playing` members, excluding arena/dungeon participants and queue). All
+// knobs are neutral at one player so solo pacing is unchanged.
+// Refill waits are multiplied by 1 / (1 + FACTOR * (count - 1)) and re-read
+// every director tick, so joins/leaves mid-wait take effect immediately.
+export const WILDS_PLAYER_COUNT_MAX = 4;
+export const WILDS_PLAYER_REFILL_FACTOR = 0.45;
+export const WILDS_PLAYER_SPAWNS_PER_TICK = 1;
+export const WILDS_SPAWNS_PER_TICK_MAX = 3;
+export const WILDS_PLAYER_AREA_CAP_BONUS = 1;
+export const WILDS_AREA_CAP_MAX = 13;
 
 export const QUEST_MAP_UPDATE_INTERVAL = 0.16;
 export const MINIMAP_LOGICAL_SIZE = 176;

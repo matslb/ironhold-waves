@@ -50,6 +50,13 @@
 
     <div class="reticle"></div>
 
+    <section class="activity-result panel" id="activityResult" hidden aria-live="polite" aria-label="Activity outcome">
+      <span class="result-kicker" id="activityResultKicker"></span>
+      <h2 class="result-title" id="activityResultTitle"></h2>
+      <p class="result-flavor" id="activityResultFlavor"></p>
+      <div class="result-rows" id="activityResultRows"></div>
+    </section>
+
     <section class="chat-panel" id="chatPanel" hidden aria-label="Room chat" aria-live="polite">
       <div class="chat-log" id="chatLog"></div>
       <form class="chat-input-row" id="chatForm" hidden autocomplete="off">
@@ -76,6 +83,10 @@
         <strong>H</strong>
       </div>
       <div class="potion-slots" id="potionSlots"></div>
+      <div class="herb-readout" id="herbReadout" hidden>
+        <span>Herbs</span>
+        <strong id="herbCountText">0/9</strong>
+      </div>
     </section>
 
     <div class="talk-prompt panel" id="talkPrompt" hidden>
@@ -85,9 +96,12 @@
     </div>
 
     <section class="quest-dialog panel" id="questDialog" hidden aria-label="Conversation">
-      <h2 id="questDialogTitle">Villager</h2>
-      <p id="questDialogBody"></p>
-      <p id="questDialogStatus"></p>
+      <h2 id="questDialogTitle" class="dialog-speaker">Villager</h2>
+      <div class="dialog-exchange">
+        <p id="questDialogPlayerLine" class="dialog-player-line" hidden></p>
+        <p id="questDialogBody" class="dialog-npc-line"></p>
+      </div>
+      <p id="questDialogStatus" class="dialog-status-line"></p>
       <div class="quest-ask" id="questAsk">
         <div class="ask-topics" id="dialogueTopics"></div>
         <p class="ask-hint" id="dialogueHint">1-4 ask &middot; Esc back</p>
@@ -98,6 +112,14 @@
         <button id="questServiceButton" class="secondary" type="button">Enter Crownring</button>
         <button id="questCloseButton" class="secondary" type="button">Close</button>
       </div>
+    </section>
+
+    <section class="quest-dialog panel" id="benchDialog" hidden aria-label="Potion bench">
+      <h2>Potion Bench</h2>
+      <p id="benchDialogBody">Mortar, kettle, clean well water. Crush the herbs, steep them slow, stopper while warm.</p>
+      <p id="benchDialogStatus"></p>
+      <div class="bench-options" id="benchOptions"></div>
+      <p class="ask-hint" id="benchDialogHint">W/S select &middot; Enter brew &middot; Esc close</p>
     </section>
 
     <div class="action-dock" aria-hidden="true">
@@ -112,6 +134,16 @@
       <div class="action" id="potionIcon" hidden>
         <svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>
         <span class="keybind">MMB / H</span>
+      </div>
+      <div class="action" id="utilityIcon">
+        <svg viewBox="0 0 32 32"><path d="M16 8l8 3v6c0 5.5-3 9.5-8 12-5-2.5-8-6.5-8-12v-6z"/><path d="M16 2v3.5M7.5 4.5L10 7.2M24.5 4.5L22 7.2"/></svg>
+        <span class="keybind">F</span>
+        <span class="cooldown-fill"></span><span class="cooldown-time"></span>
+      </div>
+      <div class="action" id="payoffIcon">
+        <svg viewBox="0 0 32 32"><path d="M5 26a17 17 0 0 1 23-10"/><path d="M28 16l.6-5.5M28 16l-5.5-.6"/><path d="M8 6l7 7M8 13l4-4"/></svg>
+        <span class="keybind">C</span>
+        <span class="cooldown-fill"></span><span class="cooldown-time"></span>
       </div>
     </div>
 
@@ -181,6 +213,11 @@
           <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M8 24C8 13 13 8 24 8"/><path d="M8 24L24 8"/><path d="M24 8l-6 1.5M24 8l-1.5 6"/></svg></span>
           <strong>Ranger</strong>
           <span>Quick shots, roll, flame</span>
+        </button>
+        <button class="character-card" type="button" data-character="sentinel" role="radio" aria-checked="false">
+          <span class="class-glyph"><svg viewBox="0 0 32 32"><path d="M16 3v26"/><path d="M16 6l-3-3M16 6l3-3"/><path d="M16 9c-5 0-7 3-7 6 3-1.5 5-1 7 1z"/><path d="M16 16l5-3"/></svg></span>
+          <strong>Sentinel</strong>
+          <span>Halberd reach, shove, sweep</span>
         </button>
       </div>
       <div class="session-note" id="sessionNote" hidden></div>

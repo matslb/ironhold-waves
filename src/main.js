@@ -1,6 +1,7 @@
 import mqtt from "https://cdn.jsdelivr.net/npm/mqtt@5.15.1/dist/mqtt.esm.js";
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 import {
+  abilityDescriptions,
   abilityDisplayNames,
   abilityUnlockLevels,
   defaultCombatTuning,
@@ -24,6 +25,7 @@ import {
   EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ,
   EXPLORATION_NPC_UPDATE_DISTANCE_SQ,
   EXPLORATION_NPC_VISIBLE_DISTANCE_SQ,
+  HERB_POUCH_CAP,
   MINIMAP_DPR,
   MINIMAP_LOGICAL_SIZE,
   PLAYER_REGEN_DELAY,
@@ -40,6 +42,7 @@ import {
   SILTWELL_DUNGEON_NAME,
   TAU,
   WILDS_AREA_CAP,
+  WILDS_AREA_CAP_MAX,
   WILDS_AREA_RADIUS,
   WILDS_CHECKS_PER_TICK,
   WILDS_CLEARED_ZONE_BONUS,
@@ -48,10 +51,16 @@ import {
   WILDS_DIRECTOR_INTERVAL,
   WILDS_ENEMY_CAP,
   WILDS_MIN_PLAYER_DISTANCE,
+  WILDS_PLAYER_AREA_CAP_BONUS,
+  WILDS_PLAYER_COUNT_MAX,
+  WILDS_PLAYER_REFILL_FACTOR,
+  WILDS_PLAYER_SPAWNS_PER_TICK,
   WILDS_RESPAWN_DELAY,
   WILDS_RESPAWN_JITTER,
   WILDS_SPAWNS_PER_TICK,
+  WILDS_SPAWNS_PER_TICK_MAX,
   WILDS_TIER_DELAY_MUL,
+  WIZARD_DRAUGHT_POCKET_DELAY,
   arenaRadius
 } from "./config/gameplay.js";
 import {
@@ -96,14 +105,28 @@ import {
   const kitStats = document.getElementById("kitStats");
   const potionInventory = document.getElementById("potionInventory");
   const potionSlots = document.getElementById("potionSlots");
+  const herbReadout = document.getElementById("herbReadout");
+  const herbCountText = document.getElementById("herbCountText");
   const buffsPanel = document.getElementById("buffsPanel");
   const buffsList = document.getElementById("buffsList");
   const saveHint = document.getElementById("saveHint");
   const attackIcon = document.getElementById("attackIcon");
   const blockIcon = document.getElementById("blockIcon");
   const potionIcon = document.getElementById("potionIcon");
+  const utilityIcon = document.getElementById("utilityIcon");
+  const payoffIcon = document.getElementById("payoffIcon");
+  // Re-queried after each per-class innerHTML reskin in updateCharacterUi().
+  let utilityCooldownFill = utilityIcon.querySelector(".cooldown-fill");
+  let utilityCooldownTime = utilityIcon.querySelector(".cooldown-time");
+  let payoffCooldownFill = payoffIcon.querySelector(".cooldown-fill");
+  let payoffCooldownTime = payoffIcon.querySelector(".cooldown-time");
   const actionDock = document.querySelector(".action-dock");
   const banner = document.getElementById("banner");
+  const activityResult = document.getElementById("activityResult");
+  const activityResultKicker = document.getElementById("activityResultKicker");
+  const activityResultTitle = document.getElementById("activityResultTitle");
+  const activityResultFlavor = document.getElementById("activityResultFlavor");
+  const activityResultRows = document.getElementById("activityResultRows");
   const sessionSelect = document.getElementById("sessionSelect");
   const startSessionButton = document.getElementById("startSessionButton");
   const resumeGameButton = document.getElementById("resumeGameButton");
@@ -137,6 +160,7 @@ import {
   const talkTarget = document.getElementById("talkTarget");
   const questDialog = document.getElementById("questDialog");
   const questDialogTitle = document.getElementById("questDialogTitle");
+  const questDialogPlayerLine = document.getElementById("questDialogPlayerLine");
   const questDialogBody = document.getElementById("questDialogBody");
   const questDialogStatus = document.getElementById("questDialogStatus");
   const questAcceptButton = document.getElementById("questAcceptButton");
@@ -145,6 +169,9 @@ import {
   const questCloseButton = document.getElementById("questCloseButton");
   const dialogueTopics = document.getElementById("dialogueTopics");
   const dialogueHint = document.getElementById("dialogueHint");
+  const benchDialog = document.getElementById("benchDialog");
+  const benchDialogStatus = document.getElementById("benchDialogStatus");
+  const benchOptions = document.getElementById("benchOptions");
   const questLog = document.getElementById("questLog");
   const questLogItems = document.getElementById("questLogItems");
   const questMap = document.getElementById("questMap");
@@ -167,6 +194,43 @@ import {
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
+  // Third-person camera pitch (radians, negative looks down). The default
+  // reproduces the legacy fixed framing: shoulder (0.95, 4.1, 7.7) looking at
+  // head height 1.35 is an orbit elevation of ~-0.34 rad.
+  const CAMERA_PITCH_DEFAULT = -0.34;
+  const CAMERA_PITCH_MIN = -1.05;
+  const CAMERA_PITCH_MAX = 0.61;
+  // Mounts are taller and the camera orbit is longer, so keep the tilt range
+  // tighter to stay clear of the mount body and the ground.
+  const CAMERA_PITCH_MOUNTED_MIN = -0.85;
+  const CAMERA_PITCH_MOUNTED_MAX = 0.38;
+  // Slight over-the-shoulder framing: the camera rig AND its look target shift
+  // this far to the player's right (in the yaw frame), so the character sits
+  // left of screen center and the reticle has a clear sight line past their
+  // right side. Keep it modest - this is not a hard-locked shooter camera.
+  const CAMERA_SHOULDER_X = 1.15;
+  const CAMERA_SHOULDER_X_MOUNTED = 1.45;
+  // The reticle sits above vertical screen center for a natural third-person
+  // eye-line. This is the single source of truth: the .reticle element's CSS
+  // top is set from it at startup (top% = (1 - ndcY) * 50) and the ranged aim
+  // ray passes through the same screen point, so visuals and aim cannot drift.
+  const RETICLE_NDC_Y = 0.24;
+  {
+    const reticleEl = document.querySelector(".reticle");
+    if (reticleEl) {
+      reticleEl.style.top = `${(1 - RETICLE_NDC_Y) * 50}%`;
+    }
+  }
+  // Sanity clamps for ranged aim elevation (radians). Wider than the camera
+  // pitch range because reticle convergence from the character's muzzle can be
+  // slightly steeper than the camera ray itself.
+  const AIM_PITCH_MIN = -1.15;
+  const AIM_PITCH_MAX = 1.0;
+  const cameraShoulderVec = new THREE.Vector3();
+  const aimRayOrigin = new THREE.Vector3();
+  const aimRayDir = new THREE.Vector3();
+  const aimRayTmp = new THREE.Vector3();
+  const aimTargetVec = new THREE.Vector3();
   const clock = new THREE.Clock();
   const keys = new Set();
   let progression = null;
@@ -215,23 +279,46 @@ import {
   };
 
   const MUSIC_THEME_DEFAULT_ID = "meadow-wild";
+  // Composition pass 2 (medieval voicing). Each theme is a cycle of short
+  // question/answer phrase pairs: the antecedent ends off-tonic, the
+  // consequent (cadence: true) resolves to the tonic over an open-fifth
+  // pluck. Notes are [scaleDegree, beats] with an optional ornament flag
+  // ("g" grace note from above, "t" quick turn); null degree is a rest.
+  // Voices: "lute" (plucked string), "flute" (soft recorder), "shawm"
+  // (reedy lead, martial themes only); pulse: "tabor" adds a muffled
+  // hand-drum on strong beats. Every voice is a bounded one-shot envelope.
   const MUSIC_THEMES = {
     "homestead": {
+      // Warm hearth tune, D mixolydian: lute asks, recorder answers.
       root: 146.83,
-      scale: [0, 2, 4, 5, 7, 9, 11, 12],
-      patterns: [[0, 2, 4, 2], [0, 3, 4, 5], [4, 5, 4, 2, 0]],
-      bass: [0, 4, 3, 4],
-      pace: 0.26,
+      scale: [0, 2, 4, 5, 7, 9, 10, 12],
+      lead: "lute",
+      answer: "flute",
+      phrases: [
+        { notes: [[0, 1], [1, 1], [2, 1.5], [3, 0.5], [2, 1], [1, 2]] },
+        { notes: [[4, 1], [3, 1], [2, 1.5], [1, 0.5], [0, 2.5]], cadence: true },
+        { notes: [[2, 1], [4, 1], [5, 1.5, "g"], [4, 0.5], [2, 1], [4, 2]] },
+        { notes: [[5, 1], [4, 1], [2, 1], [1, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 4, 3, 0],
+      pace: 0.27,
       restMin: 4.2,
       restMax: 7.4,
       leadGain: 0.010,
       bassGain: 0.005
     },
     "meadow-wild": {
+      // Rambling D dorian air, lute alone.
       root: 146.83,
       scale: [0, 2, 3, 5, 7, 9, 10, 12],
-      patterns: [[0, 2, 4, 5], [2, 4, 3, 1], [4, 5, 7, 5, 3]],
-      bass: [0, 0, 4, 3],
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1], [2, 1], [4, 1.5], [3, 1.5]] },
+        { notes: [[4, 1], [2, 1], [1, 1], [0, 2.5]], cadence: true },
+        { notes: [[2, 1], [4, 1], [5, 1.5, "g"], [4, 1.5]] },
+        { notes: [[3, 1], [2, 1], [1, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 0, 4, 0],
       pace: 0.28,
       restMin: 5.0,
       restMax: 8.6,
@@ -239,146 +326,243 @@ import {
       bassGain: 0.0048
     },
     "meadow-village-east": {
+      // Lilting E ionian dance, long-short steps; flute answers the lute.
       root: 164.81,
       scale: [0, 2, 4, 5, 7, 9, 11, 12],
-      patterns: [[0, 2, 4, 7], [5, 4, 2, 0], [2, 4, 5, 4, 2]],
-      bass: [0, 4, 5, 4],
-      pace: 0.22,
+      lead: "lute",
+      answer: "flute",
+      phrases: [
+        { notes: [[0, 1], [1, 0.5], [2, 1], [3, 0.5], [4, 1.5], [2, 1.5]] },
+        { notes: [[4, 1], [3, 0.5], [2, 1], [1, 0.5], [0, 2]], cadence: true },
+        { notes: [[2, 1], [3, 0.5], [4, 1], [5, 0.5], [7, 1.5, "g"], [4, 1.5]] },
+        { notes: [[5, 1], [4, 0.5], [3, 1], [2, 0.5], [1, 1], [0, 2]], cadence: true }
+      ],
+      bass: [0, 4, 5, 0],
+      pace: 0.24,
       restMin: 3.4,
       restMax: 5.6,
       leadGain: 0.012,
       bassGain: 0.006
     },
     "meadow-village-west": {
+      // Gentler D aeolian round with a subtonic lean into the cadence.
       root: 146.83,
       scale: [0, 2, 3, 5, 7, 8, 10, 12],
-      patterns: [[4, 3, 0, 2], [0, 2, 5, 3], [7, 5, 3, 2, 0]],
-      bass: [0, 3, 5, 3],
-      pace: 0.24,
+      lead: "lute",
+      answer: "flute",
+      phrases: [
+        { notes: [[4, 1], [3, 0.5], [2, 1], [0, 1], [2, 1.5], [1, 1.5]] },
+        { notes: [[3, 1], [2, 1], [1, 0.5], [-2, 1], [0, 2.5]], cadence: true },
+        { notes: [[0, 1], [2, 0.5], [3, 1], [5, 1.5, "t"], [4, 1], [3, 1.5]] },
+        { notes: [[5, 1], [4, 0.5], [3, 1], [2, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 3, 5, 0],
+      pace: 0.26,
       restMin: 3.8,
       restMax: 6.1,
       leadGain: 0.011,
       bassGain: 0.0055
     },
     "mountain-village": {
+      // Open, austere minor pentatonic; flute calls across the valley,
+      // lute answers low.
       root: 130.81,
       scale: [0, 3, 5, 7, 10, 12, 15, 17],
-      patterns: [[0, 3, 4, 7], [7, 4, 3, 0], [3, 4, 7, 9, 7]],
+      lead: "flute",
+      answer: "lute",
+      phrases: [
+        { notes: [[0, 1.5], [2, 1], [4, 2], [3, 1.5]] },
+        { notes: [[4, 1], [3, 1], [1, 1.5], [0, 2.5]], cadence: true },
+        { notes: [[2, 1.5], [4, 1], [5, 2, "g"], [4, 1.5]] },
+        { notes: [[5, 1], [4, 1], [2, 1.5], [0, 2.5]], cadence: true }
+      ],
       bass: [0, 0, -2, 0],
-      pace: 0.29,
+      pace: 0.31,
       restMin: 4.0,
       restMax: 6.8,
       leadGain: 0.011,
       bassGain: 0.0065
     },
     "desert-village": {
+      // Double-harmonic mode, low lute, slow and sparing with ornament.
       root: 146.83,
       scale: [0, 1, 4, 5, 7, 8, 11, 12],
-      patterns: [[0, 1, 4, 5], [7, 5, 4, 1], [4, 5, 8, 7, 5]],
-      bass: [0, 4, 1, 4],
-      pace: 0.25,
-      restMin: 3.7,
-      restMax: 6.3,
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1.5], [2, 1], [1, 1.5], [0, 1], [4, 2.5]] },
+        { notes: [[5, 1], [4, 1], [2, 1.5], [1, 1], [0, 2.5]], cadence: true },
+        { notes: [[4, 1.5], [5, 1], [4, 1], [2, 1.5], [1, 2]] },
+        { notes: [[2, 1], [1, 1], [0, 1.5, "g"], [1, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 4, 1, 0],
+      pace: 0.3,
+      restMin: 4.2,
+      restMax: 6.8,
       leadGain: 0.0105,
       bassGain: 0.0052
     },
     "swamp-village": {
+      // Low and hesitant: rests inside the phrase, tritone color on degree 3.
       root: 123.47,
       scale: [0, 2, 3, 6, 7, 10, 12, 14],
-      patterns: [[0, 2, 3, 6], [3, 2, 0, -1], [6, 3, 2, 0]],
-      bass: [0, -1, 0, 3],
-      pace: 0.31,
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1], [null, 0.5], [2, 1], [3, 1.5], [null, 0.5], [2, 1.5]] },
+        { notes: [[3, 1], [2, 1], [null, 0.5], [1, 1], [0, 2.5]], cadence: true },
+        { notes: [[5, 1], [null, 0.5], [3, 1], [2, 1.5], [3, 2]] },
+        { notes: [[2, 1], [1, 1], [null, 0.5], [0, 3]], cadence: true }
+      ],
+      bass: [0, -1, 0, 0],
+      pace: 0.33,
       restMin: 4.8,
       restMax: 8.8,
       leadGain: 0.0095,
       bassGain: 0.0055
     },
     "briar-village": {
+      // Dorian with grace notes and a turn; brighter root, flute answers.
       root: 174.61,
       scale: [0, 2, 3, 5, 7, 10, 12, 14],
-      patterns: [[0, 3, 5, 3], [2, 5, 7, 5], [7, 5, 3, 2, 0]],
-      bass: [0, -2, 3, 2],
-      pace: 0.24,
+      lead: "lute",
+      answer: "flute",
+      phrases: [
+        { notes: [[0, 1], [2, 0.5], [3, 1], [5, 1.5, "g"], [4, 1], [2, 1.5]] },
+        { notes: [[4, 1], [3, 1], [2, 0.5], [1, 1], [0, 2]], cadence: true },
+        { notes: [[3, 1], [5, 1], [7, 1.5], [5, 1], [4, 1.5, "t"]] },
+        { notes: [[5, 1], [4, 0.5], [3, 1], [2, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, -2, 3, 0],
+      pace: 0.25,
       restMin: 3.6,
       restMax: 6.2,
       leadGain: 0.0105,
       bassGain: 0.0054
     },
     "crownford": {
+      // Civic and stately: slow G major processional, tabor pulse,
+      // octave reach, flute answers over the fifth cadence.
       root: 196.00,
       scale: [0, 2, 4, 5, 7, 9, 11, 12],
-      patterns: [[0, 2, 4, 7], [7, 9, 7, 4], [5, 4, 2, 0, 2]],
-      bass: [-7, 0, 4, 5],
-      pace: 0.21,
-      restMin: 3.0,
-      restMax: 5.2,
+      lead: "lute",
+      answer: "flute",
+      pulse: "tabor",
+      phrases: [
+        { notes: [[0, 2], [2, 1], [4, 2], [5, 1], [4, 2]] },
+        { notes: [[7, 1.5], [5, 1], [4, 1.5], [2, 1], [0, 2.5]], cadence: true },
+        { notes: [[4, 2], [5, 1], [7, 2, "g"], [5, 1], [4, 2]] },
+        { notes: [[5, 1.5], [4, 1], [2, 1.5], [1, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 4, 5, 0],
+      pace: 0.3,
+      restMin: 4.6,
+      restMax: 6.8,
       leadGain: 0.0125,
       bassGain: 0.006
     },
     "crownring": {
+      // Martial A aeolian: shawm over tabor, dotted upbeats; danger
+      // variant tightens to a faster two-phrase call.
       root: 110.00,
       scale: [0, 2, 3, 5, 7, 8, 10, 12],
-      patterns: [[0, 2, 3, 7], [7, 5, 3, 2], [0, 3, 5, 8, 7]],
-      dangerPatterns: [[0, 3, 0, 5], [2, 5, 2, 7], [0, 2, 3, 7, 3]],
+      lead: "shawm",
+      pulse: "tabor",
+      phrases: [
+        { notes: [[0, 0.75], [0, 0.25], [2, 1], [3, 1.5], [2, 0.5], [4, 2]] },
+        { notes: [[4, 1], [3, 0.5], [2, 0.5], [1, 1], [0, 2]], cadence: true },
+        { notes: [[3, 0.75], [3, 0.25], [5, 1], [7, 1.5], [5, 0.5], [3, 2]] },
+        { notes: [[5, 1], [3, 0.5], [2, 0.5], [-2, 1], [0, 2]], cadence: true }
+      ],
+      dangerPhrases: [
+        { notes: [[0, 0.5], [0, 0.5], [3, 1], [2, 0.5], [3, 0.5], [5, 1.5]] },
+        { notes: [[7, 0.5], [5, 0.5], [3, 1], [2, 1], [0, 1.5]], cadence: true }
+      ],
       bass: [0, 0, -2, 0],
-      pace: 0.22,
-      dangerPace: 0.17,
+      pace: 0.23,
+      dangerPace: 0.18,
       restMin: 2.6,
       restMax: 4.6,
       leadGain: 0.012,
       bassGain: 0.007
     },
     "skirmish": {
+      // Tense wilderness fight: short shawm jabs over tabor.
       root: 110.00,
       scale: [0, 2, 3, 5, 7, 8, 10, 12],
-      patterns: [[0, 3, 2, 5], [0, 2, 5, 7], [3, 2, 0, -2]],
+      lead: "shawm",
+      pulse: "tabor",
+      phrases: [
+        { notes: [[0, 0.5], [3, 0.5], [2, 1], [0, 0.5], [2, 0.5], [3, 1.5]] },
+        { notes: [[5, 0.5], [3, 0.5], [2, 1], [1, 1], [0, 1.5]], cadence: true },
+        { notes: [[0, 0.5], [2, 0.5], [5, 1], [3, 0.5], [2, 0.5], [-2, 1.5]] },
+        { notes: [[3, 0.5], [2, 0.5], [1, 1], [-2, 1], [0, 1.5]], cadence: true }
+      ],
       bass: [0, -2, 0, 3],
-      pace: 0.2,
-      dangerPace: 0.16,
+      pace: 0.21,
+      dangerPace: 0.17,
       restMin: 2.4,
       restMax: 4.2,
       leadGain: 0.011,
       bassGain: 0.0065
     },
     "mountain-wild": {
+      // Lone flute call, very sparse.
       root: 130.81,
       scale: [0, 3, 5, 7, 10, 12, 15, 17],
-      patterns: [[0, 3, 4], [7, 4, 3, 0], [3, 7, 9, 7]],
-      bass: [0, -2, 0],
-      pace: 0.32,
+      lead: "flute",
+      phrases: [
+        { notes: [[0, 2], [3, 1.5], [4, 2.5]] },
+        { notes: [[4, 1.5], [2, 1.5], [0, 3]], cadence: true }
+      ],
+      bass: [0, -2],
+      pace: 0.34,
       restMin: 5.2,
       restMax: 9.4,
       leadGain: 0.0095,
       bassGain: 0.0052
     },
     "desert-wild": {
+      // Bare double-harmonic fragment, no ornament at all.
       root: 146.83,
       scale: [0, 1, 4, 5, 7, 8, 11, 12],
-      patterns: [[0, 1, 4], [5, 4, 1, 0], [4, 7, 5]],
-      bass: [0, 1, 0],
-      pace: 0.3,
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1.5], [1, 1], [2, 2.5]] },
+        { notes: [[2, 1], [1, 1.5], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, 1],
+      pace: 0.32,
       restMin: 5.0,
       restMax: 9.0,
       leadGain: 0.009,
       bassGain: 0.0048
     },
     "swamp-wild": {
+      // Lowest and slowest; a hesitating two-phrase murmur.
       root: 123.47,
       scale: [0, 2, 3, 6, 7, 10, 12, 14],
-      patterns: [[0, 2, 3], [6, 3, 2, 0], [3, 6, 7, 6]],
-      bass: [0, -1, 0],
-      pace: 0.34,
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1.5], [null, 0.5], [2, 1], [3, 2]] },
+        { notes: [[2, 1], [1, 1], [0, 3]], cadence: true }
+      ],
+      bass: [0, -1],
+      pace: 0.36,
       restMin: 6.0,
       restMax: 10.0,
       leadGain: 0.0085,
       bassGain: 0.0048
     },
     "briar-wild": {
+      // Dorian fragment of the briar village tune.
       root: 174.61,
       scale: [0, 2, 3, 5, 7, 10, 12, 14],
-      patterns: [[0, 2, 3], [5, 3, 2, 0], [2, 5, 7, 5]],
-      bass: [0, -2, 0],
-      pace: 0.33,
+      lead: "lute",
+      phrases: [
+        { notes: [[0, 1], [2, 1], [5, 1.5], [4, 1.5]] },
+        { notes: [[3, 1], [2, 1], [0, 2.5]], cadence: true }
+      ],
+      bass: [0, -2],
+      pace: 0.3,
       restMin: 5.4,
       restMax: 9.6,
       leadGain: 0.0088,
@@ -583,7 +767,8 @@ import {
 
   function currentPlayerSurface() {
     if (isPlayerMounted()) {
-      return "horse";
+      const mount = game.exploration.horse;
+      return mount && mount.locomotion === "hover" ? "hover" : "horse";
     }
     if (localPlayerInSharedActivity() || game.mode !== "exploration") {
       return "sand";
@@ -611,6 +796,9 @@ import {
     if (surface === "horse") {
       playNoise(0.07, { filterType: "lowpass", frequency: 420, gain: 0.011 * amount, q: 0.7 });
       playTone(96, 0.055, { type: "triangle", endFrequency: 64, gain: 0.006 * amount, delay: 0.01 });
+    } else if (surface === "hover") {
+      // Drake wing wash: a soft low air pulse instead of hoofbeats.
+      playNoise(0.16, { filterType: "lowpass", frequency: 300, gain: 0.0075 * amount, q: 0.6 });
     } else if (surface === "sand") {
       playNoise(0.09, { filterType: "bandpass", frequency: 940, gain: 0.0065 * amount, q: 0.55 });
     } else if (surface === "stone") {
@@ -779,63 +967,209 @@ import {
     return nearestVillage ? musicThemeForVillage(nearestVillage) : wildernessThemeForBiome(biome);
   }
 
-  function playMusicPluck(frequency, options = {}) {
-    const gain = options.gain || 0.016;
-    const delay = options.delay || 0;
-    const duration = options.duration || 0.24;
-    playTone(frequency, duration, {
-      type: options.type || "square",
-      gain: gain * 0.72,
-      attack: 0.004,
-      delay,
-      bus: "music"
-    });
-    playTone(frequency * 2.01, Math.min(0.09, duration * 0.42), {
-      type: "triangle",
-      gain: gain * 0.24,
-      attack: 0.004,
-      delay: delay + 0.012,
-      bus: "music"
-    });
+  // Medieval music voices. Every note is a bounded one-shot: all nodes are
+  // created per note, every oscillator/source has a stop scheduled at
+  // creation time, and nothing sustains past MUSIC_NOTE_MAX_DURATION.
+  const MUSIC_NOTE_MAX_DURATION = 1.4;
+  const MUSIC_PHRASE_SOURCE_BUDGET = 30;
+
+  function playMusicLute(frequency, options = {}) {
+    // Plucked string (lute/harp): near-instant attack, exponential decay,
+    // and a lowpass sweep so the note darkens like a string losing
+    // brightness. A quiet detuned square layer gives the fret-buzz front.
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master) {
+      return;
+    }
+    const start = ctx.currentTime + (options.delay || 0);
+    const duration = Math.min(options.duration || 0.34, MUSIC_NOTE_MAX_DURATION);
+    const gain = options.gain || 0.01;
+    const brightDuration = Math.min(duration, 0.16);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 0.8;
+    filter.frequency.setValueAtTime(Math.min(7600, frequency * 7), start);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(160, frequency * 1.3), start + duration * 0.9);
+    const body = ctx.createOscillator();
+    body.type = "triangle";
+    body.frequency.setValueAtTime(frequency, start);
+    body.detune.setValueAtTime(3, start);
+    const bright = ctx.createOscillator();
+    bright.type = "square";
+    bright.frequency.setValueAtTime(frequency, start);
+    bright.detune.setValueAtTime(-4, start);
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.setValueAtTime(0.0001, start);
+    bodyGain.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), start + 0.006);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    const brightGain = ctx.createGain();
+    brightGain.gain.setValueAtTime(0.0001, start);
+    brightGain.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain * 0.22), start + 0.004);
+    brightGain.gain.exponentialRampToValueAtTime(0.0001, start + brightDuration);
+    body.connect(bodyGain);
+    bright.connect(brightGain);
+    bodyGain.connect(filter);
+    brightGain.connect(filter);
+    filter.connect(audioBus("music"));
+    body.start(start);
+    bright.start(start);
+    body.stop(start + duration + 0.05);
+    bright.stop(start + brightDuration + 0.05);
   }
 
-  function playMusicBassTick(frequency, delay, gain) {
-    playTone(frequency, 0.12, {
-      type: "triangle",
-      endFrequency: frequency * 0.92,
-      gain,
-      attack: 0.004,
-      delay,
-      bus: "music"
-    });
+  function playMusicFlute(frequency, options = {}) {
+    // Soft recorder: sine with a gentle breath attack and delayed vibrato.
+    // The vibrato LFO is a per-note oscillator stopped with the note.
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master) {
+      return;
+    }
+    const start = ctx.currentTime + (options.delay || 0);
+    const duration = Math.min(options.duration || 0.5, MUSIC_NOTE_MAX_DURATION);
+    const gain = (options.gain || 0.01) * 1.3;
+    const attack = Math.min(0.06, duration * 0.3);
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(frequency, start);
+    const vibrato = ctx.createOscillator();
+    vibrato.type = "sine";
+    vibrato.frequency.setValueAtTime(5.2, start);
+    const vibratoGain = ctx.createGain();
+    vibratoGain.gain.setValueAtTime(0, start);
+    vibratoGain.gain.linearRampToValueAtTime(frequency * 0.0045, start + Math.min(0.3, duration * 0.6));
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+    const noteGain = ctx.createGain();
+    noteGain.gain.setValueAtTime(0.0001, start);
+    noteGain.gain.linearRampToValueAtTime(Math.max(0.0002, gain), start + attack);
+    noteGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(noteGain);
+    noteGain.connect(audioBus("music"));
+    osc.start(start);
+    vibrato.start(start);
+    osc.stop(start + duration + 0.05);
+    vibrato.stop(start + duration + 0.05);
+  }
+
+  function playMusicShawm(frequency, options = {}) {
+    // Reedy shawm: bandpassed sawtooth with a slight pitch droop. Used
+    // sparingly (martial themes) so the buzz stays special.
+    const ctx = ensureAudio();
+    if (!ctx || !audio.master) {
+      return;
+    }
+    const start = ctx.currentTime + (options.delay || 0);
+    const duration = Math.min(options.duration || 0.3, MUSIC_NOTE_MAX_DURATION);
+    const gain = (options.gain || 0.01) * 0.85;
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(frequency, start);
+    osc.frequency.exponentialRampToValueAtTime(frequency * 0.985, start + duration);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(Math.min(5200, frequency * 2.4), start);
+    filter.Q.value = 2.2;
+    const noteGain = ctx.createGain();
+    noteGain.gain.setValueAtTime(0.0001, start);
+    noteGain.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), start + 0.02);
+    noteGain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(filter);
+    filter.connect(noteGain);
+    noteGain.connect(audioBus("music"));
+    osc.start(start);
+    osc.stop(start + duration + 0.05);
+  }
+
+  function playMusicTabor(delay, gain) {
+    // Muffled hand drum: a lowpassed noise tap plus a short low thump.
+    playNoise(0.06, { filterType: "lowpass", frequency: 230, gain: gain * 0.9, q: 0.7, delay, bus: "music" });
+    playTone(84, 0.09, { type: "triangle", endFrequency: 56, gain, attack: 0.004, delay: delay + 0.004, bus: "music" });
+  }
+
+  function musicVoiceSourceCount(voice) {
+    return voice === "shawm" ? 1 : 2;
+  }
+
+  function playMusicVoice(voice, frequency, options) {
+    if (voice === "flute") {
+      playMusicFlute(frequency, options);
+    } else if (voice === "shawm") {
+      playMusicShawm(frequency, options);
+    } else {
+      playMusicLute(frequency, options);
+    }
   }
 
   function playMusicPhrase(themeId, danger, music) {
     const theme = MUSIC_THEMES[themeId] || MUSIC_THEMES[MUSIC_THEME_DEFAULT_ID];
-    const patterns = danger && theme.dangerPatterns ? theme.dangerPatterns : theme.patterns;
-    const pattern = patterns[music.phraseIndex % patterns.length];
-    const shiftPattern = danger ? [0, 0, 2, 0] : [0, 2, 0, -1];
-    const phraseShift = shiftPattern[music.noteIndex % shiftPattern.length];
-    const pace = danger ? (theme.dangerPace || Math.max(0.15, theme.pace * 0.75)) : theme.pace;
-    const leadGain = theme.leadGain * (danger ? 1.18 : 1);
+    const phrases = danger && theme.dangerPhrases ? theme.dangerPhrases : theme.phrases;
+    const phrase = phrases[music.phraseIndex % phrases.length];
+    const pace = danger ? (theme.dangerPace || Math.max(0.15, theme.pace * 0.78)) : theme.pace;
+    const leadGain = theme.leadGain * (danger ? 1.15 : 1);
+    const voice = phrase.cadence && theme.answer ? theme.answer : theme.lead || "lute";
     const bassPattern = theme.bass || [0];
-    for (let i = 0; i < pattern.length; i += 1) {
-      const delay = i * pace;
-      const degree = pattern[i];
-      if (i % 2 === 0) {
-        const bassDegree = bassPattern[(music.phraseIndex + i / 2) % bassPattern.length];
-        if (bassDegree !== null && bassDegree !== undefined) {
-          playMusicBassTick(degreeFrequency(theme, bassDegree, -1), delay, theme.bassGain * (danger ? 1.25 : 1));
-        }
+    let sources = 0;
+    const spend = (count) => {
+      if (sources + count > MUSIC_PHRASE_SOURCE_BUDGET) {
+        return false;
       }
+      sources += count;
+      return true;
+    };
+    let totalBeats = 0;
+    for (const note of phrase.notes) {
+      totalBeats += note[1];
+    }
+    // Counter-line: one low plucked bass note under the phrase start.
+    const bassDegree = bassPattern[music.phraseIndex % bassPattern.length];
+    if (bassDegree !== null && bassDegree !== undefined && spend(2)) {
+      playMusicLute(degreeFrequency(theme, bassDegree, -1), {
+        delay: 0,
+        duration: Math.min(pace * 2.4, MUSIC_NOTE_MAX_DURATION),
+        gain: theme.bassGain * (danger ? 1.2 : 1)
+      });
+    }
+    if (theme.pulse === "tabor") {
+      for (let pulseBeat = 0; pulseBeat < totalBeats; pulseBeat += 2) {
+        if (!spend(2)) {
+          break;
+        }
+        playMusicTabor(pulseBeat * pace, theme.bassGain * (danger ? 1.25 : 1));
+      }
+    }
+    let beat = 0;
+    for (let i = 0; i < phrase.notes.length; i += 1) {
+      const [degree, beats, ornament] = phrase.notes[i];
+      let delay = beat * pace;
+      beat += beats;
       if (degree === null || degree === undefined) {
         continue;
       }
-      playMusicPluck(degreeFrequency(theme, degree + phraseShift), {
-        delay,
-        duration: danger ? 0.16 : 0.2,
-        gain: leadGain * (i === 0 ? 1.12 : 1)
-      });
+      let duration = Math.min(beats * pace * 1.05, MUSIC_NOTE_MAX_DURATION);
+      const isLast = i === phrase.notes.length - 1;
+      const noteGain = leadGain * (i === 0 || isLast ? 1.1 : 1);
+      if (ornament === "g" && spend(musicVoiceSourceCount(voice))) {
+        // Grace note from one scale step above, stealing the beat front.
+        playMusicVoice(voice, degreeFrequency(theme, degree + 1), { delay, duration: 0.07, gain: noteGain * 0.45 });
+        delay += 0.07;
+        duration = Math.max(0.08, duration - 0.07);
+      } else if (ornament === "t" && spend(musicVoiceSourceCount(voice) * 2)) {
+        // Quick turn: upper then lower neighbor before the main tone.
+        playMusicVoice(voice, degreeFrequency(theme, degree + 1), { delay, duration: 0.06, gain: noteGain * 0.4 });
+        playMusicVoice(voice, degreeFrequency(theme, degree - 1), { delay: delay + 0.06, duration: 0.06, gain: noteGain * 0.4 });
+        delay += 0.12;
+        duration = Math.max(0.08, duration - 0.12);
+      }
+      if (spend(musicVoiceSourceCount(voice))) {
+        playMusicVoice(voice, degreeFrequency(theme, degree), { delay, duration, gain: noteGain });
+      }
+      if (phrase.cadence && isLast && spend(4)) {
+        // Resolve on a soft open-fifth pluck under the final tone.
+        const cadenceRoot = degreeFrequency(theme, degree, -1);
+        const cadenceDuration = Math.min(duration + 0.1, MUSIC_NOTE_MAX_DURATION);
+        playMusicLute(cadenceRoot, { delay: delay + 0.01, duration: cadenceDuration, gain: theme.bassGain * 1.15 });
+        playMusicLute(cadenceRoot * 1.4983, { delay: delay + 0.022, duration: cadenceDuration, gain: theme.bassGain * 0.9 });
+      }
     }
     music.noteIndex += 1;
     music.phraseIndex += 1;
@@ -895,11 +1229,11 @@ import {
     }
     const surface = currentPlayerSurface();
     audio.playerLastSurface = surface;
-    const stride = surface === "horse" ? 1.7 : surface === "mud" ? 0.95 : 1.08;
+    const stride = surface === "hover" ? 2.4 : surface === "horse" ? 1.7 : surface === "mud" ? 0.95 : 1.08;
     audio.playerStepDistance += speed * dt;
     if (audio.playerStepDistance >= stride) {
       audio.playerStepDistance %= stride;
-      playFootstep(surface, clamp(speed / (surface === "horse" ? 9.4 : 5.8), 0.45, 1.2), "player");
+      playFootstep(surface, clamp(speed / (surface === "horse" || surface === "hover" ? 9.4 : 5.8), 0.45, 1.2), "player");
     }
   }
 
@@ -988,11 +1322,11 @@ import {
       return;
     }
     const surface = remotePlayerSurface(remote);
-    const stride = surface === "horse" ? 1.75 : surface === "mud" ? 1.0 : 1.13;
+    const stride = surface === "hover" ? 2.45 : surface === "horse" ? 1.75 : surface === "mud" ? 1.0 : 1.13;
     const current = (audio.remoteStepDistance.get(id) || 0) + speed * dt;
     if (current >= stride) {
       audio.remoteStepDistance.set(id, current % stride);
-      playFootstep(surface, clamp(speed / (surface === "horse" ? 9.4 : 5.8), 0.32, 0.78) * distanceGain, "remote-" + id);
+      playFootstep(surface, clamp(speed / (surface === "horse" || surface === "hover" ? 9.4 : 5.8), 0.32, 0.78) * distanceGain, "remote-" + id);
       return;
     }
     audio.remoteStepDistance.set(id, current);
@@ -1084,6 +1418,29 @@ import {
     } else if (name === "roll") {
       playNoise(0.16, { filterType: "lowpass", frequency: 460, gain: 0.045 * amount });
       playTone(140, 0.12, { type: "sine", endFrequency: 90, gain: 0.03 * amount });
+    } else if (name === "thrust") {
+      // Quick air-cut plus a low haft grunt: a spear jab, brighter than slash.
+      playNoise(0.1, { frequency: 1850, gain: 0.032 * amount, q: 0.6 });
+      playTone(190, 0.09, { type: "triangle", endFrequency: 88, gain: 0.032 * amount, delay: 0.025 });
+    } else if (name === "shove") {
+      // Blunt wooden shunt: lowpass thud with a short knock.
+      playNoise(0.12, { filterType: "lowpass", frequency: 480, gain: 0.06 * amount });
+      playTone(120, 0.1, { type: "square", endFrequency: 70, gain: 0.03 * amount, delay: 0.01 });
+    } else if (name === "moulinet") {
+      // Two whooshes as the halberd carries through the full turn.
+      playNoise(0.16, { frequency: 1150, gain: 0.034 * amount, q: 0.7 });
+      playNoise(0.14, { frequency: 1500, gain: 0.028 * amount, q: 0.7, delay: 0.16 });
+      playTone(160, 0.14, { type: "triangle", endFrequency: 95, gain: 0.024 * amount, delay: 0.08 });
+    } else if (name === "hook") {
+      // Metallic catch then a dragging scrape toward the player.
+      playTone(620, 0.07, { type: "square", endFrequency: 410, gain: 0.03 * amount });
+      playNoise(0.18, { filterType: "bandpass", frequency: 900, gain: 0.03 * amount, q: 1.1, delay: 0.05 });
+      playTone(140, 0.12, { type: "triangle", endFrequency: 90, gain: 0.024 * amount, delay: 0.08 });
+    } else if (name === "skewer") {
+      // Charge step plus a deep committed punch-through.
+      playNoise(0.12, { filterType: "lowpass", frequency: 520, gain: 0.04 * amount });
+      playNoise(0.1, { frequency: 2000, gain: 0.03 * amount, q: 0.6, delay: 0.08 });
+      playTone(150, 0.2, { type: "sawtooth", endFrequency: 68, gain: 0.04 * amount, delay: 0.06 });
     } else if (name === "uiMove") {
       playTone(330, 0.04, { type: "triangle", endFrequency: 385, gain: 0.018 * amount });
     } else if (name === "uiBack") {
@@ -1459,6 +1816,9 @@ import {
     rangerHood: new THREE.MeshStandardMaterial({ color: 0x27452e, map: createMaterialDetailTexture("ranger-hood", "cloth", 1.2, 1.2), roughness: 0.88 }),
     rangerJerkin: new THREE.MeshStandardMaterial({ color: 0x4c3422, map: createMaterialDetailTexture("ranger-jerkin", "leather", 1.25, 1.25), roughness: 0.84 }),
     rangerTrim: new THREE.MeshStandardMaterial({ color: 0x9fdf8a, roughness: 0.5, metalness: 0.1 }),
+    sentinelCoat: new THREE.MeshStandardMaterial({ color: 0x4a5470, map: createMaterialDetailTexture("sentinel-coat", "cloth", 1.3, 1.4), roughness: 0.86 }),
+    sentinelSash: new THREE.MeshStandardMaterial({ color: 0x32394e, map: createMaterialDetailTexture("sentinel-sash", "cloth", 1.1, 1.1), roughness: 0.88 }),
+    sentinelTrim: new THREE.MeshStandardMaterial({ color: 0xd8c98a, roughness: 0.45, metalness: 0.3 }),
     fur: new THREE.MeshStandardMaterial({ color: 0x2e2118, roughness: 0.95 }),
     warPaint: new THREE.MeshBasicMaterial({ color: 0x2d5f78 }),
     emberEye: new THREE.MeshBasicMaterial({ color: 0xffce73 }),
@@ -1511,6 +1871,9 @@ import {
     saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, map: createMaterialDetailTexture("saddle-leather", "leather", 1.1, 1.1), roughness: 0.88 }),
     drakeScale: new THREE.MeshStandardMaterial({ color: 0x4d8b86, map: createMaterialDetailTexture("drake-scale", "scales", 1.2, 1.2), roughness: 0.7, metalness: 0.06 }),
     drakeBelly: new THREE.MeshStandardMaterial({ color: 0xc9b083, map: createMaterialDetailTexture("drake-belly", "leather", 1.1, 1.1), roughness: 0.82 }),
+    courserFeather: new THREE.MeshStandardMaterial({ color: 0xc8a162, map: createMaterialDetailTexture("courser-feather", "hide", 1.25, 1.25), roughness: 0.92 }),
+    courserPlume: new THREE.MeshStandardMaterial({ color: 0x6b4a2a, map: createMaterialDetailTexture("courser-plume", "hide", 1, 1.5), roughness: 0.94 }),
+    courserSkin: new THREE.MeshStandardMaterial({ color: 0x8c6a43, map: createMaterialDetailTexture("courser-skin", "leather", 1, 1), roughness: 0.86 }),
     path: new THREE.MeshStandardMaterial({ color: 0x8f774f, map: createMaterialDetailTexture("travel-road", "path", 2.4, 1.2), roughness: 0.98 }),
     sand: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("arena-sand", "sand", 1.6, 1.6), roughness: 0.99 }),
     water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72, depthWrite: false }),
@@ -1666,9 +2029,11 @@ import {
     gates: [],
     nextWaveIn: 0,
     bannerTime: 0,
+    activityResultTime: 0,
+    activityResultFade: 0,
     threat: "Low",
     cameraYaw: 0,
-    cameraPitch: -0.22,
+    cameraPitch: CAMERA_PITCH_DEFAULT,
     pointerActive: false,
     startedOnce: false,
     suppressControlLossUntil: 0,
@@ -1698,6 +2063,8 @@ import {
       lakes: [],
       villages: [],
       biomes: [],
+      herbNodes: [],
+      potionBenches: [],
       colliders: [],
       colliderGrid: new Map(),
       colliderCellSize: 8,
@@ -1706,6 +2073,7 @@ import {
       terrainFlatZones: [],
       city: null,
       arenaCity: null,
+      bellwaterDrainage: null,
       dungeonPoi: null,
       dungeonPois: [],
       respawnTownId: "",
@@ -2083,7 +2451,7 @@ import {
   }
 
   function characterKey(character) {
-    return character === "wizard" || character === "ranger" ? character : "knight";
+    return character === "wizard" || character === "ranger" || character === "sentinel" ? character : "knight";
   }
 
   function defaultCharacterProgress(character) {
@@ -2204,37 +2572,68 @@ import {
     return currentMountTackId() === ROADWARDEN_TACK_ID;
   }
 
-  const mountDisplayNames = { horse: "Horse", drake: "Skyhatched Drake" };
+  const mountDisplayNames = { horse: "Horse", drake: "Skyhatched Drake", courser: "Dune Courser" };
+
+  // Display name of the mount the player would ride right now: the spawned
+  // follow mount if one exists, otherwise the saved active mount id. Route
+  // every mount-state-dependent UI string through this (internal ids stay).
+  function activeMountDisplayName() {
+    const horse = game.exploration.horse;
+    const mountId = horse ? horse.mountId || "horse" : currentMountId();
+    return mountDisplayNames[mountId] || "Horse";
+  }
+
+  function mountUnlocked(exploration, mountId) {
+    if (!exploration) {
+      return false;
+    }
+    if (mountId === "drake") {
+      return !!exploration.drakeUnlocked;
+    }
+    if (mountId === "courser") {
+      return !!exploration.courserUnlocked;
+    }
+    return !!exploration.horseUnlocked;
+  }
 
   function currentMountId() {
     const exploration = progression && progression.exploration;
-    return exploration && exploration.activeMountId === "drake" && (exploration.drakeUnlocked || localGodModeEnabled()) ? "drake" : "horse";
+    const active = exploration && exploration.activeMountId;
+    if ((active === "drake" || active === "courser") && (mountUnlocked(exploration, active) || localGodModeEnabled())) {
+      return active;
+    }
+    return "horse";
   }
 
   function ownedMountIds() {
     if (localGodModeEnabled()) {
-      return ["horse", "drake"];
+      return ["horse", "drake", "courser"];
     }
     const exploration = progression && progression.exploration;
     const owned = [];
-    if (exploration && exploration.horseUnlocked) {
-      owned.push("horse");
-    }
-    if (exploration && exploration.drakeUnlocked) {
-      owned.push("drake");
+    for (const mountId of ["horse", "drake", "courser"]) {
+      if (mountUnlocked(exploration, mountId)) {
+        owned.push(mountId);
+      }
     }
     return owned;
   }
 
   function mountedMoveSpeed() {
-    if (currentMountId() === "drake") {
+    const mountId = currentMountId();
+    if (mountId === "drake") {
       return 11.6;
+    }
+    if (mountId === "courser") {
+      return 11.0;
     }
     return hasRoadwardenTack() ? 11.2 : 10.4;
   }
 
   function mountedCollisionRadius() {
-    return currentMountId() === "drake" ? 1.08 : hasRoadwardenTack() ? 1.02 : 1.08;
+    // Radii track the ~30% larger mount models.
+    const mountId = currentMountId();
+    return mountId === "drake" ? 1.36 : mountId === "courser" ? 1.2 : hasRoadwardenTack() ? 1.28 : 1.38;
   }
 
   function sanitizedCombatProfile(character, weaponId, perks = []) {
@@ -2307,7 +2706,8 @@ import {
       for (const message of [
         grantPerkToCharacter("knight", "crownford_drill"),
         grantPerkToCharacter("wizard", "crownford_drill"),
-        grantPerkToCharacter("ranger", "crownford_drill")
+        grantPerkToCharacter("ranger", "crownford_drill"),
+        grantPerkToCharacter("sentinel", "crownford_drill")
       ]) {
         if (message) {
           unlocked.push(message);
@@ -2318,7 +2718,8 @@ import {
       for (const message of [
         grantEquipmentToCharacter("knight", "knight_crownring_maul", false),
         grantEquipmentToCharacter("wizard", "wizard_stormcall_rod", false),
-        grantEquipmentToCharacter("ranger", "ranger_crownring_recurve", false)
+        grantEquipmentToCharacter("ranger", "ranger_crownring_recurve", false),
+        grantEquipmentToCharacter("sentinel", "sentinel_crownring_partisan", false)
       ]) {
         if (message) {
           unlocked.push(message);
@@ -2331,7 +2732,8 @@ import {
         grantEquipmentToCharacter("ranger", "ranger_briarstring_bow", false),
         grantPerkToCharacter("knight", "briarfall_pathcraft"),
         grantPerkToCharacter("wizard", "briarfall_pathcraft"),
-        grantPerkToCharacter("ranger", "briarfall_pathcraft")
+        grantPerkToCharacter("ranger", "briarfall_pathcraft"),
+        grantPerkToCharacter("sentinel", "briarfall_pathcraft")
       ]) {
         if (message) {
           unlocked.push(message);
@@ -2377,7 +2779,8 @@ import {
       characters: {
         knight: defaultCharacterProgress("knight"),
         wizard: defaultCharacterProgress("wizard"),
-        ranger: defaultCharacterProgress("ranger")
+        ranger: defaultCharacterProgress("ranger"),
+        sentinel: defaultCharacterProgress("sentinel")
       },
       exploration: {
         quests: {},
@@ -2387,12 +2790,15 @@ import {
         completed: false,
         horseUnlocked: false,
         drakeUnlocked: false,
+        courserUnlocked: false,
         activeMountId: "horse",
         mountTackId: "",
         boons: { health: 0, guard: 0, mana: 0 },
         dungeonClears: {},
         potionInventory: [],
         potionCooldownBonus: 0,
+        herbs: 0,
+        herbHintSeen: false,
         position: null,
         resources: null,
         guidanceSeen: false
@@ -2431,7 +2837,7 @@ import {
     const base = defaultProgression();
     const source = raw && typeof raw === "object" ? raw : {};
     const sourceCharacters = source.characters && typeof source.characters === "object" ? source.characters : {};
-    for (const character of ["knight", "wizard", "ranger"]) {
+    for (const character of ["knight", "wizard", "ranger", "sentinel"]) {
       base.characters[character] = normalizeCharacterProgress(sourceCharacters[character], character);
     }
 
@@ -2464,7 +2870,10 @@ import {
     base.exploration.completed = !!sourceExploration.completed;
     base.exploration.horseUnlocked = !!sourceExploration.horseUnlocked;
     base.exploration.drakeUnlocked = !!sourceExploration.drakeUnlocked;
-    base.exploration.activeMountId = sourceExploration.activeMountId === "drake" ? "drake" : "horse";
+    base.exploration.courserUnlocked = !!sourceExploration.courserUnlocked;
+    base.exploration.activeMountId = sourceExploration.activeMountId === "drake" || sourceExploration.activeMountId === "courser"
+      ? sourceExploration.activeMountId
+      : "horse";
     base.exploration.mountTackId = sourceExploration.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
     const sourceBoons = sourceExploration.boons && typeof sourceExploration.boons === "object" ? sourceExploration.boons : {};
     base.exploration.boons.health = Math.max(0, Math.floor(numberOrZero(sourceBoons.health)));
@@ -2479,6 +2888,8 @@ import {
     }
     base.exploration.potionInventory = normalizePotionInventory(sourceExploration.potionInventory);
     base.exploration.potionCooldownBonus = clamp(Math.floor(numberOrZero(sourceExploration.potionCooldownBonus)), 0, 8);
+    base.exploration.herbs = clamp(Math.floor(numberOrZero(sourceExploration.herbs)), 0, HERB_POUCH_CAP);
+    base.exploration.herbHintSeen = !!sourceExploration.herbHintSeen;
     if (sourceExploration.position && typeof sourceExploration.position === "object") {
       const x = numberOrZero(sourceExploration.position.x);
       const z = numberOrZero(sourceExploration.position.z);
@@ -2510,6 +2921,10 @@ import {
         if (!progress.perks.includes("briarfall_pathcraft")) {
           progress.perks.push("briarfall_pathcraft");
         }
+      }
+      // Sentinels have no Briarfall kit, but the perk reward still applies.
+      if (!base.characters.sentinel.perks.includes("briarfall_pathcraft")) {
+        base.characters.sentinel.perks.push("briarfall_pathcraft");
       }
     }
 
@@ -2665,6 +3080,14 @@ import {
         { level: 7, name: "Heartseeker (C)" }
       ]);
     }
+    if (character === "sentinel") {
+      return sortUnlocks([
+        ...pouchSlots,
+        { level: 3, name: "Moulinet" },
+        { level: 5, name: "Billhook Pull (F)" },
+        { level: 8, name: "Skewer Charge (C)" }
+      ]);
+    }
     return sortUnlocks([
       ...pouchSlots,
       { level: 3, name: "Shield bash" },
@@ -2716,6 +3139,16 @@ import {
         maxGuard: 0,
         maxMana: 64 + steps * 6 + (boons.mana || 0),
         manaRegen: 11.5 + steps * 0.45,
+        potionCooldownMax: 18
+      };
+    } else if (character === "sentinel") {
+      // Vigor reuses the mana fields: second-tankiest health, but no block or
+      // dodge - the slow vigor regen is the brake on its melee control loop.
+      stats = {
+        maxHealth: 68 + steps * 5 + (boons.health || 0),
+        maxGuard: 0,
+        maxMana: 58 + steps * 5 + (boons.mana || 0),
+        manaRegen: 10.5 + steps * 0.4,
         potionCooldownMax: 18
       };
     } else {
@@ -2794,7 +3227,8 @@ import {
       exploration.potionInventory = normalizePotionInventory(exploration.potionInventory);
       exploration.completed = !!game.exploration.completed;
       if (!localGodModeEnabled()) {
-        exploration.horseUnlocked = exploration.horseUnlocked || (!!game.exploration.horse && game.exploration.horse.mountId !== "drake");
+        exploration.horseUnlocked = exploration.horseUnlocked
+          || (!!game.exploration.horse && (game.exploration.horse.mountId || "horse") === "horse");
       }
     }
     if (game.mode === "exploration" && game.state === "playing" && !localPlayerInSharedActivity()) {
@@ -2843,6 +3277,9 @@ import {
       if (quest.id === "skyDrake" && quest.state === "done") {
         saved.drakeUnlocked = true;
       }
+      if (quest.id === "duneCourser" && quest.state === "done") {
+        saved.courserUnlocked = true;
+      }
     }
     game.exploration.discovered = new Set(Array.isArray(saved.discovered) ? saved.discovered : []);
     game.exploration.respawnTownId = typeof saved.respawnTownId === "string" ? saved.respawnTownId : "";
@@ -2883,8 +3320,14 @@ import {
   }
 
   function storedPotionFromDrop(potion) {
-    if (!potion || potion.kind === "wizard") {
+    if (!potion) {
       return null;
+    }
+    if (potion.kind === "wizard") {
+      // Pocketed Healing Draughts become standard stored potions: the heal
+      // amount carries over, the shared splash/radius support behavior does
+      // not. Drunk later with H like any pouch potion.
+      return normalizePotionInventoryItem({ kind: "small", healAmount: potion.healAmount });
     }
     return normalizePotionInventoryItem({
       kind: potion.fullHeal || potion.kind === "full" ? "full" : "small",
@@ -2892,9 +3335,19 @@ import {
     });
   }
 
+  function potionStorableNow(potion) {
+    if (!potion) {
+      return false;
+    }
+    if (potion.kind !== "wizard") {
+      return true;
+    }
+    return clock.elapsedTime - (potion.droppedAt || 0) >= WIZARD_DRAUGHT_POCKET_DELAY;
+  }
+
   function storedPotionFromMessage(message) {
     return normalizePotionInventoryItem({
-      kind: message.fullHeal || message.kind === "full" ? "full" : "small",
+      kind: message.fullHeal || message.potionKind === "full" ? "full" : "small",
       healAmount: message.healAmount
     });
   }
@@ -2988,6 +3441,28 @@ import {
     return useStoredPotionAtIndex(0);
   }
 
+  // ---- Valley herbs: counted gathering material for potion benches ---------
+  function herbCount() {
+    if (!progression || !progression.exploration) {
+      return 0;
+    }
+    progression.exploration.herbs = clamp(Math.floor(numberOrZero(progression.exploration.herbs)), 0, HERB_POUCH_CAP);
+    return progression.exploration.herbs;
+  }
+
+  function gainHerb() {
+    const count = herbCount();
+    if (count >= HERB_POUCH_CAP) {
+      return false;
+    }
+    progression.exploration.herbs = count + 1;
+    return true;
+  }
+
+  function spendHerbs(amount) {
+    progression.exploration.herbs = Math.max(0, herbCount() - Math.max(0, Math.floor(numberOrZero(amount))));
+  }
+
   const potionSlotButtons = [];
 
   function ensurePotionSlotButtons() {
@@ -3047,6 +3522,12 @@ import {
         : item ? storedPotionName(item) + " - use when wounded" : "Empty potion slot";
       button.setAttribute("aria-label", button.title);
     }
+    if (herbReadout && herbCountText) {
+      const herbs = herbCount();
+      herbReadout.hidden = herbs <= 0;
+      herbCountText.textContent = herbs + "/" + HERB_POUCH_CAP;
+      herbReadout.title = "Valley herbs - brew potions at any village potion bench";
+    }
   }
 
   function restoreSavedTownRespawnPoint() {
@@ -3098,7 +3579,8 @@ import {
       localReturnPosition: null,
       localOptOutActivityId: "",
       localSpectatorActivityId: "",
-      localPendingActivityId: ""
+      localPendingActivityId: "",
+      localXpEarned: 0
     };
   }
 
@@ -3124,7 +3606,9 @@ import {
       localOptOutActivityId: "",
       localSpectatorActivityId: "",
       localPendingActivityId: "",
-      localRewardClaimIds: []
+      localRewardClaimIds: [],
+      localXpEarned: 0,
+      localFirstClearBoon: false
     };
   }
 
@@ -3150,7 +3634,18 @@ import {
       yieldCopy: "Rang out from the Underworks",
       serviceBody: "Crownford's wall has drains under it older than my better hammers. Storm silt jammed the sluices, then things with teeth found the dry ledges. Clear the bell chambers, keep to the stone, and come back with your boots full of water instead of blood.",
       serviceStatusOpen: "The Bellwater grate is open. Clear the sealed chamber, or ring out before the room is clear.",
-      serviceStatusBlocked: "The Underworks are sealed until the current activity ends."
+      serviceStatusBlocked: "The Underworks are sealed until the current activity ends.",
+      result: {
+        victoryTitle: "Daylight Again",
+        victoryFlavor: "The sluice runs clear behind you. You climb out of the dark with Crownford's noise overhead.",
+        defeatTitle: "Hauled To The Grate",
+        defeatFlavor: "Rough hands pull you up through the old grate. The Underworks keep what you earned this level.",
+        defeatWhere: "You wake at the Bellwater grate",
+        withdrawTitle: "Rang Out",
+        withdrawFlavor: "The return bell answers and the grate swings open. The chamber stays sealed behind you, its trouble unspent.",
+        endedTitle: "The Bell Calls You Out",
+        endedFlavor: "The chamber empties and the return bell tolls. You come up into daylight on your own feet."
+      }
     },
     [SILTWELL_DUNGEON_ID]: {
       id: SILTWELL_DUNGEON_ID,
@@ -3173,7 +3668,18 @@ import {
       yieldCopy: "Rang out from Siltwell Cistern",
       serviceBody: "The old cistern keeps the desert road alive when the wells run mean. Spiders webbed the rope slots, and bone-things woke where the water should be. If you go in, clear the chamber fast and pull the well bell before the sand changes its mind.",
       serviceStatusOpen: "The Siltwell mouth is open. Clear the wellstone chamber, or ring out before the room is clear.",
-      serviceStatusBlocked: "Siltwell is sealed until the current activity ends."
+      serviceStatusBlocked: "Siltwell is sealed until the current activity ends.",
+      result: {
+        victoryTitle: "The Well Runs Clear",
+        victoryFlavor: "The wellstone chamber stands quiet behind you. You come up out of the cool dark into the desert glare.",
+        defeatTitle: "Dragged Into The Light",
+        defeatFlavor: "You wake at the shade post with sand in your teeth. The cistern keeps what you earned this level.",
+        defeatWhere: "You wake at the Siltwell shade post",
+        withdrawTitle: "Rang Out",
+        withdrawFlavor: "The well bell answers and the rope draws you up. The wellstone keeps its trouble for another day.",
+        endedTitle: "The Bell Calls You Up",
+        endedFlavor: "The well bell tolls and the chamber empties. You climb out on your own feet."
+      }
     }
   };
 
@@ -3459,13 +3965,135 @@ import {
     }
   }
 
+  // handlePlayerDefeat applies the current-level XP wipe before the activity
+  // end paths run; it stashes the penalty here so the outcome overlay can
+  // report exactly what was lost without recomputing.
+  let pendingActivityDeathPenalty = null;
+
+  function consumePendingActivityDeathPenalty() {
+    const penalty = pendingActivityDeathPenalty;
+    pendingActivityDeathPenalty = null;
+    return penalty;
+  }
+
+
+  function crownringResultPresentation(reason, info) {
+    const atBell = info.phase === "intermission" || !!info.exitOpen;
+    const wavesCleared = Math.max(0, atBell ? info.wave : info.wave - 1);
+    const xpEarned = Math.max(0, Math.floor(numberOrZero(info.xpEarned)));
+    const rows = [{ text: wavesCleared === 1 ? "1 wave cleared" : wavesCleared + " waves cleared" }];
+    if (xpEarned > 0) {
+      rows.push({ text: "Crownring purse kept: +" + xpEarned + " XP" });
+    }
+    const base = { kicker: "The Crownring", rows };
+    if (reason === "defeat" && info.personalFall) {
+      if (info.penalty) {
+        rows.push({ text: "Level " + info.penalty.level + " progress lost", muted: true });
+      }
+      rows.push({ text: "You wake at the Crownford infirmary", muted: true });
+      return Object.assign(base, {
+        tone: "defeat",
+        title: "Carried From The Sand",
+        flavor: "The stewards pull you clear before the Crownring keeps more than your pride. You wake under the infirmary beams.",
+        duration: 4.2,
+        sfx: "arenaDefeat"
+      });
+    }
+    if (reason === "defeat") {
+      // The run collapsed (the host fell) while this player was still standing.
+      return Object.assign(base, {
+        tone: "withdraw",
+        title: "The Match Is Called",
+        flavor: "The last bell rings and the gates swing wide. You leave the sand on your own feet.",
+        duration: 3.6,
+        sfx: "arenaYield"
+      });
+    }
+    if (atBell) {
+      // Leaving at the bell is the honorable way out: the run counts.
+      return Object.assign(base, {
+        tone: "victory",
+        title: "The Crowd Stands For You",
+        flavor: "You walk out through the steward's gate with your name still attached to you. The purse rides home in your pocket.",
+        duration: 3.8,
+        sfx: "arenaMilestone"
+      });
+    }
+    rows.push({ text: "Wave " + Math.max(1, info.wave) + " purse forfeited", muted: true });
+    return Object.assign(base, {
+      tone: "withdraw",
+      title: "Rang Out",
+      flavor: "The yield bell carries over the sand and the gates open. This wave's purse stays on the steward's table.",
+      duration: 3.4,
+      sfx: "arenaYield"
+    });
+  }
+
+  function dungeonResultPresentation(def, reason, info) {
+    const copy = def.result || {};
+    const xpEarned = Math.max(0, Math.floor(numberOrZero(info.xpEarned)));
+    const base = { kicker: def.name };
+    if (reason === "complete") {
+      const rows = [{ text: "Chamber cleared" }];
+      if (xpEarned > 0) {
+        rows.push({ text: "+" + xpEarned + " XP" });
+      }
+      if (info.firstClearBoon) {
+        rows.push({ text: "First-clear boon granted" });
+      }
+      return Object.assign(base, {
+        tone: "victory",
+        title: copy.victoryTitle || "Chamber Cleared",
+        flavor: copy.victoryFlavor || "",
+        rows,
+        duration: 3.8,
+        sfx: "arenaMilestone"
+      });
+    }
+    if (reason === "defeat" && info.personalFall) {
+      const rows = [{ text: copy.defeatWhere || def.defeatCopy, muted: true }];
+      if (info.penalty) {
+        rows.push({ text: "Level " + info.penalty.level + " progress lost", muted: true });
+      }
+      rows.push({ text: "Chamber reward goes unclaimed", muted: true });
+      return Object.assign(base, {
+        tone: "defeat",
+        title: copy.defeatTitle || "Pulled Out",
+        flavor: copy.defeatFlavor || "",
+        rows,
+        duration: 4.2,
+        sfx: "arenaDefeat"
+      });
+    }
+    if (reason === "defeat") {
+      return Object.assign(base, {
+        tone: "withdraw",
+        title: copy.endedTitle || "The Bell Calls You Out",
+        flavor: copy.endedFlavor || "",
+        rows: [{ text: "Chamber reward goes unclaimed", muted: true }],
+        duration: 3.4,
+        sfx: "arenaYield"
+      });
+    }
+    return Object.assign(base, {
+      tone: "withdraw",
+      title: copy.withdrawTitle || "Rang Out",
+      flavor: copy.withdrawFlavor || "",
+      rows: [{ text: "Chamber reward goes unclaimed", muted: true }],
+      duration: 3.4,
+      sfx: "arenaYield"
+    });
+  }
+
   function enterLocalArenaActivity() {
     const activity = game.exploration.arenaActivity;
     if (!activity.active) {
       return;
     }
     activity.localReturnPosition = { x: player.position.x, z: player.position.z };
+    activity.localXpEarned = 0;
     closeQuestDialog();
+    hideActivityResult(true);
     restoreGameplayControlAfterActivityEntry();
     parkHorseNear(player.position);
     clearPlayerProjectiles();
@@ -3477,6 +4105,7 @@ import {
     player.group.position.copy(player.position);
     player.group.rotation.y = 0;
     game.cameraYaw = 0;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     playSfx("arenaStart", 1);
     showBanner("Crownring opened - press Y to yield", 3);
     updateHud();
@@ -3496,12 +4125,26 @@ import {
       player.group.position.copy(player.position);
     }
     game.cameraYaw = Math.PI;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     updateHud();
   }
 
-  function exitLocalArenaActivity(reason = "yield") {
+  function exitLocalArenaActivity(reason = "yield", endInfo = null) {
     const activity = game.exploration.arenaActivity;
     const defeated = reason === "defeat";
+    // Capture run facts before the teleport/reset below clears them. The
+    // snapshot path passes pre-overwrite values via endInfo; local end paths
+    // read the still-live activity.
+    const presentation = crownringResultPresentation(reason, {
+      wave: endInfo?.wave ?? (activity.wave || game.wave),
+      phase: endInfo?.phase ?? activity.phase,
+      exitOpen: endInfo?.exitOpen ?? activity.exitOpen,
+      xpEarned: endInfo?.xpEarned ?? activity.localXpEarned,
+      // applyDeathLevelPenalty floors health back to 1, so a health check
+      // cannot detect a personal fall; the local end path passes it explicitly.
+      personalFall: defeated && (endInfo?.personalFall ?? player.health <= 0),
+      penalty: consumePendingActivityDeathPenalty()
+    });
     const returnPosition = defeated
       ? crownfordInfirmaryPosition()
       : new THREE.Vector3(activity.localReturnPosition?.x ?? activity.returnPosition?.x ?? game.exploration.spawn.x, 0, activity.localReturnPosition?.z ?? activity.returnPosition?.z ?? game.exploration.spawn.z);
@@ -3521,8 +4164,8 @@ import {
     player.group.rotation.y = player.yaw;
     parkHorseNear(player.position);
     spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
-    playSfx(defeated ? "arenaDefeat" : "arenaYield", 1.1);
-    showBanner(defeated ? "Recovered at Crownford infirmary" : "Yielded from the Crownring", 2.6);
+    playSfx(presentation.sfx, 1.1);
+    showActivityResult(presentation);
     saveProgress();
     updateHud();
   }
@@ -3533,7 +4176,10 @@ import {
       return;
     }
     activity.localReturnPosition = { x: player.position.x, z: player.position.z };
+    activity.localXpEarned = 0;
+    activity.localFirstClearBoon = false;
     closeQuestDialog();
+    hideActivityResult(true);
     restoreGameplayControlAfterActivityEntry();
     parkHorseNear(player.position);
     clearPlayerProjectiles();
@@ -3545,6 +4191,7 @@ import {
     player.group.position.copy(player.position);
     player.group.rotation.y = 0;
     game.cameraYaw = 0;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     playSfx("arenaStart", 0.72);
     showBanner(activeDungeonDefinition().startCopy, 3);
     updateHud();
@@ -3564,14 +4211,21 @@ import {
       player.group.position.copy(player.position);
     }
     game.cameraYaw = Math.PI;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     updateHud();
   }
 
-  function exitLocalDungeonActivity(reason = "yield") {
+  function exitLocalDungeonActivity(reason = "yield", endInfo = null) {
     const activity = game.exploration.dungeonActivity;
     const defeated = reason === "defeat";
     const completed = reason === "complete";
     const def = activeDungeonDefinition();
+    const presentation = dungeonResultPresentation(def, reason, {
+      xpEarned: endInfo?.xpEarned ?? activity.localXpEarned,
+      firstClearBoon: endInfo?.firstClearBoon ?? activity.localFirstClearBoon,
+      personalFall: defeated && (endInfo?.personalFall ?? player.health <= 0),
+      penalty: consumePendingActivityDeathPenalty()
+    });
     const fallback = dungeonRecoveryPosition(def.id);
     const returnPosition = defeated
       ? fallback
@@ -3590,8 +4244,8 @@ import {
     player.group.rotation.y = player.yaw;
     parkHorseNear(player.position);
     spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
-    playSfx(defeated ? "arenaDefeat" : completed ? "arenaMilestone" : "arenaYield", 0.95);
-    showBanner(defeated ? def.defeatCopy : completed ? def.completeCopy : def.yieldCopy, 2.6);
+    playSfx(presentation.sfx, 0.95);
+    showActivityResult(presentation);
     saveProgress();
     updateHud();
   }
@@ -3609,6 +4263,12 @@ import {
     const localOptOutActivityId = activity.localOptOutActivityId;
     const localSpectatorActivityId = activity.localSpectatorActivityId;
     const localPendingActivityId = activity.localPendingActivityId;
+    const localXpEarned = activity.localXpEarned;
+    // The host's final snapshot resets wave/phase, so remember the live values
+    // for the outcome overlay before they are overwritten.
+    const prevWave = activity.wave;
+    const prevPhase = activity.phase;
+    const prevExitOpen = activity.exitOpen;
     activity.active = !!snapshot.active;
     activity.phase = snapshot.phase || (activity.active ? "wave" : "idle");
     activity.activityId = nextActivityId;
@@ -3616,6 +4276,7 @@ import {
     activity.localOptOutActivityId = sameActivity ? localOptOutActivityId : "";
     activity.localSpectatorActivityId = sameActivity ? localSpectatorActivityId : "";
     activity.localPendingActivityId = sameActivity ? localPendingActivityId : "";
+    activity.localXpEarned = sameActivity ? localXpEarned : 0;
     activity.wave = Math.max(0, Math.floor(numberOrZero(snapshot.wave)));
     activity.center = snapshot.center || { x: 0, z: 0 };
     activity.radius = Math.max(8, numberOrZero(snapshot.radius) || arenaRadius);
@@ -3631,7 +4292,12 @@ import {
     if (nowLocal && !wasLocal) {
       enterLocalArenaActivity();
     } else if (!nowLocal && wasLocal) {
-      exitLocalArenaActivity(activity.endedReason || "yield");
+      exitLocalArenaActivity(activity.endedReason || "yield", {
+        wave: prevWave,
+        phase: prevPhase,
+        exitOpen: prevExitOpen,
+        xpEarned: activity.localXpEarned
+      });
     } else {
       setArenaVisible(nowLocal);
     }
@@ -3663,6 +4329,8 @@ import {
     const localSpectatorActivityId = activity.localSpectatorActivityId;
     const localPendingActivityId = activity.localPendingActivityId;
     const localRewardClaimIds = activity.localRewardClaimIds;
+    const localXpEarned = activity.localXpEarned;
+    const localFirstClearBoon = activity.localFirstClearBoon;
     activity.active = !!snapshot.active;
     activity.phase = activity.active ? (snapshot.phase || "active") : (snapshot.phase || "idle");
     activity.activityId = nextActivityId;
@@ -3674,6 +4342,8 @@ import {
     activity.localSpectatorActivityId = sameActivity ? localSpectatorActivityId : "";
     activity.localPendingActivityId = sameActivity ? localPendingActivityId : "";
     activity.localRewardClaimIds = sameActivity ? localRewardClaimIds : [];
+    activity.localXpEarned = sameActivity ? localXpEarned : 0;
+    activity.localFirstClearBoon = sameActivity ? localFirstClearBoon : false;
     activity.center = snapshot.center || { x: 0, z: 0 };
     activity.radius = Math.max(8, numberOrZero(snapshot.radius) || DUNGEON_RADIUS);
     activity.participants = Array.isArray(snapshot.participants) ? snapshot.participants.slice(0, 8) : [];
@@ -3687,7 +4357,10 @@ import {
     if (nowLocal && !wasLocal) {
       enterLocalDungeonActivity();
     } else if (!nowLocal && wasLocal) {
-      exitLocalDungeonActivity(activity.phase === "completed" ? "complete" : activity.endedReason || "yield");
+      exitLocalDungeonActivity(activity.phase === "completed" ? "complete" : activity.endedReason || "yield", {
+        xpEarned: activity.localXpEarned,
+        firstClearBoon: activity.localFirstClearBoon
+      });
     } else {
       setDungeonVisible(nowLocal);
     }
@@ -3859,6 +4532,7 @@ import {
     });
 
     closeQuestDialog();
+    hideActivityResult(true);
     restoreGameplayControlAfterActivityEntry();
     parkHorseNear(returnPosition);
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
@@ -3938,8 +4612,11 @@ import {
     const xp = Math.max(0, Math.floor(numberOrZero(message.xp) || def.clearXp));
     awardExplorationXp(xp);
     const firstClear = message.firstClearBoon !== false && applyDungeonFirstClearBoon(def.id);
-    playSfx("arenaMilestone", 0.95);
-    showBanner(def.clearCopy + " +" + xp + " XP" + (firstClear ? " + first-clear boon" : ""), 3);
+    // Captured for the outcome overlay shown by exitLocalDungeonActivity; the
+    // overlay replaces the old transient clear banner/chime here so the result
+    // is presented once, with the real granted values.
+    activity.localXpEarned += xp;
+    activity.localFirstClearBoon = activity.localFirstClearBoon || firstClear;
     saveProgress();
     updateHud();
     return true;
@@ -4054,6 +4731,7 @@ import {
     });
 
     closeQuestDialog();
+    hideActivityResult(true);
     restoreGameplayControlAfterActivityEntry();
     parkHorseNear(returnPosition);
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
@@ -4066,6 +4744,7 @@ import {
     player.group.position.copy(player.position);
     player.group.rotation.y = 0;
     game.cameraYaw = 0;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     spawnDungeonEncounter();
     playSfx("arenaStart", 0.72);
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
@@ -4112,7 +4791,7 @@ import {
       activity.defeatedParticipants = Array.from(new Set([...activity.defeatedParticipants, online.localId])).slice(0, 8);
     }
     clearArenaActivityActors(activityId);
-    exitLocalDungeonActivity(reason);
+    exitLocalDungeonActivity(reason, { personalFall: defeated });
     resetDungeonActivityState();
     game.exploration.dungeonActivity.activityId = activityId;
     game.exploration.dungeonActivity.dungeonId = def.id;
@@ -4134,7 +4813,7 @@ import {
     const defeated = reason === "defeat";
     const activityId = activity.activityId;
     clearArenaActivityActors(activity.activityId);
-    exitLocalArenaActivity(reason);
+    exitLocalArenaActivity(reason, { personalFall: defeated });
     resetArenaActivityState();
     game.exploration.arenaActivity.activityId = activityId;
     game.exploration.arenaActivity.endedReason = reason;
@@ -4157,6 +4836,7 @@ import {
     const activity = game.exploration.arenaActivity;
     const xp = crownringWaveXp(wave);
     awardExplorationXp(xp);
+    activity.localXpEarned += xp;
     updateQuestProgress("crownringTrial", 1);
     if (online.connected) {
       sendOnlineMessage({
@@ -4186,6 +4866,9 @@ import {
     }
     const xp = Math.max(0, Math.floor(numberOrZero(message.xp)));
     awardExplorationXp(xp);
+    if (xp > 0 && localPlayerInArenaActivity()) {
+      game.exploration.arenaActivity.localXpEarned += xp;
+    }
     updateQuestProgress("crownringTrial", 1);
     if (xp > 0) {
       const wave = Math.max(0, Math.floor(numberOrZero(message.wave)));
@@ -4215,10 +4898,13 @@ import {
     game.questItems.length = 0;
     game.quests.length = 0;
     game.activeNpc = null;
+    game.activeBench = null;
     game.dialogNpc = null;
     game.exploration.lakes.length = 0;
     game.exploration.villages.length = 0;
     game.exploration.biomes.length = 0;
+    game.exploration.herbNodes.length = 0;
+    game.exploration.potionBenches.length = 0;
     game.exploration.colliders.length = 0;
     game.exploration.colliderGrid.clear();
     game.exploration.roads.length = 0;
@@ -4226,6 +4912,7 @@ import {
     game.exploration.terrainFlatZones.length = 0;
     game.exploration.city = null;
     game.exploration.arenaCity = null;
+    game.exploration.bellwaterDrainage = null;
     game.exploration.dungeonPoi = null;
     game.exploration.dungeonPois = [];
     game.exploration.respawnTownId = "";
@@ -4369,24 +5056,57 @@ import {
     const length = horizontal ? width : depth;
     const thickness = horizontal ? depth : width;
     const seg = new THREE.Group();
-    setExplorationLocalGroundPosition(seg, cx, cz);
+    seg.position.set(cx, 0, cz);
     if (!horizontal) {
       seg.rotation.y = Math.PI / 2;
     }
-    const base = makeBox(length, height * 0.32, thickness + 0.3, material, 0, height * 0.16, 0);
-    const body = makeBox(length, height, thickness, material, 0, height / 2, 0);
-    seg.add(base, body);
-    // Single centered crenellated parapet keeps the silhouette readable while
-    // halving the merlon draw calls vs a double-faced parapet.
-    addMerlonRow(seg, length, {
-      material,
-      y: height,
-      z: 0,
-      height: 0.54,
-      depth: Math.min(thickness + 0.12, 0.62),
-      merlonW: 0.62,
-      gap: 0.54
-    });
+    // Seg-local +x maps to world +x when horizontal, world -z when rotated.
+    const groundAt = (u) => explorationGroundLocalY(
+      cx + (horizontal ? u : 0),
+      cz + (horizontal ? 0 : -u)
+    );
+    // City wall rings can cross a flat-zone blend band, so a long run sampled
+    // once at its center floats/buries at the ends. Sample along the run and
+    // step the wall in short terraced pieces where the ground actually slopes;
+    // flat runs stay a single piece, identical to the old silhouette.
+    let lowest = Infinity;
+    let highest = -Infinity;
+    for (let i = 0; i <= 4; i += 1) {
+      const sample = groundAt(-length / 2 + (i / 4) * length);
+      lowest = Math.min(lowest, sample);
+      highest = Math.max(highest, sample);
+    }
+    const span = highest - lowest;
+    const pieces = Math.min(
+      Math.max(1, Math.ceil(span / 0.55)),
+      Math.max(1, Math.floor(length / 4))
+    );
+    const pieceLength = length / pieces;
+    const footingDepth = 1.7;
+    for (let i = 0; i < pieces; i += 1) {
+      const uCenter = -length / 2 + (i + 0.5) * pieceLength;
+      const piece = new THREE.Group();
+      piece.position.set(uCenter, groundAt(uCenter), 0);
+      // Battered base course continues below grade like the boardwalk posts,
+      // so downhill piece ends stay rooted instead of showing a floating slab.
+      const baseHeight = height * 0.32 + footingDepth;
+      const base = makeBox(pieceLength, baseHeight, thickness + 0.3, material, 0, baseHeight / 2 - footingDepth, 0);
+      const body = makeBox(pieceLength, height, thickness, material, 0, height / 2, 0);
+      piece.add(base, body);
+      // Single centered crenellated parapet keeps the silhouette readable while
+      // halving the merlon draw calls vs a double-faced parapet. Per-piece rows
+      // make the parapet step with the terrain like terraced construction.
+      addMerlonRow(piece, pieceLength, {
+        material,
+        y: height,
+        z: 0,
+        height: 0.54,
+        depth: Math.min(thickness + 0.12, 0.62),
+        merlonW: 0.62,
+        gap: 0.54
+      });
+      seg.add(piece);
+    }
     group.add(seg);
     addExplorationLineColliders(cx, cz, width, depth, "structure");
     return seg;
@@ -4402,7 +5122,10 @@ import {
     setExplorationLocalGroundPosition(tower, cx, cz);
     const shaft = makeCylinder(radius, radius * 1.18, height, 14, material, 0, height / 2, 0);
     const corbel = makeCylinder(radius + 0.18, radius + 0.04, 0.3, 14, material, 0, height + 0.15, 0);
-    tower.add(shaft, corbel);
+    // Footing continues below grade so towers on a flat-zone blend slope do
+    // not show a gap under the downhill side of the shaft.
+    const footing = makeCylinder(radius * 1.18, radius * 1.32, 1.7, 14, material, 0, -0.85, 0);
+    tower.add(shaft, corbel, footing);
     addCrenelRing(tower, radius + 0.06, {
       material,
       y: height + 0.3,
@@ -5329,18 +6052,19 @@ import {
     };
   }
 
-  const BELLWATER_UNDERWORKS_SHORE_LAKE = { x: 68, z: 85, rx: 17, rz: 10 };
-
+  // T-029: the shore lake that used to anchor this placement was removed
+  // (it kept flooding the entrance approach). Coordinates are kept identical
+  // to the old lake-derived values so the road, flat zone, and dungeon
+  // return point stay where players learned them.
   function bellwaterUnderworksPlacement() {
-    const lake = BELLWATER_UNDERWORKS_SHORE_LAKE;
     const rotation = -2.42;
-    const x = lake.x + 4;
-    const z = lake.z + lake.rz + 7.2;
+    const x = 72;
+    const z = 102.2;
     return {
       x,
       z,
       rotation,
-      approach: { x: lake.x + lake.rx + 8.5, z },
+      approach: { x: 93.5, z },
       returnLocal: offsetFromFacing(x, z, rotation, 6.2)
     };
   }
@@ -5456,6 +6180,50 @@ import {
     const legA = makeBox(0.12, 0.48, 0.12, materials.wood, -0.48, 0.24, -0.08);
     const legB = makeBox(0.12, 0.48, 0.12, materials.wood, 0.48, 0.24, -0.08);
     bench.add(seat, legA, legB);
+    return bench;
+  }
+
+  // Potion bench: an interactable brewing work table placed near every
+  // settlement well (and the Crownford beacon plaza). Players press E beside
+  // it to brew gathered valley herbs into pouch potions. Biome-styled frame,
+  // terrain-conforming via makeDecorGroup, collider so it reads as furniture.
+  function addPotionBench(group, village, bx, bz, rotation) {
+    const benchStyles = {
+      desert: { top: materials.adobe, frame: materials.wood },
+      mountain: { top: materials.paleWood, frame: materials.darkStone },
+      swamp: { top: materials.swampPlank, frame: materials.swampPlank },
+      briar: { top: materials.rootwood, frame: materials.rootwood },
+      city: { top: materials.paleWood, frame: materials.darkStone }
+    };
+    const style = benchStyles[village.biome] || { top: materials.paleWood, frame: materials.wood };
+    const bench = makeDecorGroup(group, bx, bz, rotation, 1);
+    const top = makeBox(1.7, 0.1, 0.78, style.top, 0, 0.86, 0);
+    const apron = makeBox(1.58, 0.12, 0.66, style.frame, 0, 0.76, 0);
+    const legA = makeBox(0.13, 0.82, 0.13, style.frame, -0.72, 0.41, -0.27);
+    const legB = makeBox(0.13, 0.82, 0.13, style.frame, 0.72, 0.41, -0.27);
+    const legC = makeBox(0.13, 0.82, 0.13, style.frame, -0.72, 0.41, 0.27);
+    const legD = makeBox(0.13, 0.82, 0.13, style.frame, 0.72, 0.41, 0.27);
+    const mortar = makeCylinder(0.13, 0.1, 0.16, 10, materials.stone, -0.42, 0.99, 0.08);
+    const pestle = makeCylinder(0.03, 0.045, 0.3, 6, materials.wood, -0.28, 1.05, -0.12);
+    pestle.rotation.z = -0.9;
+    const bottleA = makeCylinder(0.06, 0.075, 0.2, 8, materials.potionGlass.clone(), 0.18, 1.01, 0.14);
+    const liquidA = makeCylinder(0.05, 0.06, 0.1, 8, materials.potionLiquid.clone(), 0.18, 0.97, 0.14);
+    const bottleB = makeCylinder(0.05, 0.065, 0.17, 8, materials.potionGlass.clone(), 0.36, 1.0, -0.08);
+    const kettle = makeCylinder(0.12, 0.14, 0.16, 10, materials.iron, -0.05, 0.99, -0.2);
+    // Small drying rack with hanging herb bundles.
+    const rackPost = makeBox(0.07, 0.72, 0.07, style.frame, 0.66, 1.27, 0.26);
+    const rackArm = makeBox(0.66, 0.06, 0.06, style.frame, 0.36, 1.6, 0.26);
+    const bundleA = makeCone(0.07, 0.26, 5, materials.broadleaf, 0.26, 1.47, 0.26);
+    bundleA.rotation.x = Math.PI;
+    const bundleB = makeCone(0.06, 0.22, 5, materials.broadleaf, 0.46, 1.5, 0.26);
+    bundleB.rotation.x = Math.PI;
+    bench.add(top, apron, legA, legB, legC, legD, mortar, pestle, bottleA, liquidA, bottleB, kettle, rackPost, rackArm, bundleA, bundleB);
+    addExplorationCollider(bx, bz, 1.05, "decor");
+    game.exploration.potionBenches.push({
+      x: game.exploration.origin.x + bx,
+      z: game.exploration.origin.z + bz,
+      villageId: village.id
+    });
     return bench;
   }
 
@@ -6539,7 +7307,7 @@ import {
 
     const rubbleSpots = [
       [-3.8, -1.7, true],
-      [3.4, -1.9, false],
+      [5.6, -3.2, false],
       [-2.4, 2.9, false],
       [2.8, 2.6, true]
     ];
@@ -6551,6 +7319,68 @@ import {
       const point = worldFromPoi(rx, rz);
       addExplorationRock(group, point.x, point.z, random, large);
     }
+
+    // T-029 Underworks drainage: a grated culvert in the facade's flank
+    // spills a thin waterfall into a shallow puddle. Replaces the removed
+    // shore lake so the place still earns the "Bellwater" name. Walk-through
+    // water: no collider, no flat zone, no lights. Animated by
+    // updateBellwaterDrainage (three sine updates per frame, no particles).
+    const culvertSpot = offsetFromFacing(x, z, rotation, 1.05, 3.0);
+    const puddleSpot = offsetFromFacing(x, z, rotation, 2.2, 3.75);
+    const fallDx = puddleSpot.x - culvertSpot.x;
+    const fallDz = puddleSpot.z - culvertSpot.z;
+    const drain = makeDecorGroup(group, culvertSpot.x, culvertSpot.z, Math.atan2(-fallDx, -fallDz), 1);
+    drain.add(makeBox(0.34, 1.42, 0.56, materials.rubble, -0.5, 0.71, 0.16));
+    drain.add(makeBox(0.34, 1.42, 0.56, materials.rubble, 0.5, 0.71, 0.16));
+    drain.add(makeBox(1.36, 0.36, 0.6, materials.darkStone, 0, 1.52, 0.16));
+    drain.add(makeBox(0.66, 0.92, 0.3, interiorMaterial, 0, 0.92, 0.24));
+    for (const barX of [-0.17, 0, 0.17]) {
+      drain.add(makeBox(0.05, 0.78, 0.05, materials.iron, barX, 0.95, 0.06));
+    }
+    drain.add(makeBox(0.88, 0.16, 0.5, materials.darkStone, 0, 0.56, -0.12));
+
+    const culvertGroundY = explorationGroundLocalY(culvertSpot.x, culvertSpot.z);
+    const puddleGroundY = explorationGroundLocalY(puddleSpot.x, puddleSpot.z);
+    const puddle = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.04, 28), materials.water.clone());
+    setExplorationLocalGroundPosition(puddle, puddleSpot.x, puddleSpot.z, LAKE_SURFACE_LIFT);
+    puddle.scale.set(1.55, 1, 1.15);
+    puddle.rotation.y = drain.rotation.y;
+    puddle.renderOrder = LAKE_SURFACE_RENDER_ORDER;
+    puddle.receiveShadow = true;
+    group.add(puddle);
+
+    // Ribbon heights are relative to the drain group's ground anchor; the
+    // puddle surface is sampled at its own (x, z) so the sheet always lands
+    // on the water even if the ground tilts a little between the two points.
+    const surfaceY = puddleGroundY - culvertGroundY + LAKE_SURFACE_LIFT;
+    const mouthY = 0.72;
+    const fallHeight = Math.max(0.45, mouthY - surfaceY);
+    const ribbonMaterial = materials.water.clone();
+    ribbonMaterial.opacity = 0.82;
+    ribbonMaterial.color.set(0x5fb3d9);
+    const ribbon = makeBox(0.42, fallHeight, 0.07, ribbonMaterial, 0, mouthY - fallHeight / 2, -0.45);
+    ribbon.rotation.x = 0.08;
+    const backSheetMaterial = materials.water.clone();
+    backSheetMaterial.opacity = 0.5;
+    const backSheet = makeBox(0.3, fallHeight * 0.85, 0.06, backSheetMaterial, 0.05, mouthY - fallHeight * 0.55, -0.34);
+    drain.add(ribbon, backSheet);
+
+    const foamMaterial = materials.water.clone();
+    foamMaterial.color.set(0xd6edf6);
+    foamMaterial.opacity = 0.55;
+    const foam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.035, 18), foamMaterial);
+    foam.position.set(0, surfaceY + 0.03, -0.62);
+    foam.scale.set(1.25, 1, 0.85);
+    foam.renderOrder = LAKE_SURFACE_RENDER_ORDER + 1;
+    drain.add(foam);
+
+    game.exploration.bellwaterDrainage = {
+      ribbon,
+      backSheet,
+      foam,
+      mouthY,
+      fallHeight
+    };
 
     const scoutSpot = offsetFromFacing(x, z, rotation, 6.0, 2.7);
     const scout = createFriendlyNpc(
@@ -6744,7 +7574,8 @@ import {
   }
 
   function addExplorationLake(group, x, z, rx, rz, random) {
-    registerExplorationFlatZone(x, z, Math.max(rx, rz) + 2.5, 6.5, null, 0.82);
+    // The lake's flat zone is registered up front in setupExplorationWorld
+    // (before the ground mesh bakes) - do not re-register it here (T-025).
     const lake = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 48), materials.water.clone());
     setExplorationLocalGroundPosition(lake, x, z, LAKE_SURFACE_LIFT);
     lake.scale.set(rx, 1, rz);
@@ -6966,23 +7797,200 @@ import {
     return "";
   }
 
+  // ---- Themed quest collectibles (T-028) -----------------------------------
+  // Each collectible quest gets a bespoke procedural model matching its quest
+  // fiction (greenfire sprigs, oat sheaves, bog bells, beacon writs, sanctuary
+  // lamps, drake eggs, waterskin caches, road waymarks). All geometry goes
+  // through the cached primitive helpers, glow materials are pooled per quest
+  // color, and the only light stays the single per-item point light the old
+  // generic model already had. Builders add meshes to the item group and
+  // return the pulsing "bloom" mesh; the spinning ring and light are shared
+  // affordances added by createQuestItem so every type keeps the established
+  // hover/bob/spin pickup language.
+  const questItemGlowMaterialCache = new Map();
+
+  function questItemGlowMaterial(color) {
+    let material = questItemGlowMaterialCache.get(color);
+    if (!material) {
+      material = materials.questGlow.clone();
+      material.color.setHex(color);
+      questItemGlowMaterialCache.set(color, material);
+    }
+    return material;
+  }
+
+  // Weathered shrine bronze for the Mistfen bog bells.
+  const questBellBronzeMaterial = new THREE.MeshStandardMaterial({ color: 0x5f8a6e, metalness: 0.5, roughness: 0.52 });
+
+  // Greenfire Remedies: a leafy lakeshore sprig crowned with glowing buds.
+  function buildGreenfireSprigModel(itemGroup, glow) {
+    for (let i = 0; i < 5; i += 1) {
+      const angle = (i / 5) * TAU;
+      const leaf = makeCone(0.085, 0.34, 5, materials.broadleaf, Math.cos(angle) * 0.11, 0.13, Math.sin(angle) * 0.11);
+      leaf.rotation.x = Math.cos(angle) * 0.6;
+      leaf.rotation.z = -Math.sin(angle) * 0.6;
+      itemGroup.add(leaf);
+    }
+    const stem = makeCylinder(0.018, 0.028, 0.4, 6, materials.broadleaf, 0, 0.2, 0);
+    const bloom = makeSphere(0.095, glow, 0, 0.46, 0);
+    const budA = makeSphere(0.04, glow, 0.1, 0.34, 0.04);
+    const budB = makeSphere(0.04, glow, -0.08, 0.37, -0.07);
+    itemGroup.add(stem, bloom, budA, budB);
+    return bloom;
+  }
+
+  // Hooves for the Long Road: a leather-tied sheaf of wild oats, every stalk
+  // capped with a sun-gold seed head.
+  function buildWildOatsModel(itemGroup, glow) {
+    for (let i = 0; i < 4; i += 1) {
+      const angle = (i / 4) * TAU + 0.6;
+      const stalk = makeCylinder(0.012, 0.018, 0.46, 5, materials.dryBrush, Math.cos(angle) * 0.04, 0.25, Math.sin(angle) * 0.04);
+      stalk.rotation.x = Math.sin(angle) * 0.24;
+      stalk.rotation.z = -Math.cos(angle) * 0.24;
+      const head = makeCone(0.035, 0.13, 5, glow, 0, 0.28, 0);
+      stalk.add(head);
+      itemGroup.add(stalk);
+    }
+    const band = makeCylinder(0.06, 0.07, 0.07, 8, materials.darkLeather, 0, 0.12, 0);
+    const bloom = makeSphere(0.055, glow, 0, 0.54, 0);
+    itemGroup.add(band, bloom);
+    return bloom;
+  }
+
+  // Shoes for the Long Road: a posted roadwarden waymark - slate-capped post
+  // and fingerboard with a glowing route diamond, readable at a canter.
+  function buildWaymarkModel(itemGroup, glow) {
+    const post = makeCylinder(0.05, 0.07, 0.92, 7, materials.wood, 0, 0.46, 0);
+    const cap = makeCone(0.085, 0.12, 7, materials.cityRoof, 0, 0.97, 0);
+    const board = makeBox(0.42, 0.1, 0.04, materials.paleWood, 0.14, 0.74, 0);
+    const bloom = makeBox(0.1, 0.1, 0.1, glow, 0, 1.14, 0);
+    bloom.rotation.z = Math.PI / 4;
+    bloom.rotation.x = Math.PI / 4;
+    itemGroup.add(post, cap, board, bloom);
+    return bloom;
+  }
+
+  // Relics Under Reed: a moss-grown shrine bell raised onto a stone, still
+  // glowing at the mouth like the quest copy promises.
+  function buildBogBellModel(itemGroup, glow) {
+    const plinth = makeCylinder(0.17, 0.21, 0.14, 7, materials.darkStone, 0, 0.07, 0);
+    const relic = new THREE.Group();
+    relic.position.y = 0.14;
+    relic.rotation.z = 0.17;
+    const bell = makeCylinder(0.08, 0.15, 0.26, 9, questBellBronzeMaterial, 0, 0.21, 0);
+    const rim = makeCylinder(0.165, 0.175, 0.05, 9, questBellBronzeMaterial, 0, 0.085, 0);
+    const crown = makeSphere(0.04, questBellBronzeMaterial, 0, 0.36, 0);
+    const moss = makeSphere(0.1, materials.bogMoss, 0.05, 0.32, 0.02);
+    moss.scale.set(1.35, 0.5, 1.1);
+    relic.add(bell, rim, crown, moss);
+    const bloom = makeSphere(0.07, glow, 0, 0.16, 0);
+    itemGroup.add(plinth, relic, bloom);
+    return bloom;
+  }
+
+  // The Beacon Writs: a sealed guide-writ leaning on a stone plaque, the wax
+  // seal glowing with the beacon's mark.
+  function buildCityWritModel(itemGroup, glow) {
+    const plaque = makeBox(0.32, 0.06, 0.32, materials.stone, 0, 0.03, 0);
+    const scroll = makeCylinder(0.05, 0.05, 0.44, 8, materials.bone, 0, 0.3, 0);
+    scroll.rotation.z = 0.42;
+    const capTop = makeCylinder(0.06, 0.06, 0.025, 8, materials.paleWood, 0, 0.21, 0);
+    const capBottom = makeCylinder(0.06, 0.06, 0.025, 8, materials.paleWood, 0, -0.21, 0);
+    const bloom = makeSphere(0.055, glow, 0.06, -0.02, 0);
+    scroll.add(capTop, capBottom, bloom);
+    itemGroup.add(plaque, scroll);
+    return bloom;
+  }
+
+  // Sanctuary Lamps: a gilt church lantern with pale glass and a cold votive
+  // flame waiting to be carried back alight.
+  function buildSanctuaryLampModel(itemGroup, glow) {
+    const base = makeCylinder(0.1, 0.12, 0.05, 8, materials.gold, 0, 0.14, 0);
+    const glass = makeCylinder(0.075, 0.085, 0.2, 8, materials.stainedGlass, 0, 0.265, 0);
+    const cap = makeCone(0.105, 0.1, 8, materials.gold, 0, 0.415, 0);
+    const finial = makeSphere(0.03, materials.gold, 0, 0.48, 0);
+    const bloom = makeSphere(0.05, glow, 0, 0.27, 0);
+    itemGroup.add(base, glass, cap, finial, bloom);
+    return bloom;
+  }
+
+  // The Skyhatched Brood: a sun-warmed drake egg cradled in a stone wind
+  // shadow; the whole shell breathes with the warmth pulse and the speckles
+  // ride along as children. Spawn placement belongs to the mounts agent -
+  // only the model lives here.
+  function buildDrakeEggModel(itemGroup, glow) {
+    const cradle = makeCylinder(0.2, 0.24, 0.1, 9, materials.darkStone, 0, 0.05, 0);
+    const eggGeometry = cachedPrimitiveGeometry("quest-egg", [0.15], () => {
+      const geometry = new THREE.SphereGeometry(0.15, 18, 14);
+      geometry.scale(1, 1.4, 1);
+      return geometry;
+    });
+    const bloom = addShadow(new THREE.Mesh(eggGeometry, materials.bone));
+    bloom.position.y = 0.3;
+    const speckleA = makeSphere(0.024, glow, 0.1, 0.07, 0.09);
+    const speckleB = makeSphere(0.024, glow, -0.09, -0.03, 0.1);
+    const speckleC = makeSphere(0.024, glow, 0.03, 0.14, -0.13);
+    bloom.add(speckleA, speckleB, speckleC);
+    itemGroup.add(cradle, bloom);
+    return bloom;
+  }
+
+  // The Well-Road Courser: a lashed pair of waterskins, stopper gleaming pale
+  // against the sand.
+  function buildWaterskinCacheModel(itemGroup, glow) {
+    const skinA = makeSphere(0.115, materials.darkLeather, -0.09, 0.15, 0.01);
+    skinA.scale.set(0.82, 1.15, 0.72);
+    const skinB = makeSphere(0.115, materials.darkLeather, 0.08, 0.13, -0.03);
+    skinB.scale.set(0.78, 1.0, 0.7);
+    skinB.rotation.y = 0.6;
+    const lash = makeCylinder(0.145, 0.15, 0.04, 9, materials.dryBrush, 0, 0.16, -0.01);
+    const neck = makeCylinder(0.028, 0.038, 0.07, 6, materials.darkLeather, -0.09, 0.3, 0.01);
+    const bloom = makeSphere(0.05, glow, -0.09, 0.36, 0.01);
+    itemGroup.add(skinA, skinB, lash, neck, bloom);
+    return bloom;
+  }
+
+  // Fallback for any quest id without a bespoke builder: the original
+  // stem-and-orb sprout (honors stemMaterial/stemHeight/radius options).
+  function buildGenericQuestModel(itemGroup, glow, options) {
+    const stemHeight = options.stemHeight || 0.35;
+    const stem = makeCylinder(0.025, 0.035, stemHeight, 8, options.stemMaterial || materials.broadleaf, 0, stemHeight / 2, 0);
+    const bloom = makeSphere(options.radius || 0.12, glow, 0, stemHeight + 0.07, 0);
+    itemGroup.add(stem, bloom);
+    return bloom;
+  }
+
+  const questItemModelBuilders = {
+    herbs: buildGreenfireSprigModel,
+    horse: buildWildOatsModel,
+    bogRelics: buildBogBellModel,
+    cityWrits: buildCityWritModel,
+    citySanctuary: buildSanctuaryLampModel,
+    skyDrake: buildDrakeEggModel,
+    duneCourser: buildWaterskinCacheModel,
+    [ROADWARDEN_TACK_QUEST_ID]: buildWaymarkModel
+  };
+
   function createQuestItem(group, questId, x, z, random, options = {}) {
     const itemGroup = new THREE.Group();
     setExplorationLocalGroundPosition(itemGroup, x, z, numberOrZero(options.groundOffset) || 0.12);
+    // Deterministic yaw variety without consuming the shared seeded random
+    // (an extra random() here would shift every later world placement).
+    itemGroup.rotation.y = (Math.abs(x * 7.31 + z * 3.17)) % TAU;
     const color = options.color || 0x9fffd1;
-    const stemHeight = options.stemHeight || 0.35;
-    const stem = makeCylinder(0.025, 0.035, stemHeight, 8, options.stemMaterial || materials.broadleaf, 0, stemHeight / 2, 0);
-    const bloomMaterial = materials.questGlow.clone();
-    bloomMaterial.color.setHex(color);
-    const bloom = makeSphere(options.radius || 0.12, bloomMaterial, 0, stemHeight + 0.07, 0);
-    const ringMaterial = materials.questGlow.clone();
-    ringMaterial.color.setHex(color);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(options.ringRadius || 0.22, 0.012, 8, 18), ringMaterial);
+    const glow = questItemGlowMaterial(color);
+    const builder = questItemModelBuilders[questId] || buildGenericQuestModel;
+    const bloom = builder(itemGroup, glow, options, random);
+    const ringRadius = options.ringRadius || 0.22;
+    const ring = new THREE.Mesh(
+      cachedPrimitiveGeometry("torus", [ringRadius, 0.012, 8, 18], () => new THREE.TorusGeometry(ringRadius, 0.012, 8, 18)),
+      glow
+    );
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.08;
     const light = new THREE.PointLight(color, options.lightIntensity || 0.75, options.lightDistance || 3.6, 1.8);
-    light.position.y = stemHeight;
-    itemGroup.add(stem, bloom, ring, light);
+    light.position.y = options.stemHeight || 0.35;
+    itemGroup.add(ring, light);
     itemGroup.visible = false;
     group.add(itemGroup);
     game.questItems.push({
@@ -7021,6 +8029,158 @@ import {
         localLakeZ + Math.sin(angle) * lake.rz * radius,
         random
       );
+    }
+  }
+
+  // ---- Gatherable valley herbs ---------------------------------------------
+  // Distinct from the one-time greenfire QUEST items above: these are plain
+  // counted brewing material for the village potion benches. Low leafy tufts
+  // with pale blossom heads - no glow ring, no point light, walk over to pick.
+  const herbBloomMaterial = new THREE.MeshStandardMaterial({ color: 0xe6d178, roughness: 0.62 });
+  const herbStemMaterial = new THREE.MeshStandardMaterial({ color: 0x3f6b33, roughness: 0.85 });
+
+  function createHerbNode(group, x, z, random) {
+    const node = new THREE.Group();
+    setExplorationLocalGroundPosition(node, x, z, 0.02);
+    node.rotation.y = random() * TAU;
+    for (let i = 0; i < 4; i += 1) {
+      const angle = (i / 4) * TAU + random() * 0.8;
+      const leaf = makeCone(0.085, 0.34, 5, materials.broadleaf, Math.cos(angle) * 0.12, 0.13, Math.sin(angle) * 0.12);
+      leaf.rotation.x = Math.cos(angle) * 0.55;
+      leaf.rotation.z = -Math.sin(angle) * 0.55;
+      node.add(leaf);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const angle = random() * TAU;
+      const sx = Math.cos(angle) * 0.1;
+      const sz = Math.sin(angle) * 0.1;
+      const stem = makeCylinder(0.014, 0.02, 0.42, 5, herbStemMaterial, sx, 0.21, sz);
+      stem.rotation.z = (random() - 0.5) * 0.3;
+      const bloom = makeSphere(0.045, herbBloomMaterial, sx, 0.45, sz);
+      node.add(stem, bloom);
+    }
+    group.add(node);
+    game.exploration.herbNodes.push({
+      group: node,
+      position: new THREE.Vector3(
+        game.exploration.origin.x + x,
+        explorationGroundLocalY(x, z),
+        game.exploration.origin.z + z
+      ),
+      collected: false,
+      respawnTimer: 0,
+      capNoticeCooldown: 0,
+      bobSeed: random() * 10
+    });
+  }
+
+  // Herbs grow against cover, not in open field middles: slide a picked anchor
+  // toward the nearest tree or rock so the patch sits at its drip line. Falls
+  // back to the original spot when there is no cover nearby or the slide would
+  // land somewhere blocked.
+  function nudgeHerbAnchorTowardCover(x, z) {
+    const worldX = game.exploration.origin.x + x;
+    const worldZ = game.exploration.origin.z + z;
+    let best = null;
+    let bestDist = Infinity;
+    for (const collider of explorationCollidersNear(worldX, worldZ, 9)) {
+      if (collider.kind !== "tree" && collider.kind !== "rock") {
+        continue;
+      }
+      const dist = Math.hypot(worldX - collider.x, worldZ - collider.z);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = collider;
+      }
+    }
+    if (!best || bestDist < 0.001) {
+      return { x, z };
+    }
+    const targetDist = best.radius + 2.1;
+    if (bestDist <= targetDist) {
+      return { x, z };
+    }
+    const t = (bestDist - targetDist) / bestDist;
+    const nx = x + (best.x - worldX) * t;
+    const nz = z + (best.z - worldZ) * t;
+    return isExplorationBlocked(nx, nz) ? { x, z } : { x: nx, z: nz };
+  }
+
+  function addHerbPatch(group, anchor, random, extraTufts) {
+    const spot = nudgeHerbAnchorTowardCover(anchor.x, anchor.z);
+    createHerbNode(group, spot.x, spot.z, random);
+    for (let i = 0; i < extraTufts; i += 1) {
+      const angle = random() * TAU;
+      const dist = 1.3 + random() * 1.4;
+      const sx = spot.x + Math.cos(angle) * dist;
+      const sz = spot.z + Math.sin(angle) * dist;
+      if (!isExplorationBlocked(sx, sz)) {
+        createHerbNode(group, sx, sz, random);
+      }
+    }
+  }
+
+  function addHerbClusters(group, random) {
+    // Deterministic patch seeding from the shared world random: 9 meadow
+    // patches of 2-3 tufts (starter biome stays densest) plus 4 patches of 2
+    // per outer biome - ~50 nodes total instead of the original ~24 singles.
+    // Anchors hug the nearest tree/rock and the pickers plus per-tuft
+    // isExplorationBlocked checks keep everything off roads, lakes, villages,
+    // and colliders. Still a small bounded array for updateHerbNodes.
+    for (let i = 0; i < 9; i += 1) {
+      const point = randomExplorationPoint(random, 18, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow");
+      addHerbPatch(group, point, random, 1 + Math.floor(random() * 2));
+    }
+    for (const biomeId of ["mountain", "desert", "swamp", "briar"]) {
+      for (let i = 0; i < 4; i += 1) {
+        const point = randomPointInBiome(random, biomeId, 8);
+        addHerbPatch(group, point, random, 1);
+      }
+    }
+  }
+
+  function updateHerbNodes(dt) {
+    const nodes = game.exploration.herbNodes;
+    for (const node of nodes) {
+      if (node.collected) {
+        node.respawnTimer -= dt;
+        if (node.respawnTimer > 0) {
+          continue;
+        }
+        node.collected = false;
+        node.group.visible = true;
+      }
+      if (node.capNoticeCooldown > 0) {
+        node.capNoticeCooldown -= dt;
+      }
+      const dx = player.position.x - node.position.x;
+      const dz = player.position.z - node.position.z;
+      if (dx * dx + dz * dz >= 1.32 * 1.32) {
+        continue;
+      }
+      if (herbCount() >= HERB_POUCH_CAP) {
+        if (node.capNoticeCooldown <= 0) {
+          node.capNoticeCooldown = 2.6;
+          showBanner("Herb pouch full " + HERB_POUCH_CAP + "/" + HERB_POUCH_CAP + " - brew some away at a potion bench", 2.0);
+        }
+        continue;
+      }
+      if (!gainHerb()) {
+        continue;
+      }
+      node.collected = true;
+      node.respawnTimer = 80 + (node.bobSeed % 8) * 5;
+      node.group.visible = false;
+      spawnImpact(node.position, 0xa8d97a, 10);
+      playSfx("quest", 0.55);
+      if (!progression.exploration.herbHintSeen) {
+        progression.exploration.herbHintSeen = true;
+        showBanner("Valley herb gathered 1/" + HERB_POUCH_CAP + " - every village well has a potion bench (E to brew)", 3.6);
+      } else {
+        showBanner("Valley herb " + herbCount() + "/" + HERB_POUCH_CAP, 1.4);
+      }
+      saveProgress();
+      updateHud();
     }
   }
 
@@ -7186,7 +8346,11 @@ import {
       ...maneSegments, forelock, saddle, saddleRoll, pommel, girth,
       saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle, tail
     );
-    const model = { group, body, legs, tail, saddle, tackDetails, tackId: "" };
+    // Mounts read ~30% larger so the ~2.3u rider sits ON the mount instead
+    // of dwarfing it (scale targets philosophy in ACTIVE_TASKS). seatHeight
+    // is the world-space rider hip height matching the scaled saddle line.
+    group.scale.setScalar(1.3);
+    const model = { group, body, legs, tail, saddle, tackDetails, tackId: "", seatHeight: 1.65 };
     setHorseTack(model, tackId);
     return model;
   }
@@ -7215,18 +8379,18 @@ import {
     hornLeft.rotation.set(-0.85, -0.18, 0.14);
     hornRight.rotation.set(-0.85, 0.18, -0.14);
 
-    // Folded wings flutter with speed; the drake runs like a horse rather
-    // than flying, so they stay tucked along the flanks.
+    // Spread wings carry the drake: it hovers above the ground instead of
+    // striding, so the membranes sit wider and flap continuously.
     const wings = [];
     for (const side of [-1, 1]) {
       const wing = new THREE.Group();
-      wing.position.set(side * 0.34, 1.32, -0.05);
+      wing.position.set(side * 0.34, 1.34, -0.05);
       const membrane = makeWing(side);
-      membrane.scale.setScalar(0.56);
+      membrane.scale.setScalar(0.74);
       wing.add(membrane);
-      wing.rotation.z = side * 0.46;
-      wing.rotation.x = 0.3;
-      wing.baseFold = side * 0.46;
+      wing.rotation.z = side * 0.2;
+      wing.rotation.x = 0.12;
+      wing.baseFold = side * 0.2;
       wing.side = side;
       wings.push(wing);
       group.add(wing);
@@ -7254,6 +8418,8 @@ import {
     tailTip.rotation.x = Math.PI / 2 + 0.42;
     tail.add(tailRoot, tailTip);
 
+    // Legs ride tucked against the belly while hovering: bent shin, curled
+    // three-claw talons trailing slightly behind the hip pivot.
     const legs = [];
     const legData = [
       [-0.3, -0.5],
@@ -7263,24 +8429,143 @@ import {
     ];
     for (const [x, z] of legData) {
       const leg = new THREE.Group();
-      leg.position.set(x, 0.78, z);
-      const upper = makeCylinder(0.075, 0.115, 0.42, 8, scaleMat.clone(), 0, -0.18, 0);
-      const shin = makeCylinder(0.05, 0.062, 0.32, 8, scaleMat.clone(), 0, -0.54, 0);
-      const foot = makeBox(0.16, 0.09, 0.26, bellyMat.clone(), 0, -0.73, -0.05);
-      const talon = makeCone(0.035, 0.12, 5, materials.bone, 0, -0.74, -0.2);
-      talon.rotation.x = -Math.PI / 2;
-      leg.add(upper, shin, foot, talon);
+      leg.position.set(x, 0.82, z);
+      const upper = makeCylinder(0.075, 0.115, 0.38, 8, scaleMat.clone(), 0, -0.16, 0);
+      const shin = makeCylinder(0.05, 0.062, 0.3, 8, scaleMat.clone(), 0, -0.42, 0.12);
+      shin.rotation.x = 0.55;
+      const foot = makeBox(0.15, 0.08, 0.22, bellyMat.clone(), 0, -0.55, 0.24);
+      foot.rotation.x = 0.4;
+      for (const claw of [-1, 0, 1]) {
+        const talon = makeCone(0.03, 0.11, 5, materials.bone, claw * 0.05, -0.58, 0.34);
+        talon.rotation.x = Math.PI / 2 + 0.5;
+        leg.add(talon);
+      }
+      leg.add(upper, shin, foot);
+      leg.baseTuck = 0.72;
+      leg.rotation.x = leg.baseTuck;
       legs.push(leg);
       group.add(leg);
     }
 
     group.add(body, chest, haunch, belly, neck, head, snout, lowerJaw, leftEye, rightEye, hornLeft, hornRight, ...spikes, saddle, girthFront, girthRear, tail);
-    const model = { group, body, legs, tail, saddle, wings, tackDetails: [], tackId: "" };
+    // YXZ so the hover forward-lean pitch composes after yaw.
+    group.rotation.order = "YXZ";
+    // Scaled up alongside the horse so the rider doesn't dwarf the mount.
+    group.scale.setScalar(1.26);
+    const model = {
+      group, body, legs, tail, saddle, wings, tackDetails: [], tackId: "",
+      locomotion: "hover", hoverLift: 0.85, seatHeight: 1.6
+    };
+    return model;
+  }
+
+  // Dune Courser: a tall flightless desert strider bird kept by the Amber
+  // Dunes well-riders. Two-legged "stride" locomotion (springy sprint with a
+  // head peck), dusty buff feathers, practical leather tack. Same animation
+  // contract as the horse: group, body, legs[], tail, saddle, tackDetails.
+  function createCourserMountModel() {
+    const group = new THREE.Group();
+    const featherMat = materials.courserFeather;
+    const plumeMat = materials.courserPlume;
+    const skinMat = materials.courserSkin;
+
+    const body = makeSphere(0.46, featherMat, 0, 1.18, 0.08);
+    body.scale.set(0.86, 0.74, 1.3);
+    const breast = makeSphere(0.34, featherMat.clone(), 0, 1.12, -0.42);
+    breast.scale.set(0.82, 0.95, 0.95);
+    const rump = makeSphere(0.34, plumeMat.clone(), 0, 1.24, 0.55);
+    rump.scale.set(0.78, 0.8, 0.95);
+
+    // Folded wing pads along the flanks: read as feathers, never animated.
+    for (const side of [-1, 1]) {
+      const wingPad = makeBox(0.07, 0.3, 0.74, plumeMat.clone(), side * 0.36, 1.26, 0.12);
+      wingPad.rotation.x = -0.12;
+      wingPad.rotation.z = side * 0.16;
+      group.add(wingPad);
+    }
+
+    // Neck pivots at its base so the run animation can peck the head.
+    // Segments chain end-into-end horse-style (negative tilts lean the
+    // segment tops FORWARD toward the head; the previous positive tilts
+    // leaned them backward, opening a visible seam between the parts):
+    // the lower segment's base buries in the breast, the upper segment's
+    // base tucks inside the lower's top, and the neck top sits inside the
+    // head sphere so the whole column reads as one continuous form.
+    const neck = new THREE.Group();
+    neck.position.set(0, 1.42, -0.5);
+    const neckBaseTilt = 0.3;
+    neck.rotation.x = neckBaseTilt;
+    const neckLower = makeCylinder(0.095, 0.15, 0.6, 9, featherMat.clone(), 0, 0.21, -0.03);
+    neckLower.rotation.x = -0.3;
+    const neckUpper = makeCylinder(0.07, 0.092, 0.55, 9, skinMat, 0, 0.69, -0.15);
+    neckUpper.rotation.x = -0.18;
+    const head = makeSphere(0.13, featherMat.clone(), 0, 1.0, -0.24);
+    head.scale.set(0.92, 0.88, 1.2);
+    const beak = makeCone(0.05, 0.24, 6, materials.bone, 0, 0.99, -0.4);
+    beak.rotation.x = -Math.PI / 2;
+    const crest = makeBox(0.05, 0.16, 0.12, plumeMat.clone(), 0, 1.12, -0.2);
+    crest.rotation.x = -0.4;
+    const leftEye = makeSphere(0.03, materials.emberEye.clone(), -0.1, 1.02, -0.31);
+    const rightEye = makeSphere(0.03, materials.emberEye.clone(), 0.1, 1.02, -0.31);
+    neck.add(neckLower, neckUpper, head, beak, crest, leftEye, rightEye);
+
+    // Practical tack: saddle, breast girth, and a rein strap to the neck base.
+    const saddle = makeBox(0.52, 0.12, 0.56, materials.saddle.clone(), 0, 1.46, 0.1);
+    const saddleRoll = makeCylinder(0.06, 0.06, 0.44, 8, materials.saddle.clone(), 0, 1.52, 0.34);
+    saddleRoll.rotation.z = Math.PI / 2;
+    const girth = makeBox(0.86, 0.06, 0.1, materials.darkLeather, 0, 1.16, 0.08);
+    girth.rotation.z = Math.PI / 2;
+    const rein = makeBox(0.05, 0.05, 0.62, materials.darkLeather, 0, 1.44, -0.32);
+    rein.rotation.x = 0.35;
+
+    // Plume tail fan.
+    const tail = new THREE.Group();
+    tail.position.set(0, 1.34, 0.78);
+    for (const [offset, tilt] of [[-0.14, 0.5], [0, 0.62], [0.14, 0.5]]) {
+      const plume = makeBox(0.1, 0.05, 0.46, plumeMat.clone(), offset, 0.04, 0.18);
+      plume.rotation.x = -tilt;
+      plume.rotation.y = offset * 1.4;
+      tail.add(plume);
+    }
+
+    // Two long runner legs: feathered thigh, bare shank, three-toed foot.
+    const legs = [];
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.17, 1.06, 0.12);
+      const thigh = makeCylinder(0.085, 0.13, 0.42, 8, featherMat.clone(), 0, -0.18, 0);
+      const knee = makeSphere(0.06, skinMat.clone(), 0, -0.4, 0.01);
+      const shank = makeCylinder(0.038, 0.05, 0.5, 8, skinMat.clone(), 0, -0.65, 0);
+      const ankle = makeSphere(0.045, skinMat.clone(), 0, -0.9, 0);
+      const foot = makeBox(0.1, 0.06, 0.3, skinMat.clone(), 0, -1.02, -0.08);
+      for (const toe of [-1, 0, 1]) {
+        const claw = makeCone(0.025, 0.1, 5, materials.bone, toe * 0.04, -1.03, -0.24);
+        claw.rotation.x = -Math.PI / 2;
+        leg.add(claw);
+      }
+      leg.add(thigh, knee, shank, ankle, foot);
+      legs.push(leg);
+      group.add(leg);
+    }
+
+    group.add(body, breast, rump, neck, saddle, saddleRoll, girth, rein, tail);
+    // Scaled up alongside the horse so the rider doesn't dwarf the mount.
+    group.scale.setScalar(1.32);
+    const model = {
+      group, body, legs, tail, saddle, neck, neckBaseTilt,
+      tackDetails: [], tackId: "", locomotion: "stride", seatHeight: 1.72
+    };
     return model;
   }
 
   function buildMountModel(mountId, tackId = "") {
-    return mountId === "drake" ? createDrakeMountModel() : createHorseModel(tackId);
+    if (mountId === "drake") {
+      return createDrakeMountModel();
+    }
+    if (mountId === "courser") {
+      return createCourserMountModel();
+    }
+    return createHorseModel(tackId);
   }
 
   function createHorse(x, z) {
@@ -7289,6 +8574,17 @@ import {
     setHorseTack(model, currentMountTackId());
     model.mountId = mountId;
     const hasTack = model.tackId === ROADWARDEN_TACK_ID;
+    // Follow tuning for the ~30% larger mounts: a comfortable trailing gap
+    // (bigger mounts hang back a touch more), a wide settle band so the
+    // mount idles instead of micro-adjusting, and an R-mount reach that
+    // covers the whole resting ring (mountDistance > followDistance).
+    const followTuning = mountId === "drake"
+      ? { follow: 7.4, min: 4.9, mount: 8.0 }
+      : mountId === "courser"
+        ? { follow: 7.8, min: 5.2, mount: 8.4 }
+        : hasTack
+          ? { follow: 6.4, min: 4.2, mount: 7.0 }
+          : { follow: 7.0, min: 4.6, mount: 7.6 };
     const horse = {
       ...model,
       position: new THREE.Vector3(x, 0, z),
@@ -7296,9 +8592,9 @@ import {
       yaw: 0,
       mounted: false,
       walkTime: Math.random() * 10,
-      followDistance: hasTack ? 5.2 : 5.8,
-      minFollowDistance: hasTack ? 3.2 : 3.6,
-      mountDistance: hasTack ? 3.0 : 2.8
+      followDistance: followTuning.follow,
+      minFollowDistance: followTuning.min,
+      mountDistance: followTuning.mount
     };
     horse.group.position.copy(horse.position);
     scene.add(horse.group);
@@ -7310,10 +8606,15 @@ import {
       return;
     }
     setHorseTack(horse, currentMountTackId());
+    if ((horse.mountId || "horse") !== "horse") {
+      // Tack visuals/handling only apply to the horse; other mounts keep
+      // their own follow personality.
+      return;
+    }
     const hasTack = horse.tackId === ROADWARDEN_TACK_ID;
-    horse.followDistance = hasTack ? 5.2 : 5.8;
-    horse.minFollowDistance = hasTack ? 3.2 : 3.6;
-    horse.mountDistance = hasTack ? 3.0 : 2.8;
+    horse.followDistance = hasTack ? 6.4 : 7.0;
+    horse.minFollowDistance = hasTack ? 4.2 : 4.6;
+    horse.mountDistance = hasTack ? 7.0 : 7.6;
   }
 
   function spawnHorseNearPlayer(showEffects = true) {
@@ -7326,6 +8627,8 @@ import {
     if (showEffects || !localGodModeEnabled()) {
       if (game.exploration.horse.mountId === "drake") {
         progression.exploration.drakeUnlocked = true;
+      } else if (game.exploration.horse.mountId === "courser") {
+        progression.exploration.courserUnlocked = true;
       } else {
         progression.exploration.horseUnlocked = true;
       }
@@ -7379,7 +8682,7 @@ import {
     return game.mode === "exploration" && !!game.exploration.horse && game.exploration.horse.mounted;
   }
 
-  function nearestHorse(maxDistance = 3.2) {
+  function nearestHorse(maxDistance = 0) {
     const horse = game.exploration.horse;
     if (!horse) {
       return null;
@@ -7387,7 +8690,10 @@ import {
     if (horse.mounted) {
       return horse;
     }
-    return player.position.distanceTo(horse.position) <= maxDistance ? horse : null;
+    // Default to the mount's own reach so the Ride prompt agrees with the
+    // R-mount gate across the per-mount follow tuning.
+    const reach = maxDistance > 0 ? maxDistance : horse.mountDistance || 3.2;
+    return player.position.distanceTo(horse.position) <= reach ? horse : null;
   }
 
   function toggleHorseMount() {
@@ -7397,7 +8703,8 @@ import {
     }
     if (horse.mounted) {
       horse.mounted = false;
-      const dismount = rightFromYaw(player.yaw, tmpVec).multiplyScalar(1.45);
+      // Wider step-off clears the larger mount bodies.
+      const dismount = rightFromYaw(player.yaw, tmpVec).multiplyScalar(1.85);
       player.position.copy(horse.position).add(dismount);
       constrainExplorationPlayer();
       player.velocity.multiplyScalar(0.25);
@@ -7415,7 +8722,7 @@ import {
     player.blocking = false;
     player.position.copy(horse.position);
     player.velocity.multiplyScalar(0.2);
-    showBanner("Mounted");
+    showBanner("Mounted: " + activeMountDisplayName());
     return true;
   }
 
@@ -7448,25 +8755,96 @@ import {
     if (!model.wings) {
       return;
     }
+    const hovering = model.locomotion === "hover";
     for (const wing of model.wings) {
-      const flutter = Math.sin(model.walkTime * 5.2 + (wing.side > 0 ? Math.PI : 0)) * 0.16 * moving;
-      wing.rotation.z = wing.baseFold + wing.side * (moving * 0.22) + wing.side * flutter;
+      if (hovering) {
+        // Constant-rate mirrored wingbeat: the wings always carry the hover,
+        // so the rhythm stays steady whether idle or at full ride speed.
+        // clock.elapsedTime (not walkTime, which accelerates with speed)
+        // keeps the rate identical for local and remote drakes.
+        const flap = Math.sin(clock.elapsedTime * 6.4) * 0.42;
+        wing.rotation.z = wing.baseFold + wing.side * flap;
+      } else {
+        const flutter = Math.sin(model.walkTime * 5.2 + (wing.side > 0 ? Math.PI : 0)) * 0.16 * moving;
+        wing.rotation.z = wing.baseFold + wing.side * (moving * 0.22) + wing.side * flutter;
+      }
+    }
+  }
+
+  // Ride motion shared by the mount body and the rider seat: hover mounts
+  // float on a steady wing-borne lift with a soft bob, striders bounce in a
+  // springy two-beat, horses keep the classic gallop bob. `lift` is a steady
+  // offset above the terrain sample; `bob` oscillates around it.
+  function mountRideMotion(model, speed) {
+    const moving = Math.min(1, speed / 7.5);
+    if (model.locomotion === "hover") {
+      // Gliding calm: a slow, low-amplitude drift on the wall clock (not
+      // walkTime, which accelerates with speed) so the drake never inherits
+      // a gallop-style bounce - smoothest ride of the three mounts.
+      return {
+        lift: model.hoverLift || 0.85,
+        bob: Math.sin(clock.elapsedTime * 1.1) * 0.025,
+        moving
+      };
+    }
+    if (model.locomotion === "stride") {
+      return {
+        lift: 0,
+        bob: Math.abs(Math.sin(model.walkTime * 5.2)) * 0.085 * moving + Math.sin(model.walkTime * 2.4) * 0.02,
+        moving
+      };
+    }
+    return { lift: 0, bob: Math.sin(model.walkTime * 2.2) * 0.045 * moving, moving };
+  }
+
+  function mountSaddleLift(model) {
+    return model && model.locomotion === "hover" ? model.hoverLift || 0.85 : 0;
+  }
+
+  // Locomotion-specific limb/posture animation. Hover keeps the legs tucked
+  // (no walking gait) and leans the body into speed; stride swings the two
+  // runner legs in opposition with a neck peck; default is the horse gait.
+  function animateMountLimbs(model, moving, dt) {
+    if (model.locomotion === "hover") {
+      for (const leg of model.legs) {
+        // Wall-clock sway keeps the tucked legs drifting at the same calm
+        // rate whether idle or at full ride speed.
+        const sway = Math.sin(clock.elapsedTime * 1.6 + leg.position.z * 1.7) * 0.04;
+        leg.rotation.x = (leg.baseTuck || 0.72) + sway;
+      }
+      // Group rotation order is YXZ on the drake so this pitch follows yaw.
+      model.group.rotation.x = lerp(model.group.rotation.x, moving * 0.14, 1 - Math.pow(0.001, dt));
+      return;
+    }
+    if (model.locomotion === "stride") {
+      for (let i = 0; i < model.legs.length; i += 1) {
+        const phase = Math.sin(model.walkTime * 5.2 + i * Math.PI) * 0.62 * moving;
+        model.legs[i].rotation.x = phase;
+      }
+      if (model.neck) {
+        model.neck.rotation.x = (model.neckBaseTilt || 0.3) + Math.sin(model.walkTime * 10.4) * 0.08 * moving;
+      }
+      return;
+    }
+    for (let i = 0; i < model.legs.length; i += 1) {
+      const phase = Math.sin(model.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
+      model.legs[i].rotation.x = phase;
     }
   }
 
   function updateHorseAnimation(horse, dt) {
     const speed = horse.velocity.length();
     horse.walkTime += dt * (1.4 + speed * 1.5);
-    const moving = Math.min(1, speed / 7.5);
-    const bob = Math.sin(horse.walkTime * 2.2) * 0.045 * moving;
-    horse.group.position.set(horse.position.x, explorationGroundWorldY(horse.position.x, horse.position.z, bob), horse.position.z);
+    const motion = mountRideMotion(horse, speed);
+    horse.group.position.set(
+      horse.position.x,
+      explorationGroundWorldY(horse.position.x, horse.position.z, motion.lift + motion.bob),
+      horse.position.z
+    );
     horse.group.rotation.y = horse.yaw;
-    for (let i = 0; i < horse.legs.length; i += 1) {
-      const phase = Math.sin(horse.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
-      horse.legs[i].rotation.x = phase;
-    }
+    animateMountLimbs(horse, motion.moving, dt);
     horse.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
-    animateMountWings(horse, moving);
+    animateMountWings(horse, motion.moving);
   }
 
   function updateHorse(dt) {
@@ -7487,8 +8865,9 @@ import {
     toPlayer.y = 0;
     toPlayer.multiplyScalar(1 / distance);
     const hasTack = horse.tackId === ROADWARDEN_TACK_ID;
-    const followDistance = hasTack ? 5.2 : horse.followDistance;
-    const minFollowDistance = hasTack ? 3.2 : horse.minFollowDistance;
+    // The entity fields already encode tack and per-mount follow tuning.
+    const followDistance = horse.followDistance;
+    const minFollowDistance = horse.minFollowDistance;
     const catchUpTeleportDistance = hasTack ? 38 : 32;
     const yawEase = 1 - Math.pow(hasTack ? 0.0004 : 0.00008, dt);
     if (distance > catchUpTeleportDistance) {
@@ -7596,6 +8975,26 @@ import {
     return quest.objective + " " + Math.min(quest.progress, quest.target) + "/" + quest.target;
   }
 
+  // T-029: Bellwater entrance drainage. The waterfall sheet stretches from a
+  // fixed top (the culvert mouth) so only its base churns, and the foam pad
+  // pulses in the puddle. Three meshes, no particles, no per-frame allocation.
+  function updateBellwaterDrainage() {
+    const drainage = game.exploration.bellwaterDrainage;
+    if (!drainage) {
+      return;
+    }
+    const t = clock.elapsedTime;
+    const stretch = 1 + Math.sin(t * 8.2) * 0.05;
+    drainage.ribbon.scale.y = stretch;
+    drainage.ribbon.position.y = drainage.mouthY - drainage.fallHeight * stretch / 2;
+    const backStretch = 1 + Math.sin(t * 6.7 + 1.9) * 0.06;
+    drainage.backSheet.scale.y = backStretch;
+    drainage.backSheet.position.y = drainage.mouthY - drainage.fallHeight * 0.85 * backStretch / 2 - drainage.fallHeight * 0.12;
+    drainage.foam.scale.x = 1.25 + Math.sin(t * 5.3) * 0.13;
+    drainage.foam.scale.z = 0.85 + Math.cos(t * 4.4) * 0.09;
+    drainage.foam.material.opacity = 0.52 + Math.sin(t * 6.4) * 0.14;
+  }
+
   function updateQuestItems(dt) {
     for (const item of game.questItems) {
       if (item.collected) {
@@ -7661,6 +9060,21 @@ import {
     return nearest;
   }
 
+  function nearestPotionBench(maxDistance = 2.8) {
+    let nearest = null;
+    let nearestDistanceSq = maxDistance * maxDistance;
+    for (const bench of game.exploration.potionBenches) {
+      const dx = player.position.x - bench.x;
+      const dz = player.position.z - bench.z;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq < nearestDistanceSq) {
+        nearest = bench;
+        nearestDistanceSq = distanceSq;
+      }
+    }
+    return nearest;
+  }
+
   function updateQuestMarkers() {
     for (const npc of game.npcs) {
       if (!npc.questMarker || !npc.questId) {
@@ -7690,7 +9104,7 @@ import {
       game.activeNpc = null;
       talkKey.textContent = "R";
       talkAction.textContent = "Dismount";
-      talkTarget.textContent = "Horse";
+      talkTarget.textContent = activeMountDisplayName();
       talkPrompt.hidden = false;
       return;
     }
@@ -7703,11 +9117,19 @@ import {
       talkPrompt.hidden = false;
       return;
     }
+    const bench = nearestPotionBench();
+    if (bench) {
+      talkKey.textContent = "E";
+      talkAction.textContent = "Brew";
+      talkTarget.textContent = "Potion Bench";
+      talkPrompt.hidden = false;
+      return;
+    }
     const horse = nearestHorse();
     if (horse) {
       talkKey.textContent = "R";
       talkAction.textContent = "Ride";
-      talkTarget.textContent = "Horse";
+      talkTarget.textContent = activeMountDisplayName();
       talkPrompt.hidden = false;
       return;
     }
@@ -7736,6 +9158,9 @@ import {
     game.dialogVoiceKey = "";
     game.dialogTopics = [];
     updateDialogSelection(0);
+    // Force-close paths (session menu, world rebuild, activity entry) all
+    // route through here, so the bench dialog never lingers behind a menu.
+    closeBenchDialog();
   }
 
   function restoreGameplayControlAfterActivityEntry() {
@@ -7785,13 +9210,8 @@ import {
     });
     if (dialogueHint) {
       const count = game.dialogTopics.length;
-      if (count > 1) {
-        dialogueHint.textContent = "1-" + count + " ask \u00b7 Esc back";
-      } else if (count === 1) {
-        dialogueHint.textContent = "1 ask \u00b7 Esc back";
-      } else {
-        dialogueHint.textContent = "Esc back";
-      }
+      const askPart = count > 1 ? "1-" + count + " ask \u00b7 " : count === 1 ? "1 ask \u00b7 " : "";
+      dialogueHint.textContent = askPart + "\u2190 \u2192 select \u00b7 Enter confirm \u00b7 Esc close";
     }
   }
 
@@ -7806,9 +9226,14 @@ import {
       return;
     }
     const response = respondToPlayerInput(text, dialogContextForNpc(npc));
-    questDialogBody.textContent = response.text;
+    // Show the exchange as question + answer: the echoed question sits above
+    // the NPC's reply, and the quest status line below stays untouched.
     const echo = text.length > 90 ? text.slice(0, 87) + "\u2026" : text;
-    questDialogStatus.textContent = "You asked: \u201c" + echo + "\u201d";
+    if (questDialogPlayerLine) {
+      questDialogPlayerLine.textContent = "You asked: \u201c" + echo + "\u201d";
+      questDialogPlayerLine.hidden = false;
+    }
+    questDialogBody.textContent = response.text;
     game.dialogVoiceKey = "";
     playDialogVoiceIfChanged();
   }
@@ -7894,6 +9319,210 @@ import {
     }
     return true;
   }
+
+  // ---- Potion bench crafting dialog -----------------------------------------
+  // Keyboard-first, same pattern as the quest dialog: E opens beside a bench,
+  // W/S or arrows select, Enter or 1-2 brews, Esc/E closes. Brewing is pure
+  // local progression (herbs and pouch are personal), so no online messages
+  // are sent and nothing can dupe across clients.
+  const POTION_BENCH_RECIPES = [
+    { id: "field", name: "Field Potion", herbCost: 3, kind: "small", healAmount: 32, note: "+32 health" },
+    { id: "full", name: "Full Recovery Potion", herbCost: 7, kind: "full", note: "fully restores health" }
+  ];
+
+  function benchOptionButtons() {
+    return Array.from(benchOptions.querySelectorAll("button"));
+  }
+
+  function benchStatusSummary() {
+    const inventory = storedPotions();
+    const unlockedSlots = unlockedPotionSlotCount();
+    const free = Math.max(0, unlockedSlots - inventory.length);
+    return "Herbs " + herbCount() + "/" + HERB_POUCH_CAP + " - "
+      + (unlockedSlots > 0 ? free + " free pouch slot" + (free === 1 ? "" : "s") : "no pouch slot unlocked yet")
+      + (player.health < player.maxHealth ? " - you are wounded" : "");
+  }
+
+  function updateBenchSelection(index = 0) {
+    const buttons = benchOptionButtons();
+    if (!buttons.length) {
+      game.benchOptionIndex = 0;
+      return;
+    }
+    game.benchOptionIndex = ((index % buttons.length) + buttons.length) % buttons.length;
+    buttons.forEach((button, i) => {
+      button.classList.toggle("selected", i === game.benchOptionIndex);
+    });
+  }
+
+  function moveBenchSelection(direction) {
+    playSfx("uiMove", 1);
+    updateBenchSelection(game.benchOptionIndex + direction);
+  }
+
+  function renderBenchDialog() {
+    benchOptions.replaceChildren();
+    const herbs = herbCount();
+    POTION_BENCH_RECIPES.forEach((recipe, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "bench-option";
+      if (herbs < recipe.herbCost) {
+        button.classList.add("short");
+      }
+      const key = document.createElement("span");
+      key.className = "ask-chip-key";
+      key.textContent = String(index + 1);
+      const label = document.createElement("span");
+      label.textContent = recipe.name + " (" + recipe.note + ")";
+      const cost = document.createElement("span");
+      cost.className = "bench-option-cost";
+      cost.textContent = recipe.herbCost + " herbs";
+      button.append(key, label, cost);
+      button.addEventListener("click", () => brewBenchRecipe(recipe));
+      benchOptions.appendChild(button);
+    });
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "bench-option";
+    const closeLabel = document.createElement("span");
+    closeLabel.textContent = "Step away";
+    closeButton.append(closeLabel);
+    closeButton.addEventListener("click", () => {
+      playSfx("uiBack", 1);
+      closeBenchDialog();
+    });
+    benchOptions.appendChild(closeButton);
+    benchDialogStatus.textContent = benchStatusSummary();
+    updateBenchSelection(game.benchOptionIndex);
+  }
+
+  function openBenchDialog(bench) {
+    game.activeBench = bench;
+    game.benchOptionIndex = 0;
+    keys.clear();
+    player.blockHeld = false;
+    playSfx("ui", 0.7);
+    renderBenchDialog();
+    benchDialog.hidden = false;
+    actionDock.hidden = true;
+    talkPrompt.hidden = true;
+  }
+
+  function closeBenchDialog() {
+    if (benchDialog.hidden) {
+      return;
+    }
+    benchDialog.hidden = true;
+    actionDock.hidden = false;
+    game.activeBench = null;
+    game.benchOptionIndex = 0;
+  }
+
+  function brewBenchRecipe(recipe) {
+    const herbs = herbCount();
+    if (herbs < recipe.herbCost) {
+      benchDialogStatus.textContent = "Not enough herbs - " + recipe.name + " needs " + recipe.herbCost + ", you carry " + herbs + ".";
+      playSfx("uiBack", 0.8);
+      return false;
+    }
+    const item = normalizePotionInventoryItem({ kind: recipe.kind, healAmount: recipe.healAmount });
+    const inventory = storedPotions();
+    const unlockedSlots = unlockedPotionSlotCount();
+    if (inventory.length < unlockedSlots) {
+      spendHerbs(recipe.herbCost);
+      inventory.push(item);
+      showBanner("Brewed " + storedPotionName(item) + " " + inventory.length + "/" + unlockedSlots, 2.2);
+      playSfx("potion", 0.95);
+      saveProgress();
+      updateHud();
+      renderBenchDialog();
+      benchDialogStatus.textContent = "Stoppered and pouched. " + benchStatusSummary();
+      return true;
+    }
+    if (player.health < player.maxHealth) {
+      // No free slot but the brewer is wounded: drink it warm at the bench.
+      spendHerbs(recipe.herbCost);
+      applyStoredPotion(item);
+      saveProgress();
+      updateHud();
+      renderBenchDialog();
+      benchDialogStatus.textContent = "No free pouch slot - you drink it warm. " + benchStatusSummary();
+      return true;
+    }
+    benchDialogStatus.textContent = unlockedSlots > 0
+      ? "Your pouch is full and you are unhurt - the brew would only go to waste."
+      : "No pouch slot unlocked yet (level " + potionSlotUnlockLevel(0) + ") and you are unhurt - come back wounded.";
+    playSfx("uiBack", 0.8);
+    return false;
+  }
+
+  function activateSelectedBenchOption() {
+    if (game.benchOptionIndex < POTION_BENCH_RECIPES.length) {
+      brewBenchRecipe(POTION_BENCH_RECIPES[game.benchOptionIndex]);
+      return;
+    }
+    playSfx("uiBack", 1);
+    closeBenchDialog();
+  }
+
+  function handleBenchDialogKey(event) {
+    if (benchDialog.hidden) {
+      return false;
+    }
+    if (event.defaultPrevented) {
+      // The bench-open listener consumed this same press; without this guard
+      // the E that opens the dialog would immediately close it again.
+      return true;
+    }
+    if (event.code.length === 6 && event.code.startsWith("Digit")) {
+      const recipeIndex = Number(event.code.slice(5)) - 1;
+      if (recipeIndex >= 0 && POTION_BENCH_RECIPES[recipeIndex]) {
+        event.preventDefault();
+        updateBenchSelection(recipeIndex);
+        brewBenchRecipe(POTION_BENCH_RECIPES[recipeIndex]);
+        return true;
+      }
+    }
+    if (event.code === "ArrowDown" || event.code === "ArrowRight" || event.code === "KeyS") {
+      event.preventDefault();
+      moveBenchSelection(1);
+      return true;
+    }
+    if (event.code === "ArrowUp" || event.code === "ArrowLeft" || event.code === "KeyW") {
+      event.preventDefault();
+      moveBenchSelection(-1);
+      return true;
+    }
+    if (event.code === "Enter" || event.code === "NumpadEnter") {
+      event.preventDefault();
+      activateSelectedBenchOption();
+      return true;
+    }
+    if (event.code === "Escape" || event.code === "KeyE") {
+      event.preventDefault();
+      playSfx("uiBack", 1);
+      closeBenchDialog();
+      return true;
+    }
+    return true;
+  }
+
+  // Bench interact registers its own listener (instead of a branch inside the
+  // main input handler) so it stays decoupled from the ability-key handler.
+  // Guards keep it from double-firing: it only runs when no dialog consumed
+  // the press and no NPC outranks the bench for the E key.
+  window.addEventListener("keydown", event => {
+    if (event.code !== "KeyE" || event.repeat || event.defaultPrevented) return;
+    if (chat.open || game.mode !== "exploration" || game.state !== "playing") return;
+    if (!questDialog.hidden || !benchDialog.hidden || isPlayerMounted()) return;
+    if (nearestNpc()) return;
+    const bench = nearestPotionBench();
+    if (bench) {
+      event.preventDefault();
+      openBenchDialog(bench);
+    }
+  });
 
   function questDialogueLine(quest) {
     const lines = quest.dialogue || {};
@@ -7992,6 +9621,12 @@ import {
     const quest = npc.questId ? getQuest(npc.questId) : null;
     const serviceType = npcServiceType(npc);
     const serviceBlocked = serviceUnavailable(serviceType);
+    // A refresh always restates the NPC's scripted line, so drop any stale
+    // "You asked" echo from a previous exchange.
+    if (questDialogPlayerLine) {
+      questDialogPlayerLine.hidden = true;
+      questDialogPlayerLine.textContent = "";
+    }
     questDialogTitle.textContent = npc.name;
     questAcceptButton.hidden = true;
     questClaimButton.hidden = true;
@@ -8126,6 +9761,12 @@ import {
       spawnHorseNearPlayer();
       unlocks.push("Skyhatched Drake");
       sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+    } else if (quest.id === "duneCourser") {
+      progression.exploration.courserUnlocked = true;
+      progression.exploration.activeMountId = "courser";
+      spawnHorseNearPlayer();
+      unlocks.push("Dune Courser");
+      sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     } else if (quest.id === ROADWARDEN_TACK_QUEST_ID) {
       progression.exploration.mountTackId = ROADWARDEN_TACK_ID;
       applyMountTackToHorse();
@@ -8191,6 +9832,7 @@ import {
       briarStalkers: { hex: "#b9d678", fill: "rgba(185, 214, 120, 0.17)", stroke: "rgba(185, 214, 120, 0.78)" },
       bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
       skyDrake: { hex: "#7ad9c9", fill: "rgba(122, 217, 201, 0.17)", stroke: "rgba(122, 217, 201, 0.78)" },
+      duneCourser: { hex: "#f2b56b", fill: "rgba(242, 181, 107, 0.17)", stroke: "rgba(242, 181, 107, 0.78)" },
       roadwardenTack: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" },
       cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
       citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" },
@@ -8213,7 +9855,8 @@ import {
       wisps: "Mistfen",
       briarStalkers: "Briarfall Woods",
       bogRelics: "Mistfen pools",
-      skyDrake: "Dragonspine roost",
+      skyDrake: "Dragonspine shelves and peaks",
+      duneCourser: "Amber Dunes well-road",
       roadwardenTack: "road waymarks",
       cityWrits: "Crownford beacon",
       citySanctuary: "church district",
@@ -8280,8 +9923,8 @@ import {
         .filter(village => !game.exploration.discovered.has(village.id))
         .map(village => ({ x: village.x, z: village.z, radius: village.radius + 24, color }));
     }
-    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "skyDrake" || quest.id === "wisps" || quest.id === "briarStalkers") {
-      const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" || quest.id === "skyDrake" ? "mountain" : quest.id === "wisps" ? "swamp" : "briar";
+    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "skyDrake" || quest.id === "duneCourser" || quest.id === "wisps" || quest.id === "briarStalkers") {
+      const biomeId = quest.id === "spiders" || quest.id === "duneCourser" ? "desert" : quest.id === "dragons" || quest.id === "skyDrake" ? "mountain" : quest.id === "wisps" ? "swamp" : "briar";
       const biome = game.exploration.biomes.find(candidate => candidate.id === biomeId);
       return biome
         ? [{
@@ -8598,6 +10241,27 @@ import {
   }
 
   function setupExplorationQuests() {
+    // TEMP T-028 debug hooks - REMOVE before finishing.
+    window.__dbgTeleport = (x, z, yaw) => {
+      player.position.copy(explorationToWorld(x, z));
+      player.group.position.copy(player.position);
+      if (Number.isFinite(yaw)) {
+        game.cameraYaw = yaw;
+      }
+    };
+    window.__dbgActivateQuest = id => {
+      const quest = getQuest(id);
+      if (quest) {
+        quest.state = "active";
+      }
+    };
+    window.__dbgQuestItems = id => game.questItems
+      .filter(item => !id || item.questId === id)
+      .map(item => ({
+        q: item.questId,
+        x: Math.round((item.position.x - game.exploration.origin.x) * 10) / 10,
+        z: Math.round((item.position.z - game.exploration.origin.z) * 10) / 10
+      }));
     game.quests.push(
       createQuest(
         "herbs",
@@ -8783,21 +10447,48 @@ import {
         "skyDrake",
         "The Skyhatched Brood",
         "Brunna",
-        "A clutch hatched cold on the high shelves after the dread drakes drove the mothers off. Bring me three sun-warmed drake eggs from the roost rocks and the strongest hatchling will learn your saddle instead of the open sky.",
+        "A clutch hatched cold across the high shelves after the dread drakes drove the mothers off. The wind scattered five sun-warmed eggs from the foothills to the far ridges. Bring them all to my warming pit and the strongest hatchling will learn your saddle instead of the open sky.",
         "Recover warm drake eggs",
         "Skyhatched Drake mount and XP",
         "collect",
-        3,
+        5,
         {
-          rewardXp: 80,
+          rewardXp: 90,
           conversationTags: ["mountain", "dragons", "roost", "mount"],
           dialogue: {
-            available: "Three eggs still hold their warmth out on the roost shelves. Carry them to my warming pit before the wind takes them, and one hatchling will take your saddle when it stands.",
-            active: "Look where the rock holds the sun between the spires. Warm eggs sit in the wind shadows - and so do the drakes that watch them.",
-            ready: "All three, still warm. You carried them like mountain-born. The gray one already turns its head when you walk past.",
+            available: "Five eggs still hold their warmth, strewn the whole breadth of the Dragonspine - shelf, pass, and ridge. Walk the peaks, carry them to my warming pit before the wind takes them, and one hatchling will take your saddle when it stands.",
+            active: "Look where the rock holds the sun - wind shadows on far shelves, not just my spire ring. Warm eggs sit the length of the peaks, and so do the drakes that watch them.",
+            ready: "All five, still warm, carried down from half the mountain. You climbed like mountain-born. The gray one already turns its head when you walk past.",
             readyStatus: "Clutch warming",
             done: "The drake answers to your shadow now. Press M if you would rather keep your horse under saddle some days - it will not take offense.",
             doneStatus: "Brunna's hatchling rides with you."
+          }
+        }
+      ),
+      // Dialogue authored inline per the briarStalkers/skyDrake pattern.
+      // CREATIVE/NARRATIVE AGENT: please review Saffa's voice (Amber Dunes
+      // Hearthfolk well-rider register - measures words like water, practical,
+      // no new factions) and migrate/extend into questDialoguePacks + voice
+      // sheets if desired. src/content/dialogue.js was deliberately NOT edited.
+      createQuest(
+        "duneCourser",
+        "The Well-Road Courser",
+        "Saffa",
+        "My coursers run the buried well-road between the cisterns, but the dune spiders webbed the route and scattered my waterskin caches into the sand. Walk the dunes, bring all five caches home, and the steadiest runner of my string will take your saddle.",
+        "Recover waterskin caches",
+        "Dune Courser mount and XP",
+        "collect",
+        5,
+        {
+          rewardXp: 85,
+          conversationTags: ["desert", "mount", "wells", "roads"],
+          dialogue: {
+            available: "Five waterskin caches are still out on the well-road, half-swallowed where the dunes drift. Bring them home before the sun splits the skins and I will fit a saddle to my steadiest courser for you.",
+            active: "Follow the dune line between the well-stones and watch for a pale gleam against the sand. Drink sparingly, keep moving, and mind the webs.",
+            ready: "Every cache home and not one burst skin. You walk the dunes like you were born under them. The dun courser is yours - she already paces when you pass the pen.",
+            readyStatus: "Caches recovered",
+            done: "She knows every well between here and the cisterns. Press M when you would rather have her long legs than your horse's saddle.",
+            doneStatus: "Saffa's courser runs with you."
           }
         }
       )
@@ -8805,8 +10496,8 @@ import {
   }
 
   function addExplorationVillage(group, x, z, random, index, biome = "meadow") {
-    const flatRadius = biome === "desert" ? 24 : biome === "swamp" ? 25 : biome === "briar" ? 26 : biome === "mountain" ? 24 : 23;
-    registerExplorationFlatZone(x, z, flatRadius, 12, null, 0.94);
+    // The village's flat zone is registered up front in setupExplorationWorld
+    // (before the ground mesh bakes) - do not re-register it here (T-025).
     const villageGroundY = explorationGroundLocalY(x, z);
     const village = {
       id: "village-" + index,
@@ -8838,6 +10529,11 @@ import {
     const postB = makeBox(0.16, 1.2, 0.16, materials.wood, x + 0.72, villageGroundY + 0.75, z);
     group.add(well, beam, postA, postB);
     addExplorationCollider(x, z, 1.15, "structure");
+    // Brewing bench just off the well, facing it, clear of the bucket/crate
+    // decor spots and the house ring (houses start ~9.8 out).
+    const benchX = x + 3.0;
+    const benchZ = z - 2.4;
+    addPotionBench(group, village, benchX, benchZ, Math.atan2(-(x - benchX), -(z - benchZ)));
     const names = biome === "desert"
       ? ["Amara", "Sahir", "Nima", "Tarek", "Zala", "Omid"]
       : biome === "mountain"
@@ -9222,6 +10918,11 @@ import {
 
     addCityQuestItems(group, city, random);
     addCrownfordDecor(group, city, random);
+    // Brewing bench on the beacon plaza diagonal: clear of the four axial
+    // waystones (+-7.6), the east map table, and the south road arm.
+    const cityBenchX = x - 6.2;
+    const cityBenchZ = z + 5.4;
+    addPotionBench(group, city, cityBenchX, cityBenchZ, Math.atan2(-(x - cityBenchX), -(z - cityBenchZ)));
 
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Rowan Vale", "cityWrits", "city"));
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 25, game.exploration.origin.z + z - 10, random, 8.5, "Sister Edda", "citySanctuary", "city"));
@@ -9250,21 +10951,30 @@ import {
     game.exploration.villages.push(city);
 
     addCityPavement(group, x, z, 52, 38);
-    addCityPavement(group, x - 34, z - 18, 19, 4.5, -0.08);
+    // Approach sequence: road -> gate plaza -> west gatehouse (at z - 18,
+    // where the Crownford road actually arrives; the old layout ran the road
+    // into a blind wall) -> processional way to the ring mouth.
+    addCityPavement(group, x - 37, z - 18, 10, 12);
+    addCityPavement(group, x - 33, z - 18, 16, 5.4);
+    addCityPavement(group, x - 18.6, z - 8.6, 26, 3.6, Math.atan2(-17.2, 15.9));
 
+    // West wall opens for the gatehouse; N/S keep their narrow posterns; the
+    // east side is one continuous terraced run (the old 1-unit slit is gone).
     const wallSegments = [
       [-16, -24, 25, 0.72],
       [16, -24, 25, 0.72],
       [-16, 24, 25, 0.72],
       [16, 24, 25, 0.72],
-      [-29, -9, 0.72, 24],
-      [-29, 13, 0.72, 18],
-      [29, -9, 0.72, 24],
-      [29, 13, 0.72, 18]
+      [-29, -22.9, 0.72, 2.2],
+      [-29, 4.7, 0.72, 37.4],
+      [29, 0, 0.72, 47]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
       addCurtainWall(group, x + wx, z + wz, ww, wd, { height: 2.86 });
     }
+    addGatehouse(group, x - 29, z - 18, {
+      span: 5.6, height: 2.86, rotation: -Math.PI / 2, banner: materials.cityBannerRed
+    });
     for (const [tx, tz] of [[-29, -24], [29, -24], [-29, 24], [29, 24]]) {
       addWallTower(group, x + tx, z + tz, {
         radius: 0.95, height: 4.05, coneHeight: 1.55, colliderPad: 0.4,
@@ -9272,60 +10982,223 @@ import {
       });
     }
 
-    // Court pieces conform to terrain height like the pavement above, so
-    // they stay stacked on the cobble instead of sinking when the city sits
-    // on elevated ground.
+    // Arena core. The whole city sits inside the preset flat zone, so one
+    // ground sample anchors the court stack (existing pattern).
     const courtY = explorationGroundLocalY(x, z);
-    const court = makeCylinder(8.6, 8.9, 0.14, 32, materials.darkStone, x, courtY + 0.11, z);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(7.35, 0.24, 8, 56), materials.cityWall);
-    ring.position.set(x, courtY + 0.32, z);
-    ring.rotation.x = Math.PI / 2;
-    addShadow(ring);
-    const sand = makeCylinder(6.85, 6.95, 0.055, 32, materials.sand, x, courtY + 0.2, z);
-    group.add(court, ring, sand);
-    for (let i = 0; i < 10; i += 1) {
-      const angle = (i / 10) * TAU;
-      const px = x + Math.cos(angle) * 9.8;
-      const pz = z + Math.sin(angle) * 9.8;
-      const post = makeCylinder(0.07, 0.1, 1.15, 7, materials.wood, px, explorationGroundLocalY(px, pz, 0.68), pz);
-      const pennant = makeBox(0.08, 0.72, 0.42, i % 2 ? materials.cityBannerRed : materials.blue, 0, 0.28, -0.22);
-      pennant.rotation.y = angle;
-      post.add(pennant);
-      group.add(post);
+    const court = makeCylinder(11.2, 11.5, 0.14, 40, materials.darkStone, x, courtY + 0.11, z);
+    const sand = makeCylinder(8.1, 8.2, 0.055, 36, materials.sand, x, courtY + 0.2, z);
+    // Packed-earth transition band between the sand and the ring wall.
+    const sandEdge = new THREE.Mesh(new THREE.RingGeometry(8.05, 9.05, 48), materials.path);
+    sandEdge.rotation.x = -Math.PI / 2;
+    sandEdge.position.set(x, courtY + 0.222, z);
+    sandEdge.receiveShadow = true;
+    group.add(court, sand, sandEdge);
+
+    // Low coped ring wall around the sand with a mouth facing the west
+    // gatehouse. Identical segment dims keep the geometry cache warm.
+    const ringWallRadius = 9.55;
+    const mouthHalf = 0.26;
+    const ringSegments = 14;
+    const ringStep = (TAU - mouthHalf * 2) / ringSegments;
+    for (let i = 0; i < ringSegments; i += 1) {
+      const angle = Math.PI + mouthHalf + (i + 0.5) * ringStep;
+      const wx = x + Math.cos(angle) * ringWallRadius;
+      const wz = z + Math.sin(angle) * ringWallRadius;
+      const body = makeBox(3.92, 0.92, 0.6, materials.stone, wx, courtY + 0.64, wz);
+      const coping = makeBox(4.0, 0.14, 0.78, materials.cityWall, wx, courtY + 1.17, wz);
+      body.rotation.y = -angle + Math.PI / 2;
+      coping.rotation.y = body.rotation.y;
+      group.add(body, coping);
+      addExplorationCollider(wx, wz, 1.5, "structure");
     }
-    const stands = [
-      [0, -13.4, 16, 2.6],
-      [0, 13.4, 16, 2.6],
-      [-13.2, 0, 2.6, 14],
-      [13.2, 0, 2.6, 14]
-    ];
-    for (const [sx, sz, sw, sd] of stands) {
-      const standY = explorationGroundLocalY(x + sx, z + sz);
-      const bench = makeBox(sw, 0.74, sd, materials.wood, x + sx, standY + 0.54, z + sz);
-      const base = makeBox(sw + 0.6, 0.22, sd + 0.5, materials.darkStone, x + sx, standY + 0.18, z + sz);
-      group.add(base, bench);
-      addExplorationLineColliders(x + sx, z + sz, sw, sd, "structure");
+    // Ring mouth facade: piers, lintel, raised portcullis hint, gold finials.
+    for (const side of [-1, 1]) {
+      const pierAngle = Math.PI + side * mouthHalf;
+      const px = x + Math.cos(pierAngle) * ringWallRadius;
+      const pz = z + Math.sin(pierAngle) * ringWallRadius;
+      group.add(makeBox(0.58, 1.95, 0.58, materials.cityWall, px, courtY + 1.16, pz));
+      group.add(makeSphere(0.11, materials.gold, px, courtY + 2.24, pz));
+      addExplorationCollider(px, pz, 0.62, "structure");
+    }
+    group.add(makeBox(0.72, 0.5, 5.4, materials.cityWall, x - ringWallRadius - 0.1, courtY + 2.36, z));
+    for (let bar = 0; bar < 5; bar += 1) {
+      group.add(makeBox(0.05, 0.36, 0.05, materials.iron, x - ringWallRadius - 0.1, courtY + 1.95, z - 1.7 + bar * 0.85));
     }
 
+    // Yield bell just inside the ring mouth: the voluntary exit made visible.
+    // Visual only - the Y yield flow is unchanged and the activity itself
+    // plays out in the dedicated arena scene.
+    const bellX = x - 7.3;
+    const bellZ = z - 3.27;
+    const bellY = courtY + 0.222;
+    group.add(makeBox(0.85, 0.3, 0.85, materials.darkStone, bellX, bellY + 0.15, bellZ));
+    group.add(makeCylinder(0.07, 0.09, 1.75, 8, materials.wood, bellX, bellY + 1.16, bellZ));
+    const bellArm = makeBox(0.8, 0.08, 0.08, materials.wood, bellX + 0.3, bellY + 2.0, bellZ);
+    const bellCup = makeCylinder(0.15, 0.27, 0.34, 12, materials.gold, bellX + 0.52, bellY + 1.74, bellZ);
+    const bellClapper = makeSphere(0.05, materials.iron, bellX + 0.52, bellY + 1.55, bellZ);
+    group.add(bellArm, bellCup, bellClapper);
+    addExplorationCollider(bellX, bellZ, 0.55, "decor");
+
+    // Tall swallow-tail pennants ring the wall between the stands.
+    for (let i = 0; i < 8; i += 1) {
+      const angle = Math.PI / 8 + (i / 8) * TAU;
+      const px = x + Math.cos(angle) * 10.6;
+      const pz = z + Math.sin(angle) * 10.6;
+      const post = makeCylinder(0.06, 0.09, 2.7, 8, materials.wood, px, courtY + 0.18 + 1.35, pz);
+      const crossbar = makeBox(0.66, 0.05, 0.05, materials.wood, 0, 1.28, 0.18);
+      const pennant = makeBox(0.05, 0.95, 0.5, i % 2 ? materials.cityBannerRed : materials.blue, 0, 0.78, 0.38);
+      const tail = makeBox(0.05, 0.42, 0.26, i % 2 ? materials.cityBannerRed : materials.blue, 0, 0.1, 0.5);
+      const finial = makeSphere(0.07, materials.gold, 0, 1.42, 0);
+      post.add(crossbar, pennant, tail, finial);
+      post.rotation.y = -angle + Math.PI / 2;
+      group.add(post);
+    }
+
+    // Tiered stands face the sand from N, S, and E; the west stays open for
+    // the processional way. North stand carries the dignitary canopy.
+    const buildStand = (sx, sz, length, facing, canopy) => {
+      const stand = new THREE.Group();
+      setExplorationLocalGroundPosition(stand, x + sx, z + sz);
+      stand.rotation.y = facing;
+      stand.add(makeBox(length + 0.8, 0.32, 3.9, materials.darkStone, 0, 0.16, 0.1));
+      for (let tier = 0; tier < 3; tier += 1) {
+        const benchY = 0.55 + tier * 0.46;
+        const benchZ = -1.05 + tier * 1.0;
+        stand.add(makeBox(length - tier * 0.6, 0.5, 0.42, materials.stone, 0, benchY - 0.25, benchZ + 0.24));
+        stand.add(makeBox(length - tier * 0.6, 0.16, 0.52, tier % 2 ? materials.paleWood : materials.wood, 0, benchY, benchZ));
+      }
+      for (const px of [-length / 2 + 0.5, 0, length / 2 - 0.5]) {
+        stand.add(makeBox(0.18, 1.85, 0.18, materials.wood, px, 0.92, 1.62));
+      }
+      stand.add(makeBox(length, 0.14, 0.14, materials.wood, 0, 1.78, 1.62));
+      if (canopy) {
+        for (const px of [-length * 0.32, length * 0.32]) {
+          stand.add(makeCylinder(0.06, 0.08, 2.9, 8, materials.wood, px, 1.45, -0.7));
+        }
+        const cloth = makeBox(length * 0.72, 0.06, 3.1, materials.blue, 0, 2.62, 0.45);
+        cloth.rotation.x = 0.16;
+        stand.add(cloth);
+      }
+      group.add(stand);
+    };
+    buildStand(0, -14.8, 16, Math.PI, true);
+    buildStand(0, 14.8, 16, 0, false);
+    buildStand(14.8, 0, 12, Math.PI / 2, false);
+    addExplorationLineColliders(x, z - 14.8, 16, 3.9, "structure");
+    addExplorationLineColliders(x, z + 14.8, 16, 3.9, "structure");
+    addExplorationLineColliders(x + 14.8, z, 3.9, 12, "structure");
+
+    // Colonnade flanking the processional way from the gate to the ring mouth.
+    const colStart = { x: -26.5, z: -17.2 };
+    const colEnd = { x: -10.6, z: 0 };
+    const colDx = colEnd.x - colStart.x;
+    const colDz = colEnd.z - colStart.z;
+    const colLen = Math.hypot(colDx, colDz);
+    const perpX = -colDz / colLen;
+    const perpZ = colDx / colLen;
+    for (let i = 0; i < 3; i += 1) {
+      const t = 0.3 + i * 0.27;
+      for (const side of [-1, 1]) {
+        const cx = x + colStart.x + colDx * t + side * 2.7 * perpX;
+        const cz = z + colStart.z + colDz * t + side * 2.7 * perpZ;
+        const column = makeDecorGroup(group, cx, cz, 0, 1);
+        column.add(makeBox(0.7, 0.2, 0.7, materials.darkStone, 0, 0.1, 0));
+        column.add(makeCylinder(0.24, 0.3, 2.2, 10, materials.cityWall, 0, 1.3, 0));
+        column.add(makeBox(0.6, 0.16, 0.6, materials.darkStone, 0, 2.48, 0));
+        addExplorationCollider(cx, cz, 0.5, "decor");
+      }
+    }
+
+    // Infirmary (SW, Physicker Maud + the late-join queue anchor) and the
+    // barracks house (SE). The infirmaryLocal anchor above must stay put.
     addCityHouse(group, x - 19, z + 12, 1.0, 8, -Math.PI / 2);
     addCityHouse(group, x + 20, z + 12, 1.02, 9, Math.PI / 2);
+    addBench(group, x - 14.8, z + 9.6, -1.2);
+    addBucket(group, x - 15.8, z + 14.2, 0.4, 0.82);
+    addLanternPost(group, x - 13.8, z + 13.4, 0.2, 0.82);
+    addBannerPole(group, x + 15.2, z + 8.9, 0.3, 0.95);
+    addCrateStack(group, x + 15.6, z + 13.6, 0.4, 0.8);
+
+    // Stable just inside the gate so riders park on arrival.
     addStable(group, x - 20, z - 11);
-    addBannerPole(group, x - 24, z - 20, 0.16, 0.92);
-    addBannerPole(group, x + 24, z - 20, -0.16, 0.92);
-    addLanternPost(group, x - 10, z - 18, 0.2, 0.82);
-    addLanternPost(group, x + 10, z - 18, -0.2, 0.82);
-    addCart(group, x + 21, z - 8, -0.35, 0.86);
-    addCrateStack(group, x + 23, z - 4, 0.2, 0.78);
     addBarrel(group, x - 22, z - 4, -0.2, 0.82);
     addBucket(group, x - 17, z + 7, 0.4, 0.82);
 
-    const steward = createFriendlyNpc(game.exploration.origin.x + x - 3.4, game.exploration.origin.z + z - 11.6, random, 8.5, "Steward Bryn", "crownringTrial", "city");
+    // Steward's post inside the gate: a roofed booth where Steward Bryn keeps
+    // the lists; the notice board faces arrivals across the passage.
+    const booth = makeDecorGroup(group, x - 25, z - 21.3, 0.35, 1);
+    for (const [bx, bz] of [[-1.1, -0.85], [1.1, -0.85], [-1.1, 0.85], [1.1, 0.85]]) {
+      booth.add(makeBox(0.13, 2.1, 0.13, materials.wood, bx, 1.05, bz));
+    }
+    const boothRoof = makeBox(2.7, 0.13, 2.3, materials.cityRoof, 0, 2.2, 0);
+    boothRoof.rotation.z = 0.07;
+    booth.add(boothRoof);
+    booth.add(makeBox(2.25, 0.74, 0.42, materials.wood, 0, 0.37, -0.92));
+    booth.add(makeBox(2.35, 0.12, 0.56, materials.paleWood, 0, 0.8, -0.92));
+    booth.add(makeBox(0.06, 0.92, 0.7, materials.cityBannerRed, -1.18, 1.45, 0));
+    addExplorationCollider(x - 25, z - 21.3, 1.15, "structure");
+
+    const board = makeDecorGroup(group, x - 26.2, z - 14.4, Math.PI + 0.5, 1);
+    for (const bx of [-0.85, 0.85]) {
+      board.add(makeBox(0.11, 1.7, 0.11, materials.wood, bx, 0.85, 0));
+    }
+    board.add(makeBox(1.95, 1.0, 0.09, materials.paleWood, 0, 1.18, 0));
+    board.add(makeBox(2.1, 0.1, 0.34, materials.cityRoof, 0, 1.76, 0));
+    board.add(makeBox(0.34, 0.44, 0.03, materials.basket, -0.55, 1.22, 0.06));
+    board.add(makeBox(0.3, 0.38, 0.03, materials.basket, 0.1, 1.1, 0.06));
+    board.add(makeBox(0.32, 0.4, 0.03, materials.basket, 0.68, 1.26, 0.06));
+    addExplorationCollider(x - 26.2, z - 14.4, 0.55, "decor");
+
+    // Gate plaza dressing outside the walls.
+    addBannerPole(group, x - 32.4, z - 22.6, 0.9, 1.05);
+    addBannerPole(group, x - 32.4, z - 13.4, 2.2, 1.05);
+    addLanternPost(group, x - 35.5, z - 21.8, 0.4, 0.9);
+    addSignpost(group, x - 36.8, z - 14.2, 0.6, 1);
+
+    // Fighters' yard (NE): dummies, a weapon rack against the east wall, and
+    // kit clutter between the east stand and the wall.
+    addTrainingDummy(group, x + 19.5, z - 12.5, -0.6, 1);
+    addTrainingDummy(group, x + 23, z - 9.8, 0.5, 0.96);
+    addBench(group, x + 17.6, z - 8.6, Math.PI / 2 + 0.2);
+    addBarrel(group, x + 25.8, z - 7.6, 0.3, 0.85);
+    addCrateStack(group, x + 25.6, z - 15.6, 0.15, 0.8);
+    addCart(group, x + 22.5, z - 18.9, -1.25, 0.86);
+    const rack = makeDecorGroup(group, x + 26.6, z - 12.2, Math.PI / 2, 1);
+    for (const rx of [-0.8, 0.8]) {
+      rack.add(makeBox(0.12, 1.5, 0.12, materials.wood, rx, 0.75, 0));
+    }
+    rack.add(makeBox(1.85, 0.1, 0.1, materials.wood, 0, 1.42, 0));
+    for (let i = 0; i < 3; i += 1) {
+      const spear = new THREE.Group();
+      spear.position.set(-0.45 + i * 0.45, 0, 0.12);
+      spear.rotation.z = 0.16;
+      spear.add(makeCylinder(0.025, 0.035, 1.75, 6, materials.wood, 0, 0.88, 0));
+      spear.add(makeCone(0.05, 0.2, 6, materials.iron, 0, 1.85, 0));
+      rack.add(spear);
+    }
+    addExplorationCollider(x + 26.6, z - 12.2, 0.6, "decor");
+
+    // Steward Bryn keeps the entrance post by the gatehouse booth so arrivals
+    // meet the Crownring service where they walk in.
+    const steward = createFriendlyNpc(game.exploration.origin.x + x - 23.2, game.exploration.origin.z + z - 19.6, random, 3.5, "Steward Bryn", "crownringTrial", "city");
     steward.serviceType = "crownring";
     steward.questMarker.visible = true;
     steward.questMarker.material.color.setHex(0xffd889);
     game.npcs.push(steward);
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 19, game.exploration.origin.z + z + 8.5, random, 7.5, "Physicker Maud", null, "city"));
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 16.4, game.exploration.origin.z + z - 7.2, random, 7.5, "Quartermaster Pell", ROADWARDEN_TACK_QUEST_ID, "city"));
+
+    window.__dbgCR = {
+      x, z,
+      tp: (ox = 0, oz = 0, yaw) => {
+        player.position.x = game.exploration.origin.x + x + ox;
+        player.position.z = game.exploration.origin.z + z + oz;
+        player.group.position.copy(player.position);
+        if (Number.isFinite(yaw)) {
+          game.cameraYaw = yaw;
+        }
+      }
+    };
   }
 
   function isExplorationBlocked(localX, localZ) {
@@ -9431,10 +11304,9 @@ import {
     };
     game.exploration.biomes.push(mountain, desert, swamp, briar);
     setupExplorationFlatZones();
-    addBiomePatch(group, desert, seed);
-    addBiomePatch(group, mountain, seed);
-    addBiomePatch(group, swamp, seed);
-    addBiomePatch(group, briar, seed);
+    // Biome ground patches are added by setupExplorationWorld AFTER the
+    // lake/village flat zones register, so their vertices match the final
+    // sampler (T-025).
   }
 
   // Exploration enemies get tougher the further they roam from the homestead
@@ -9507,6 +11379,7 @@ import {
         hoverHeight: numberOrZero(enemy.hoverHeight),
         desiredRange: numberOrZero(enemy.desiredRange),
         respawnAt: 0,     // 0 = occupied; >0 = empty, refill at this clock.elapsedTime
+        scheduledAt: 0,   // when the wait started; lets the player-count multiplier rescale live
         clearedBonus: 0   // cleared-zone pushback already applied (capped)
       });
     }
@@ -9538,8 +11411,12 @@ import {
     group.add(nest);
     addExplorationCollider(biome.x + 8, biome.z - 6, 4.2, "structure");
 
-    // Roost-keeper and her cold clutch: the Skyhatched Brood quest. Eggs sit
-    // in wind shadows around the nest, outside the structure colliders.
+    // Roost-keeper and her cold clutch: the Skyhatched Brood quest. The five
+    // eggs are scattered across the wider Dragonspine shelves and peaks so
+    // the climb is a real journey, not a lap of the spire ring. Each spot
+    // comes from randomPointInBiome, which already rejects collider-blocked
+    // points (no spire/nest traps), and placements keep a healthy separation
+    // from each other and from the nest so no two eggs share a shelf.
     game.npcs.push(createFriendlyNpc(
       game.exploration.origin.x + biome.x + 14.5,
       game.exploration.origin.z + biome.z - 1.5,
@@ -9549,17 +11426,31 @@ import {
       "skyDrake",
       "mountain"
     ));
-    const eggSpots = [
-      [biome.x + 2, biome.z - 13.5],
-      [biome.x + 11, biome.z - 9],
-      [biome.x + 9, biome.z + 5]
-    ];
+    const eggSpots = [];
+    const nestX = biome.x + 8;
+    const nestZ = biome.z - 6;
+    const eggSeparation = 30;
+    for (let i = 0; i < 5; i += 1) {
+      const spot = randomPointInBiome(random, "mountain", 10, (x, z) => {
+        if (Math.hypot(x - nestX, z - nestZ) < 16) {
+          return false;
+        }
+        for (const [px, pz] of eggSpots) {
+          if (Math.hypot(x - px, z - pz) < eggSeparation) {
+            return false;
+          }
+        }
+        return true;
+      });
+      eggSpots.push([spot.x, spot.z]);
+    }
     for (const [ex, ez] of eggSpots) {
-      createQuestItem(group, "skyDrake", ex + (random() - 0.5) * 2.0, ez + (random() - 0.5) * 2.0, random, {
+      createQuestItem(group, "skyDrake", ex, ez, random, {
         color: 0x7ad9c9,
         stemMaterial: materials.bone,
         radius: 0.13,
-        groundOffset: 0.16
+        groundOffset: 0.16,
+        pickupRadius: 1.6
       });
     }
   }
@@ -9585,6 +11476,60 @@ import {
       rx: 6.5,
       rz: 3.4
     });
+
+    // Saffa's courser camp at the oasis edge: the Well-Road Courser quest.
+    // A well-rider waters her string here; a simple hitch rail marks the pen.
+    // Position sits outside the oasis ellipse (rx 6.5 + player margin) so
+    // neither the NPC nor the player gets pushed around by the lake clamp.
+    const campX = biome.x - 12.5;
+    const campZ = biome.z + 21.5;
+    game.npcs.push(createFriendlyNpc(
+      game.exploration.origin.x + campX,
+      game.exploration.origin.z + campZ,
+      random,
+      6.0,
+      "Saffa",
+      "duneCourser",
+      "desert"
+    ));
+    const railY = explorationGroundLocalY(campX + 2.4, campZ + 1.6);
+    const postA = makeCylinder(0.07, 0.09, 1.1, 7, materials.wood, campX + 1.6, railY + 0.55, campZ + 1.6);
+    const postB = makeCylinder(0.07, 0.09, 1.1, 7, materials.wood, campX + 3.2, railY + 0.55, campZ + 1.6);
+    const rail = makeCylinder(0.045, 0.045, 1.78, 7, materials.wood, campX + 2.4, railY + 0.92, campZ + 1.6);
+    rail.rotation.z = Math.PI / 2;
+    group.add(postA, postB, rail);
+    addExplorationCollider(campX + 1.6, campZ + 1.6, 0.45, "structure");
+    addExplorationCollider(campX + 3.2, campZ + 1.6, 0.45, "structure");
+
+    // Five waterskin caches scattered across the wider Amber Dunes well-road.
+    // randomPointInBiome rejects collider-blocked spots; the separation filter
+    // forces a genuine traverse between caches, and a nudge keeps them off
+    // Saffa's camp itself.
+    const cacheSpots = [];
+    const cacheSeparation = 32;
+    for (let i = 0; i < 5; i += 1) {
+      const spot = randomPointInBiome(random, "desert", 10, (x, z) => {
+        if (Math.hypot(x - campX, z - campZ) < 18) {
+          return false;
+        }
+        for (const [px, pz] of cacheSpots) {
+          if (Math.hypot(x - px, z - pz) < cacheSeparation) {
+            return false;
+          }
+        }
+        return true;
+      });
+      cacheSpots.push([spot.x, spot.z]);
+    }
+    for (const [cx, cz] of cacheSpots) {
+      createQuestItem(group, "duneCourser", cx, cz, random, {
+        color: 0xf2b56b,
+        stemMaterial: materials.darkLeather,
+        radius: 0.13,
+        groundOffset: 0.16,
+        pickupRadius: 1.6
+      });
+    }
   }
 
   function addSwampMarkers(group, biome, random) {
@@ -9703,6 +11648,45 @@ import {
     const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
     const briarBiome = game.exploration.biomes.find(biome => biome.id === "briar");
 
+    // T-025 sampler/mesh unification: every flat zone must be registered
+    // BEFORE the ground mesh and biome patches bake below, or the rendered
+    // ground desyncs from the walk-height sampler (characters sink/float).
+    // Lake and village positions are drawn from the seeded stream here,
+    // their zones registered up front, and the same specs are passed to the
+    // builders further down. Do NOT call registerExplorationFlatZone after
+    // this block during world build (see docs/DEBUGGING.md "Terrain sampler
+    // contract").
+    // T-029: no lake near Bellwater/Crownford anymore — the old first entry
+    // here ({ x: 58..68, z: 76..85, rx: 17, rz: 10 }) flooded the Underworks
+    // entrance approach. The dungeon facade now carries a small drainage
+    // puddle + waterfall instead (see addBellwaterUnderworksPoi).
+    const lakeSpecs = [
+      { x: -98 - random() * 10, z: -72 - random() * 9, rx: 14, rz: 9 },
+      { x: 148 + random() * 12, z: -128 - random() * 10, rx: 16, rz: 8.5 },
+      { x: -202 - random() * 12, z: 84 + random() * 10, rx: 15, rz: 9.5 },
+      { x: 12 + random() * 12, z: -202 - random() * 10, rx: 12, rz: 7.5 },
+      { x: 232 + random() * 12, z: 24 + random() * 10, rx: 13, rz: 7.4 }
+    ];
+    const villageSpecs = [
+      { x: 118 + random() * 14, z: -86 - random() * 12, biome: "meadow" },
+      { x: -126 - random() * 14, z: 90 + random() * 12, biome: "meadow" },
+      { x: mountainBiome.x + 18 + random() * 8, z: mountainBiome.z - 24 - random() * 8, biome: "mountain" },
+      { x: desertBiome.x + 10 + random() * 8, z: desertBiome.z + 2 + random() * 8, biome: "desert" },
+      { x: swampBiome.x + 7 + random() * 5, z: swampBiome.z - 7 - random() * 5, biome: "swamp" },
+      { x: briarBiome.x - 8 + random() * 7, z: briarBiome.z + 8 + random() * 7, biome: "briar" }
+    ];
+    for (const lake of lakeSpecs) {
+      registerExplorationFlatZone(lake.x, lake.z, Math.max(lake.rx, lake.rz) + 2.5, 6.5, null, 0.82);
+    }
+    for (const village of villageSpecs) {
+      const flatRadius = village.biome === "desert" ? 24 : village.biome === "swamp" ? 25 : village.biome === "briar" ? 26 : village.biome === "mountain" ? 24 : 23;
+      registerExplorationFlatZone(village.x, village.z, flatRadius, 12, null, 0.94);
+    }
+    addBiomePatch(group, desertBiome, seed);
+    addBiomePatch(group, mountainBiome, seed);
+    addBiomePatch(group, swampBiome, seed);
+    addBiomePatch(group, briarBiome, seed);
+
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
     const groundGeometry = new THREE.PlaneGeometry(EXPLORATION_TERRAIN_SIZE, EXPLORATION_TERRAIN_SIZE, EXPLORATION_TERRAIN_SEGMENTS, EXPLORATION_TERRAIN_SEGMENTS);
@@ -9728,21 +11712,16 @@ import {
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + 2.4, game.exploration.origin.z - 5.5, random, 4.5, "Torren", "raiders", "meadow"));
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x - 7.0, game.exploration.origin.z - 4.2, random, 4.5, "Rowan", "horse", "meadow"));
 
-    addExplorationLake(group, 58 + random() * 10, 76 + random() * 9, 17, 10, random);
-    addExplorationLake(group, -98 - random() * 10, -72 - random() * 9, 14, 9, random);
-    addExplorationLake(group, 148 + random() * 12, -128 - random() * 10, 16, 8.5, random);
-    addExplorationLake(group, -202 - random() * 12, 84 + random() * 10, 15, 9.5, random);
-    addExplorationLake(group, 12 + random() * 12, -202 - random() * 10, 12, 7.5, random);
-    addExplorationLake(group, 232 + random() * 12, 24 + random() * 10, 13, 7.4, random);
+    for (const lake of lakeSpecs) {
+      addExplorationLake(group, lake.x, lake.z, lake.rx, lake.rz, random);
+    }
     addHerbQuestItems(group, random);
     addHorseQuestItems(group, random);
 
-    addExplorationVillage(group, 118 + random() * 14, -86 - random() * 12, random, 0, "meadow");
-    addExplorationVillage(group, -126 - random() * 14, 90 + random() * 12, random, 1, "meadow");
-    addExplorationVillage(group, mountainBiome.x + 18 + random() * 8, mountainBiome.z - 24 - random() * 8, random, 2, "mountain");
-    addExplorationVillage(group, desertBiome.x + 10 + random() * 8, desertBiome.z + 2 + random() * 8, random, 3, "desert");
-    addExplorationVillage(group, swampBiome.x + 7 + random() * 5, swampBiome.z - 7 - random() * 5, random, 4, "swamp");
-    addExplorationVillage(group, briarBiome.x - 8 + random() * 7, briarBiome.z + 8 + random() * 7, random, 5, "briar");
+    for (let i = 0; i < villageSpecs.length; i += 1) {
+      const village = villageSpecs[i];
+      addExplorationVillage(group, village.x, village.z, random, i, village.biome);
+    }
     addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
     addCrownringCity(group, 158 + random() * 7, 48 + random() * 6, random);
     restoreSavedTownRespawnPoint();
@@ -9840,6 +11819,7 @@ import {
       addExplorationRock(group, point.x, point.z, random, random() > 0.82);
     }
     addExplorationFlowers(group, random, 160);
+    addHerbClusters(group, random);
 
     // Meadow: the roaming brawler stays the staple; some spawns are converted
     // to ranged Bandit Archers so the region has a close + distance pairing.
@@ -10342,6 +12322,18 @@ import {
       pole.rotation.y = -angle;
       addArenaObject(pole);
     }
+
+    // Yield bell beside the gate the player faces on entry. Visual anchor for
+    // the Y yield flow only - no new mechanics, and it sits clear of the gate
+    // spawn lanes (lane offsets stay within +-2.3 of the gate centerline).
+    const yieldBell = new THREE.Group();
+    yieldBell.position.set(3.8, 0, -(arenaRadius - 2.6));
+    yieldBell.add(makeBox(0.85, 0.3, 0.85, materials.darkStone, 0, 0.15, 0));
+    yieldBell.add(makeCylinder(0.07, 0.09, 1.75, 8, materials.wood, 0, 1.16, 0));
+    yieldBell.add(makeBox(0.8, 0.08, 0.08, materials.wood, -0.3, 2.0, 0));
+    yieldBell.add(makeCylinder(0.15, 0.27, 0.34, 12, materials.gold, -0.52, 1.74, 0));
+    yieldBell.add(makeSphere(0.05, materials.iron, -0.52, 1.55, 0));
+    addArenaObject(yieldBell);
   }
 
   // ---------------------------------------------------------------------
@@ -10493,6 +12485,40 @@ import {
     return weapon;
   }
 
+  function buildSentinelWeapon(weaponId) {
+    // Knight pivot convention: long axis along Z, business end toward -Z.
+    const weapon = new THREE.Group();
+    const partisan = weaponId === "sentinel_crownring_partisan";
+    const haft = makeCylinder(0.04, 0.046, 2.1, 8, partisan ? materials.darkLeather : materials.wood, 0, 0, -0.4);
+    haft.rotation.x = Math.PI / 2;
+    const ferrule = makeCylinder(0.052, 0.058, 0.14, 8, materials.iron, 0, 0, 0.6);
+    ferrule.rotation.x = Math.PI / 2;
+    const collar = makeCylinder(0.056, 0.056, 0.18, 8, materials.iron, 0, 0, -1.32);
+    collar.rotation.x = Math.PI / 2;
+    weapon.add(haft, ferrule, collar);
+    if (partisan) {
+      // Broad parade point with side lugs and a steward's tassel.
+      const point = makeBox(0.085, 0.045, 0.5, materials.steel, 0, 0, -1.66);
+      const tip = buildSwordTip(0.0425, -1.91, materials.steel);
+      const lugLeft = makeCylinder(0.0, 0.045, 0.2, 5, materials.gold, -0.11, 0, -1.44);
+      lugLeft.rotation.z = Math.PI / 2;
+      const lugRight = makeCylinder(0.0, 0.045, 0.2, 5, materials.gold, 0.11, 0, -1.44);
+      lugRight.rotation.z = -Math.PI / 2;
+      const tassel = makeBox(0.06, 0.2, 0.06, materials.cloth, 0, -0.14, -1.36);
+      weapon.add(point, tip, lugLeft, lugRight, tassel);
+      return weapon;
+    }
+    // Ironshod Halberd: spike, axe blade, back hook.
+    const spike = makeBox(0.07, 0.04, 0.32, materials.steel, 0, 0, -1.58);
+    const tip = buildSwordTip(0.035, -1.74, materials.steel);
+    const blade = makeBox(0.3, 0.026, 0.3, materials.steel.clone(), -0.19, 0, -1.36);
+    const bladeEdge = makeBox(0.08, 0.022, 0.34, materials.iron.clone(), -0.36, 0, -1.36);
+    const backSpike = makeCylinder(0.0, 0.04, 0.22, 5, materials.steel.clone(), 0.15, 0, -1.36);
+    backSpike.rotation.z = -Math.PI / 2;
+    weapon.add(spike, tip, blade, bladeEdge, backSpike);
+    return weapon;
+  }
+
   function buildWeaponModel(weaponId) {
     const definition = equipmentDefs[weaponId];
     const character = definition ? definition.character : "knight";
@@ -10501,6 +12527,9 @@ import {
     }
     if (character === "ranger") {
       return buildRangerWeapon(weaponId);
+    }
+    if (character === "sentinel") {
+      return buildSentinelWeapon(weaponId);
     }
     return buildKnightWeapon(weaponId);
   }
@@ -10637,6 +12666,14 @@ import {
     slashArc.rotation.set(1.25, 0, -0.78);
     slashArc.visible = false;
 
+    // Warden's Resolve aura: built once with the model, toggled while
+    // player.resolveTimer > 0 (no lights, single cloned material).
+    const resolveAura = new THREE.Mesh(new THREE.RingGeometry(0.78, 0.98, 36), materials.arcane.clone());
+    resolveAura.material.color.setHex(0xffd889);
+    resolveAura.rotation.x = -Math.PI / 2;
+    resolveAura.position.y = 0.07;
+    resolveAura.visible = false;
+
     const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
     hitFlash.position.set(0, 1.55, -0.63);
     hitFlash.rotation.x = Math.PI / 2;
@@ -10648,7 +12685,7 @@ import {
       leftTasset, rightTasset, leftTasset2, rightTasset2, faulds, rivets,
       leftLeg, rightLeg,
       leftArm, rightArm, leftPauldron, rightPauldron,
-      swordPivot, shieldPivot, slashArc, hitFlash
+      swordPivot, shieldPivot, slashArc, resolveAura, hitFlash
     );
     scene.add(group);
 
@@ -10663,6 +12700,7 @@ import {
     player.rightLeg = rightLeg;
     player.swordBlade = null;
     player.slashArc = slashArc;
+    player.resolveAura = resolveAura;
     player.burstRing = null;
     player.castGlow = null;
     player.hitFlash = hitFlash;
@@ -10672,21 +12710,44 @@ import {
     const group = new THREE.Group();
     group.position.copy(player.position);
 
-    const robeLower = makeCylinder(0.68, 0.9, 1.0, 18, materials.wizardRobe.clone(), 0, 0.58, 0);
-    const robeUpper = makeCylinder(0.48, 0.62, 0.92, 18, materials.wizardRobe.clone(), 0, 1.33, 0);
-    const sash = makeCylinder(0.56, 0.57, 0.11, 18, materials.gold, 0, 0.96, 0);
-    const sashPouch = makeBox(0.2, 0.22, 0.13, materials.leather, 0.4, 0.82, -0.34);
-    const frontTrim = makeBox(0.12, 1.28, 0.05, materials.wizardTrim.clone(), 0, 0.98, -0.62);
-    const shoulderWrap = makeBox(1.16, 0.18, 0.5, materials.wizardTrim.clone(), 0, 1.75, -0.03);
-    const cape = makeBox(0.92, 1.24, 0.06, materials.royalBlue, 0, 1.12, 0.49);
-    cape.rotation.x = -0.12;
-    // Flared hem ring at the bottom of the robe + vertical fold accents.
-    const hemRing = makeCylinder(0.94, 1.02, 0.18, 18, materials.wizardRobe.clone(), 0, 0.12, 0);
-    const fold1 = makeBox(0.08, 0.92, 0.1, materials.wizardRobe.clone(), -0.36, 0.5, -0.52);
-    fold1.rotation.z = 0.05;
-    const fold2 = makeBox(0.08, 0.92, 0.1, materials.wizardRobe.clone(), 0.36, 0.5, -0.52);
-    fold2.rotation.z = -0.05;
-    const fold3 = makeBox(0.08, 1.0, 0.1, materials.wizardRobe.clone(), 0, 0.48, -0.58);
+    // Traveling battle-caster robe: slim tapered skirt with a raised hem so the
+    // jointed boots read underneath, split front panels, and a riding-coat tail.
+    const robeUpper = makeCylinder(0.36, 0.46, 0.92, 18, materials.wizardRobe.clone(), 0, 1.33, 0);
+    const robeLower = makeCylinder(0.44, 0.53, 0.7, 18, materials.wizardRobe.clone(), 0, 0.72, 0);
+    const hemRing = makeCylinder(0.54, 0.58, 0.12, 18, materials.wizardRobe.clone(), 0, 0.4, 0);
+    const frontPanelLeft = makeBox(0.2, 0.62, 0.06, materials.wizardRobe.clone(), -0.19, 0.66, -0.45);
+    frontPanelLeft.rotation.y = 0.18;
+    frontPanelLeft.rotation.x = -0.06;
+    const frontPanelRight = makeBox(0.2, 0.62, 0.06, materials.wizardRobe.clone(), 0.19, 0.66, -0.45);
+    frontPanelRight.rotation.y = -0.18;
+    frontPanelRight.rotation.x = -0.06;
+    const backPanel = makeBox(0.42, 0.78, 0.06, materials.wizardRobe.clone(), 0, 0.68, 0.42);
+    backPanel.rotation.x = -0.12;
+    // Practical-magic kit: leather belt with buckle, twin pouches, scroll case,
+    // and a satchel strap across the chest.
+    const belt = makeCylinder(0.46, 0.48, 0.12, 18, materials.darkLeather, 0, 1.0, 0);
+    const beltBuckle = makeBox(0.14, 0.1, 0.05, materials.gold, 0, 1.0, -0.46);
+    const sashPouch = makeBox(0.18, 0.2, 0.12, materials.leather, 0.34, 0.86, -0.3);
+    sashPouch.rotation.y = -0.3;
+    const sidePouch = makeBox(0.14, 0.16, 0.1, materials.leather, -0.34, 0.88, -0.28);
+    sidePouch.rotation.y = 0.35;
+    const scrollCase = makeCylinder(0.05, 0.05, 0.34, 8, materials.leather, -0.26, 0.92, 0.36);
+    scrollCase.rotation.z = Math.PI / 2;
+    scrollCase.rotation.y = 0.4;
+    const satchelStrap = makeBox(0.1, 0.96, 0.05, materials.darkLeather, 0, 1.42, -0.42);
+    satchelStrap.rotation.z = -0.62;
+    // Layered shoulder mantle with a slim trim edge and clasp, narrower cape.
+    const mantle = makeCylinder(0.34, 0.54, 0.36, 16, materials.royalBlue, 0, 1.78, 0);
+    const mantleTrim = makeCylinder(0.53, 0.55, 0.06, 16, materials.wizardTrim.clone(), 0, 1.62, 0);
+    const mantleClasp = makeBox(0.1, 0.12, 0.05, materials.gold, 0, 1.84, -0.42);
+    const cape = makeBox(0.72, 1.28, 0.06, materials.royalBlue, 0, 1.1, 0.44);
+    cape.rotation.x = -0.1;
+    // Subtle rune trim down the chest.
+    const frontTrim = makeBox(0.09, 0.7, 0.04, materials.wizardTrim.clone(), 0, 1.3, -0.43);
+    const runeStudTop = makeBox(0.05, 0.05, 0.03, materials.gold, 0, 1.5, -0.45);
+    runeStudTop.rotation.z = Math.PI / 4;
+    const runeStudLow = makeBox(0.05, 0.05, 0.03, materials.gold, 0, 1.22, -0.46);
+    runeStudLow.rotation.z = Math.PI / 4;
 
     const head = makeSphere(0.26, materials.skin, 0, 2.02, 0);
     // Two stacked bone beard boxes + nose + brow ridge for a craggier face.
@@ -10696,18 +12757,23 @@ import {
     const brow = makeBox(0.3, 0.05, 0.06, materials.skin.clone(), 0, 2.11, -0.24);
     const leftEye = makeSphere(0.032, materials.lightningCore.clone(), -0.08, 2.06, -0.24);
     const rightEye = makeSphere(0.032, materials.lightningCore.clone(), 0.08, 2.06, -0.24);
-    const hatBrim = makeCylinder(0.43, 0.43, 0.08, 24, materials.wizardHat.clone(), 0, 2.23, 0);
-    const hatCone = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.82, 24), materials.wizardHat.clone());
-    hatCone.position.set(0.02, 2.67, 0.02);
-    hatCone.rotation.z = -0.1;
+    // Weathered traveler's hat: drooping brim with a slight asymmetric set,
+    // a leaning crown, and the old bent tip.
+    const hatBrim = makeCylinder(0.3, 0.5, 0.1, 24, materials.wizardHat.clone(), 0, 2.25, 0);
+    hatBrim.rotation.z = 0.07;
+    hatBrim.rotation.x = 0.05;
+    const hatCone = new THREE.Mesh(new THREE.ConeGeometry(0.31, 0.78, 24), materials.wizardHat.clone());
+    hatCone.position.set(0.03, 2.66, 0.02);
+    hatCone.rotation.z = -0.14;
     addShadow(hatCone);
     // Bent hat tip + gold star emblem on the band.
-    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 16), materials.wizardHat.clone());
-    hatTip.position.set(-0.12, 3.0, 0.05);
-    hatTip.rotation.z = 0.66;
+    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.34, 16), materials.wizardHat.clone());
+    hatTip.position.set(-0.1, 2.98, 0.05);
+    hatTip.rotation.z = 0.7;
     addShadow(hatTip);
-    const hatBand = makeCylinder(0.27, 0.3, 0.08, 18, materials.gold, 0, 2.35, 0);
-    const hatStar = makeBox(0.1, 0.1, 0.04, materials.gold, 0, 2.4, -0.29);
+    const hatBand = makeCylinder(0.26, 0.3, 0.08, 18, materials.gold, 0, 2.34, 0);
+    hatBand.rotation.z = -0.05;
+    const hatStar = makeBox(0.09, 0.09, 0.04, materials.gold, 0, 2.39, -0.28);
     hatStar.rotation.z = Math.PI / 4;
 
     // Hip-pivot leg Groups (thigh + shin + boot) under the robe.
@@ -10725,8 +12791,9 @@ import {
 
     // Shoulder-pivot sleeved arm Groups (neutral rotation 0, since the cast pose
     // lerps back to 0). Flared upper sleeve + forearm, with the hand/cuff/drape
-    // as children so they swing with the arm during casting.
-    function makeWizArm(x) {
+    // as children so they swing with the arm during casting. The staff hand
+    // (right side) gets a leather grip wrap.
+    function makeWizArm(x, staffHand) {
       const arm = new THREE.Group();
       arm.position.set(x, 1.69, 0);
       const upper = makeCylinder(0.14, 0.16, 0.4, 12, materials.wizardRobe.clone(), 0, -0.2, 0);
@@ -10736,10 +12803,14 @@ import {
       const hand = makeSphere(0.105, materials.skin.clone(), 0, -0.78, -0.03);
       const drape = makeBox(0.2, 0.32, 0.06, materials.wizardRobe.clone(), 0, -0.42, 0.08);
       arm.add(upper, forearm, cuff, hand, drape);
+      if (staffHand) {
+        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.77, -0.03);
+        arm.add(wrap);
+      }
       return arm;
     }
-    const leftArm = makeWizArm(-0.58);
-    const rightArm = makeWizArm(0.58);
+    const leftArm = makeWizArm(-0.58, false);
+    const rightArm = makeWizArm(0.58, true);
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
@@ -10760,7 +12831,9 @@ import {
     hitFlash.visible = false;
 
     group.add(
-      robeLower, robeUpper, sash, sashPouch, frontTrim, shoulderWrap, cape, hemRing, fold1, fold2, fold3,
+      robeUpper, robeLower, hemRing, frontPanelLeft, frontPanelRight, backPanel,
+      belt, beltBuckle, sashPouch, sidePouch, scrollCase, satchelStrap,
+      mantle, mantleTrim, mantleClasp, cape, frontTrim, runeStudTop, runeStudLow,
       head, beardTop, beardBottom, nose, brow, leftEye, rightEye, hatBrim, hatCone, hatTip, hatBand, hatStar,
       leftLeg, rightLeg,
       leftArm, rightArm,
@@ -10779,6 +12852,7 @@ import {
     player.rightLeg = rightLeg;
     player.swordBlade = null;
     player.slashArc = null;
+    player.resolveAura = null;
     player.burstRing = burstRing;
     player.castGlow = castGlow;
     player.hitFlash = hitFlash;
@@ -10873,6 +12947,114 @@ import {
     player.rightLeg = rightLeg;
     player.swordBlade = null;
     player.slashArc = null;
+    player.resolveAura = null;
+    player.burstRing = null;
+    player.castGlow = null;
+    player.hitFlash = hitFlash;
+  }
+
+  // Sentinel halberd rest pose: held upright in the right hand, head skyward.
+  const SENTINEL_HALBERD_REST = { x: 1.08, y: 0.0, z: -0.08 };
+
+  function createSentinel() {
+    const group = new THREE.Group();
+    group.position.copy(player.position);
+
+    // Hip-pivot legs: padded trousers, steel knee, tall boots.
+    function makeSentinelLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeCylinder(0.125, 0.135, 0.4, 12, materials.sentinelSash, 0, -0.18, 0);
+      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.16, -0.1);
+      knee.scale.set(1, 0.6, 0.7);
+      const shin = makeCylinder(0.105, 0.115, 0.4, 12, materials.darkLeather, 0, -0.5, 0.01);
+      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.73, -0.05);
+      leg.add(thigh, knee, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeSentinelLeg(-0.22);
+    const rightLeg = makeSentinelLeg(0.22);
+
+    const hips = makeCylinder(0.45, 0.53, 0.66, 16, materials.sentinelCoat, 0, 0.76, 0);
+    const chest = makeCylinder(0.54, 0.43, 0.92, 16, materials.sentinelCoat.clone(), 0, 1.41, 0);
+    const breastplate = makeBox(0.62, 0.66, 0.1, materials.steel.clone(), 0, 1.46, -0.46);
+    const belt = makeCylinder(0.5, 0.51, 0.12, 16, materials.darkLeather, 0, 1.02, 0);
+    const beltBuckle = makeBox(0.16, 0.11, 0.05, materials.sentinelTrim, 0, 1.02, -0.47);
+    // Civic surcoat panel: slate sash with a pale bell-stripe down the front.
+    const surcoat = makeBox(0.4, 0.86, 0.06, materials.sentinelSash, 0, 0.78, -0.42);
+    const surcoatStripe = makeBox(0.09, 0.8, 0.03, materials.sentinelTrim, 0, 0.78, -0.46);
+    const backCape = makeBox(0.8, 0.78, 0.06, materials.sentinelSash, 0, 1.5, 0.46);
+    backCape.rotation.x = -0.08;
+
+    const head = makeSphere(0.26, materials.skin, 0, 2.06, 0);
+    const leftEye = makeSphere(0.03, materials.emberEye.clone(), -0.08, 2.09, -0.23);
+    const rightEye = makeSphere(0.03, materials.emberEye.clone(), 0.08, 2.09, -0.23);
+    // Kettle helm: the city-watch silhouette. Wide brim plus a shallow dome.
+    const helmBrim = makeCylinder(0.43, 0.47, 0.07, 16, materials.steel, 0, 2.22, 0);
+    const helmDome = makeSphere(0.28, materials.steel.clone(), 0, 2.25, 0);
+    helmDome.scale.set(1, 0.74, 1);
+    const helmBand = makeCylinder(0.29, 0.3, 0.07, 16, materials.iron, 0, 2.27, 0);
+    const helmCrest = makeBox(0.07, 0.07, 0.07, materials.sentinelTrim, 0, 2.46, 0);
+
+    // Shoulder-pivot arms: padded sleeves, leather bracers, bare hands.
+    function makeSentinelArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.72, 0);
+      const upper = makeCylinder(0.115, 0.105, 0.4, 12, materials.sentinelCoat.clone(), 0, -0.2, 0);
+      const elbow = makeSphere(0.095, materials.sentinelSash.clone(), 0, -0.4, 0);
+      const bracer = makeCylinder(0.1, 0.115, 0.34, 10, materials.leather, 0, -0.58, -0.01);
+      const hand = makeSphere(0.105, materials.skin, 0, -0.8, -0.02);
+      arm.add(upper, elbow, bracer, hand);
+      return arm;
+    }
+    const leftArm = makeSentinelArm(-0.58);
+    const rightArm = makeSentinelArm(0.58);
+    const leftPauldron = makeCylinder(0.16, 0.26, 0.18, 12, materials.iron.clone(), -0.58, 1.78, 0);
+    const rightPauldron = makeCylinder(0.16, 0.26, 0.18, 12, materials.iron.clone(), 0.58, 1.78, 0);
+    leftPauldron.rotation.z = Math.PI / 2;
+    rightPauldron.rotation.z = Math.PI / 2;
+
+    const halberdPivot = new THREE.Group();
+    halberdPivot.position.set(0.66, 1.12, -0.04);
+    player.weaponGroup = buildWeaponModel(equippedWeapon("sentinel"));
+    halberdPivot.add(player.weaponGroup);
+    halberdPivot.rotation.set(SENTINEL_HALBERD_REST.x, SENTINEL_HALBERD_REST.y, SENTINEL_HALBERD_REST.z);
+
+    // Horizontal sweep ring reused by Moulinet and Haft Shove flourishes.
+    const slashArc = new THREE.Mesh(
+      new THREE.TorusGeometry(1.6, 0.03, 8, 36),
+      materials.slash.clone()
+    );
+    slashArc.position.set(0, 1.18, 0);
+    slashArc.rotation.x = Math.PI / 2;
+    slashArc.visible = false;
+
+    const hitFlash = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.5, 28), materials.hit.clone());
+    hitFlash.position.set(0, 1.55, -0.63);
+    hitFlash.rotation.x = Math.PI / 2;
+    hitFlash.visible = false;
+
+    group.add(
+      leftLeg, rightLeg,
+      hips, chest, breastplate, belt, beltBuckle, surcoat, surcoatStripe, backCape,
+      head, leftEye, rightEye, helmBrim, helmDome, helmBand, helmCrest,
+      leftArm, rightArm, leftPauldron, rightPauldron,
+      halberdPivot, slashArc, hitFlash
+    );
+    scene.add(group);
+
+    player.group = group;
+    player.body = chest;
+    player.swordPivot = halberdPivot;
+    player.shieldPivot = null;
+    player.staffPivot = null;
+    player.bowPivot = null;
+    player.leftArm = leftArm;
+    player.rightArm = rightArm;
+    player.leftLeg = leftLeg;
+    player.rightLeg = rightLeg;
+    player.swordBlade = null;
+    player.slashArc = slashArc;
     player.burstRing = null;
     player.castGlow = null;
     player.hitFlash = hitFlash;
@@ -10891,6 +13073,8 @@ import {
       createWizard();
     } else if (character === "ranger") {
       createRanger();
+    } else if (character === "sentinel") {
+      createSentinel();
     } else {
       createKnight();
     }
@@ -10915,6 +13099,18 @@ import {
     return svg + '<span class="keybind">' + keybind + '</span>';
   }
 
+  function abilityCooldownMarkup(svg, keybind) {
+    return abilityMarkup(svg, keybind) + '<span class="cooldown-fill"></span><span class="cooldown-time"></span>';
+  }
+
+  function utilityAbilityId(key = characterKey(player.character)) {
+    return key === "wizard" ? "frostbind" : key === "ranger" ? "parting" : key === "sentinel" ? "hook" : "resolve";
+  }
+
+  function payoffAbilityId(key = characterKey(player.character)) {
+    return key === "wizard" ? "stormcrown" : key === "ranger" ? "heartseeker" : key === "sentinel" ? "skewer" : "sweep";
+  }
+
   function setAbilityLock(icon, ability) {
     const locked = !hasAbility(ability);
     icon.classList.toggle("locked", locked);
@@ -10924,14 +13120,27 @@ import {
 
   function updateAbilityLocks() {
     const key = characterKey(player.character);
-    setAbilityLock(attackIcon, key === "wizard" ? "lightning" : key === "ranger" ? "arrow" : "slash");
-    setAbilityLock(blockIcon, key === "wizard" ? "burst" : key === "ranger" ? "roll" : "block");
-    setAbilityLock(potionIcon, key === "wizard" ? "potion" : key === "ranger" ? "pierce" : "bash");
+    setAbilityLock(attackIcon, key === "wizard" ? "lightning" : key === "ranger" ? "arrow" : key === "sentinel" ? "thrust" : "slash");
+    setAbilityLock(blockIcon, key === "wizard" ? "burst" : key === "ranger" ? "roll" : key === "sentinel" ? "shove" : "block");
+    setAbilityLock(potionIcon, key === "wizard" ? "potion" : key === "ranger" ? "pierce" : key === "sentinel" ? "moulinet" : "bash");
+    setAbilityLock(utilityIcon, utilityAbilityId(key));
+    setAbilityLock(payoffIcon, payoffAbilityId(key));
+  }
+
+  // One transform write + (rarely) one text write per slot per frame; no layout reads.
+  function updateCooldownOverlay(fill, timeText, remaining, duration, activeRemaining = 0) {
+    const cooling = remaining > 0 && duration > 0;
+    const pct = cooling ? clamp(remaining / duration, 0, 1) : 0;
+    fill.style.transform = "scaleY(" + pct.toFixed(3) + ")";
+    const label = activeRemaining > 0 ? String(Math.ceil(activeRemaining)) : cooling ? String(Math.ceil(remaining)) : "";
+    if (timeText.textContent !== label) {
+      timeText.textContent = label;
+    }
   }
 
   function characterDisplayName(character = player.character) {
     const key = characterKey(character);
-    return key === "wizard" ? "Wizard" : key === "ranger" ? "Ranger" : "Knight";
+    return key === "wizard" ? "Wizard" : key === "ranger" ? "Ranger" : key === "sentinel" ? "Sentinel" : "Knight";
   }
 
   function getStartButtonText() {
@@ -10961,40 +13170,68 @@ import {
     const key = characterKey(player.character);
     const wizard = key === "wizard";
     const ranger = key === "ranger";
+    const sentinel = key === "sentinel";
     hud.classList.toggle("wizard-mode", wizard);
     hud.classList.toggle("ranger-mode", ranger);
+    hud.classList.toggle("sentinel-mode", sentinel);
     classLabel.textContent = characterDisplayName();
-    resourceLabel.textContent = wizard ? "Magica" : ranger ? "Focus" : "Guard";
+    resourceLabel.textContent = wizard ? "Magica" : ranger ? "Focus" : sentinel ? "Vigor" : "Guard";
     statusPanel.setAttribute("aria-label", characterDisplayName() + " status");
     startButton.textContent = getStartButtonText();
     blockIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M16 4v5M16 23v5M4 16h5M23 16h5M8.5 8.5l3.5 3.5M20 20l3.5 3.5M23.5 8.5L20 12M12 20l-3.5 3.5"/><circle cx="16" cy="16" r="5"/></svg>'
       : ranger
       ? '<svg viewBox="0 0 32 32"><path d="M6 16c4-7 16-7 20 0-4 7-16 7-20 0z"/><path d="M10 16h12M16 10v12"/></svg>'
+      : sentinel
+      ? '<svg viewBox="0 0 32 32"><path d="M10 6v20"/><path d="M16 11h10M26 11l-4-3M26 11l-4 3"/><path d="M16 21h10M26 21l-4-3M26 21l-4 3"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M16 3l10 4v7c0 7-4 12-10 15C10 26 6 21 6 14V7z"/><path d="M16 7v17"/></svg>',
       "RMB / K");
     attackIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M17 2L7 17h7l-2 13 12-17h-8z"/></svg>'
       : ranger
       ? '<svg viewBox="0 0 32 32"><path d="M8 24C8 13 13 8 24 8"/><path d="M8 24L24 8"/><path d="M24 8l-6 1.5M24 8l-1.5 6"/></svg>'
+      : sentinel
+      ? '<svg viewBox="0 0 32 32"><path d="M4 28L22 10"/><path d="M21 11l-2-8 8 2z"/><path d="M9 21l2 2"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M22 4l6 6M18 8l6 6M4 28l6-2 15-15-4-4L6 22zM6 22l4 4"/></svg>',
       "LMB / Space");
     potionIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>'
       : ranger
       ? '<svg viewBox="0 0 32 32"><path d="M5 18h19M24 18l-5-4M24 18l-5 4"/><path d="M9 11c2.7 2.1 0.5 4.5 3 6 1.2-2.4 4.6-3.1 5.7-0.2 1.4 3.6-2 6.2-5.2 6.2-3.1 0-5.4-2-5.4-4.8 0-2.1 1-3.6 1.9-7.2z"/><path d="M10 18h7"/></svg>'
+      : sentinel
+      ? '<svg viewBox="0 0 32 32"><path d="M26 16a10 10 0 1 1-4.5-8.3"/><path d="M22 3l-0.5 5.2 5.2 0.5"/><path d="M16 12v8"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M15 3l9 4v7c0 6-3.5 10.5-9 13-5.5-2.5-9-7-9-13V7z"/><path d="M15 8v14M9.5 15h11M24 12l5 4-5 4"/></svg>',
       wizard ? "MMB / L" : "J / MMB");
     potionIcon.hidden = false;
+    utilityIcon.innerHTML = abilityCooldownMarkup(wizard
+      ? '<svg viewBox="0 0 32 32"><path d="M16 4v24M6 10l20 12M26 10L6 22"/><circle cx="16" cy="16" r="3"/></svg>'
+      : ranger
+      ? '<svg viewBox="0 0 32 32"><path d="M27 12H7M7 12l5-4M7 12l5 4"/><path d="M12 21h14M17 26h9"/></svg>'
+      : sentinel
+      ? '<svg viewBox="0 0 32 32"><path d="M26 5c-8 0-13 5-13 11a6 6 0 0 0 11.5 2.4"/><path d="M13 18l-8 8M5 26l5.5-1M5 26l1-5.5"/></svg>'
+      : '<svg viewBox="0 0 32 32"><path d="M16 8l8 3v6c0 5.5-3 9.5-8 12-5-2.5-8-6.5-8-12v-6z"/><path d="M16 2v3.5M7.5 4.5L10 7.2M24.5 4.5L22 7.2"/></svg>',
+      "F");
+    payoffIcon.innerHTML = abilityCooldownMarkup(wizard
+      ? '<svg viewBox="0 0 32 32"><path d="M7 21l1.6-9 5 4.6L16 9l2.4 7.6 5-4.6 1.6 9z"/><path d="M7 25h18"/><path d="M16 2l-2 4h4l-2 4"/></svg>'
+      : ranger
+      ? '<svg viewBox="0 0 32 32"><path d="M16 27c-6.5-5-10-9-10-13.4C6 10.5 8.4 8 11.4 8c1.9 0 3.6 1 4.6 2.6C17 9 18.7 8 20.6 8c3 0 5.4 2.5 5.4 5.6C26 18 22.5 22 16 27z"/><path d="M4 28L26 6M26 6l-5.5 1.2M26 6l-1.2 5.5"/></svg>'
+      : sentinel
+      ? '<svg viewBox="0 0 32 32"><path d="M3 27L24 9"/><path d="M23 10l-1.5-7 7 1.5z"/><circle cx="12" cy="19" r="3"/><circle cx="18" cy="14" r="2.4"/></svg>'
+      : '<svg viewBox="0 0 32 32"><path d="M5 26a17 17 0 0 1 23-10"/><path d="M28 16l.6-5.5M28 16l-5.5-.6"/><path d="M8 6l7 7M8 13l4-4"/></svg>',
+      "C");
+    utilityCooldownFill = utilityIcon.querySelector(".cooldown-fill");
+    utilityCooldownTime = utilityIcon.querySelector(".cooldown-time");
+    payoffCooldownFill = payoffIcon.querySelector(".cooldown-fill");
+    payoffCooldownTime = payoffIcon.querySelector(".cooldown-time");
     if (attackTouchButton) {
-      attackTouchButton.setAttribute("aria-label", wizard ? "Lightning ball" : ranger ? "Quick Shot" : "Attack");
+      attackTouchButton.setAttribute("aria-label", wizard ? "Lightning ball" : ranger ? "Quick Shot" : sentinel ? "Halberd Thrust" : "Attack");
     }
     if (secondaryTouchButton) {
-      secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : "Block");
+      secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : sentinel ? "Haft Shove" : "Block");
     }
     if (potionTouchButton) {
       potionTouchButton.hidden = false;
-      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Flaming Arrow" : "Shield bash");
+      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Flaming Arrow" : sentinel ? "Moulinet" : "Shield bash");
     }
     characterCards.forEach(card => {
       const selected = card.dataset.character === player.character;
@@ -11094,14 +13331,19 @@ import {
         key.textContent = item.keys;
         row.appendChild(key);
       }
+      // .help-line wraps the label/description so CSS can hang-indent
+      // wrapped text beside the key tag column.
+      const line = document.createElement("span");
+      line.className = "help-line";
       if (item.label) {
         const label = document.createElement("strong");
         label.textContent = item.label;
-        row.appendChild(label);
-        row.appendChild(document.createTextNode(item.text ? " - " + item.text : ""));
+        line.appendChild(label);
+        line.appendChild(document.createTextNode(item.text ? " - " + item.text : ""));
       } else if (item.text) {
-        row.appendChild(document.createTextNode(item.text));
+        line.appendChild(document.createTextNode(item.text));
       }
+      row.appendChild(line);
       list.appendChild(row);
     }
     section.appendChild(list);
@@ -11118,15 +13360,15 @@ import {
     const controls = helpSection("Movement & Controls");
     helpList(controls, [
       { keys: "W A S D", text: "Move. Click the game once to capture the mouse for camera look." },
-      { keys: "Mouse / Q / E", text: "Turn the camera." },
+      { keys: "Mouse / Q / E", text: "Look around. Vertical mouse-look tilts the camera and angles ranged shots up or down; Q / E turn the camera when the mouse is free." },
       { keys: "E", label: "Talk", text: "speak to the nearest villager or quest giver." },
       { keys: "R", label: "Mount", text: "mount or dismount your active mount once a quest grants one." },
-      { keys: "M", label: "Switch mount", text: "cycle between owned mounts - the horse from Rowan and the Skyhatched Drake from Brunna's roost quest." },
+      { keys: "M", label: "Switch mount", text: "cycle between owned mounts - the horse from Rowan, the hovering Skyhatched Drake from Brunna's roost quest, and the Dune Courser from Saffa's well-road quest in Amber Dunes." },
       { keys: "G", label: "Swap kit", text: "cycle between your unlocked weapon kits." },
       { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5)." },
       { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-8)." },
       { keys: "H", label: "Stored potion", text: "drink the leftmost stored potion when wounded. Slots unlock at levels " + POTION_SLOT_UNLOCK_LEVELS.join(", ") + "; full-health pickups are stored if a slot is open." },
-      { keys: "L / MMB", label: "Healing Draught", text: "wizards drop a shared healing draught that the caster or any wounded player can pick up; it grows stronger as the wizard levels." },
+      { keys: "L / MMB", label: "Healing Draught", text: "wizards drop a shared healing draught that the caster or any wounded player can pick up. Once it has settled for a moment, full-health players can pocket it into a free pouch slot as a standard stored potion." },
       { keys: "V", text: "Mute or unmute audio." },
       { keys: "Enter", label: "Chat", text: "in an online room, open the one-line chat to message your party. Enter sends, Esc cancels. Movement and attacks are paused while you type." },
       { keys: "Esc", text: "Pause, resume, or close dialogue." },
@@ -11139,11 +13381,13 @@ import {
       helpList(classes, entry.abilities.map(ability => {
         const unlockLevel = abilityUnlockLevels[ability.id] || 1;
         const unlockText = unlockLevel > 1 ? "Unlocks at level " + unlockLevel : "Available from the start";
-        const note = ability.note ? ability.note + " " : "";
+        // Canonical one-liners live in abilityDescriptions (rpg.js); a guide
+        // entry's hand-written note is the fallback for ids without one.
+        const description = abilityDescriptions[ability.id] || ability.note || "";
         return {
           keys: ability.keys,
           label: abilityDisplayNames[ability.id] || ability.id,
-          text: note + unlockText + "."
+          text: (description ? description + " " : "") + unlockText + "."
         };
       }));
     }
@@ -11155,6 +13399,7 @@ import {
       { label: "Knight growth", text: "+6 max health and +7 max guard per level after level 1." },
       { label: "Wizard growth", text: "+4 max health, +8 max magica, and +0.65 magica regen per level after level 1." },
       { label: "Ranger growth", text: "+4 max health, +6 focus, and +0.5 focus regen per level after level 1." },
+      { label: "Sentinel growth", text: "+5 max health, +5 vigor, and +0.4 vigor regen per level after level 1." },
       { label: "Potion pouch", text: "storage slots unlock at levels " + POTION_SLOT_UNLOCK_LEVELS.join(", ") + "." },
       { label: "Death penalty", text: "dying wipes XP earned within your current level only. Your level, stats, and unlocked abilities stay stable." }
     ]);
@@ -11177,13 +13422,22 @@ import {
     }
 
     const perks = helpSection("Perks And Permanent Buffs");
-    helpParagraph(perks, "Permanent boons stack across characters where the resource exists: health helps everyone, guard helps knights, and magica/focus helps wizards and rangers.");
+    helpParagraph(perks, "Permanent boons stack across characters where the resource exists: health helps everyone, guard helps knights, and magica/focus/vigor helps wizards, rangers, and sentinels.");
     helpList(perks, Object.entries(perkDefs).map(([id, def]) => ({
       label: def.name,
       text: (helpSourceLabels[id] || "earned in the world") + "; " + formatTuningSummary(def.tuning)
     })));
     helpParagraph(perks, "Quest rewards:");
     helpList(perks, helpPermanentRewardItems);
+
+    const brewing = helpSection("Herbs And Potion Benches");
+    helpParagraph(brewing, "Valley herbs grow in small leafy tufts across every biome - walk over one to pick it. You can carry up to " + HERB_POUCH_CAP + "; picked tufts regrow after a couple of minutes. Herbs are personal: in an online room everyone gathers their own.");
+    helpParagraph(brewing, "Every settlement keeps a potion bench beside its well, and Crownford keeps one on the beacon plaza. Stand at the bench and press E to brew.");
+    helpList(brewing, [
+      { keys: "3 herbs", label: "Field Potion", text: "+32 health, stored into a free pouch slot." },
+      { keys: "7 herbs", label: "Full Recovery Potion", text: "fully restores health, stored into a free pouch slot." },
+      { text: "If your pouch has no free slot and you are wounded, the brew is drunk on the spot instead. At full health with a full pouch, the bench refuses to waste your herbs." }
+    ]);
 
     const world = helpSection("Dangers Of The Valley");
     helpParagraph(world, "Enemies grow tougher the farther you roam from the homestead. Near spawn they are prowlers; past the midlands they are veterans with amber health bars, and the far reaches hold dread beasts with red health bars - bigger, faster, harder-hitting, and worth far more XP.");
@@ -11297,7 +13551,11 @@ import {
         const mountId = (game.exploration.horse && game.exploration.horse.mountId) || currentMountId();
         entries.push({
           label: "Mounted: " + (mountDisplayNames[mountId] || "Horse"),
-          value: mountId === "drake" ? "+12% ride speed" : hasRoadwardenTack() ? "+8% ride speed" : "base ride speed"
+          value: mountId === "drake"
+            ? "+12% ride speed, hovers"
+            : mountId === "courser"
+            ? "+6% ride speed"
+            : hasRoadwardenTack() ? "+8% ride speed" : "base ride speed"
         });
       }
     }
@@ -11471,6 +13729,7 @@ import {
     if (!questDialog.hidden) {
       closeQuestDialog();
     }
+    closeBenchDialog();
     saveProgress();
     game.state = "paused";
     game.pausedFromPlay = true;
@@ -11786,6 +14045,10 @@ import {
       x: player.position.x,
       z: player.position.z,
       yaw: player.yaw,
+      // Additive field: ranged aim elevation in radians, captured by reticle
+      // convergence at attack start (action messages are sent in the same
+      // tick). Older clients ignore it and treat missing values as flat aim.
+      aimPitch: Math.round((player.attackAimPitch ?? 0) * 1000) / 1000,
       hasHorse: !!horse,
       mountTackId: currentMountTackId(),
       mountId: horse ? horse.mountId || "horse" : currentMountId(),
@@ -12559,7 +14822,8 @@ import {
     const remotePotionCount = clamp(Math.floor(numberOrZero(message.inventoryCount)), 0, POTION_INVENTORY_CAPACITY);
     const wantsStore = !!message.store
       && remotePotionCount < remoteUnlockedSlots
-      && !!storedPotionFromDrop(potion);
+      && !!storedPotionFromDrop(potion)
+      && potionStorableNow(potion);
     // No owner gate here: wizard Healing Draughts are shared party pickups,
     // including for the wizard who dropped them.
     if (!remote || !potion || (!wantsStore && remote.health >= remote.maxHealth)) {
@@ -12577,12 +14841,15 @@ import {
         updateNameTag(remote.nameTag, remote.nameTag.text || "Player", remote.health, remote.maxHealth);
       }
     }
+    // potionKind (not a second "kind" key, which would clobber the message
+    // kind and break joiner-side dispatch) carries the drop type so the
+    // requester can convert a stored pickup correctly.
     sendOnlineMessage({
       kind: "potionPicked",
       targetId: message.id,
       potionId: message.potionId,
       stored: wantsStore,
-      kind: potion.kind,
+      potionKind: potion.kind,
       healAmount: potion.healAmount,
       fullHeal: potion.fullHeal
     });
@@ -13034,15 +15301,30 @@ import {
     shieldPivot.add(shield, shieldRim, shieldBoss, shieldCrossV, shieldCrossH);
     shieldPivot.rotation.set(0.1, 0.38, 0.0);
 
+    // Replicated ability visuals: built once with the model, toggled by the
+    // remote action pose path (mirrors the local knight's slashArc/aura).
+    const slashArc = new THREE.Mesh(
+      new THREE.TorusGeometry(1.1, 0.025, 8, 28, Math.PI * 1.16),
+      materials.slash.clone()
+    );
+    slashArc.position.set(0, 1.24, -0.86);
+    slashArc.rotation.set(1.25, 0, -0.78);
+    slashArc.visible = false;
+    const resolveAura = new THREE.Mesh(new THREE.RingGeometry(0.78, 0.98, 36), materials.arcane.clone());
+    resolveAura.material.color.setHex(0xffd889);
+    resolveAura.rotation.x = -Math.PI / 2;
+    resolveAura.position.y = 0.07;
+    resolveAura.visible = false;
+
     group.add(
       hips, chest, tabard, tabardTrim, belt, beltBuckle, cape, capeClaspLeft, capeClaspRight,
       head, visor, visorSlit, helmet, helmetBand, crownRidge, plumeFinial, plumeMid, plumeLeft, plumeRight,
       leftTasset, rightTasset, leftTasset2, rightTasset2, faulds, rivets,
       leftLeg, rightLeg,
       leftArm, rightArm, leftPauldron, rightPauldron,
-      swordPivot, shieldPivot
+      swordPivot, shieldPivot, slashArc, resolveAura
     );
-    return { body: chest, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: swordPivot, nameTagY: 3.22 };
+    return { body: chest, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: swordPivot, shieldPivot, slashArc, resolveAura, nameTagY: 3.22 };
   }
 
   function createRemoteWizardDetails(group, palette) {
@@ -13052,19 +15334,39 @@ import {
     const capeMat = paletteMaterial(palette.cape, 0.78, 0.04);
     const glow = paletteGlow(palette.glow);
 
-    const robeLower = makeCylinder(0.68, 0.9, 1.0, 18, robe, 0, 0.58, 0);
-    const robeUpper = makeCylinder(0.48, 0.62, 0.92, 18, robe.clone(), 0, 1.33, 0);
-    const sash = makeCylinder(0.56, 0.57, 0.11, 18, trim, 0, 0.96, 0);
-    const frontTrim = makeBox(0.12, 1.28, 0.05, trim, 0, 0.98, -0.62);
-    const shoulderWrap = makeBox(1.16, 0.18, 0.5, trim, 0, 1.75, -0.03);
-    const cape = makeBox(0.92, 1.24, 0.06, capeMat, 0, 1.12, 0.49);
-    cape.rotation.x = -0.12;
-    const hemRing = makeCylinder(0.94, 1.02, 0.18, 18, robe.clone(), 0, 0.12, 0);
-    const fold1 = makeBox(0.08, 0.92, 0.1, robe.clone(), -0.36, 0.5, -0.52);
-    fold1.rotation.z = 0.05;
-    const fold2 = makeBox(0.08, 0.92, 0.1, robe.clone(), 0.36, 0.5, -0.52);
-    fold2.rotation.z = -0.05;
-    const fold3 = makeBox(0.08, 1.0, 0.1, robe.clone(), 0, 0.48, -0.58);
+    // Mirrors the local traveling battle-caster redesign with palette colors.
+    const robeUpper = makeCylinder(0.36, 0.46, 0.92, 18, robe, 0, 1.33, 0);
+    const robeLower = makeCylinder(0.44, 0.53, 0.7, 18, robe.clone(), 0, 0.72, 0);
+    const hemRing = makeCylinder(0.54, 0.58, 0.12, 18, robe.clone(), 0, 0.4, 0);
+    const frontPanelLeft = makeBox(0.2, 0.62, 0.06, robe.clone(), -0.19, 0.66, -0.45);
+    frontPanelLeft.rotation.y = 0.18;
+    frontPanelLeft.rotation.x = -0.06;
+    const frontPanelRight = makeBox(0.2, 0.62, 0.06, robe.clone(), 0.19, 0.66, -0.45);
+    frontPanelRight.rotation.y = -0.18;
+    frontPanelRight.rotation.x = -0.06;
+    const backPanel = makeBox(0.42, 0.78, 0.06, robe.clone(), 0, 0.68, 0.42);
+    backPanel.rotation.x = -0.12;
+    const belt = makeCylinder(0.46, 0.48, 0.12, 18, materials.darkLeather, 0, 1.0, 0);
+    const beltBuckle = makeBox(0.14, 0.1, 0.05, trim, 0, 1.0, -0.46);
+    const sashPouch = makeBox(0.18, 0.2, 0.12, materials.leather, 0.34, 0.86, -0.3);
+    sashPouch.rotation.y = -0.3;
+    const sidePouch = makeBox(0.14, 0.16, 0.1, materials.leather, -0.34, 0.88, -0.28);
+    sidePouch.rotation.y = 0.35;
+    const scrollCase = makeCylinder(0.05, 0.05, 0.34, 8, materials.leather, -0.26, 0.92, 0.36);
+    scrollCase.rotation.z = Math.PI / 2;
+    scrollCase.rotation.y = 0.4;
+    const satchelStrap = makeBox(0.1, 0.96, 0.05, materials.darkLeather, 0, 1.42, -0.42);
+    satchelStrap.rotation.z = -0.62;
+    const mantle = makeCylinder(0.34, 0.54, 0.36, 16, capeMat, 0, 1.78, 0);
+    const mantleTrim = makeCylinder(0.53, 0.55, 0.06, 16, trim, 0, 1.62, 0);
+    const mantleClasp = makeBox(0.1, 0.12, 0.05, trim, 0, 1.84, -0.42);
+    const cape = makeBox(0.72, 1.28, 0.06, capeMat, 0, 1.1, 0.44);
+    cape.rotation.x = -0.1;
+    const frontTrim = makeBox(0.09, 0.7, 0.04, trim, 0, 1.3, -0.43);
+    const runeStudTop = makeBox(0.05, 0.05, 0.03, trim, 0, 1.5, -0.45);
+    runeStudTop.rotation.z = Math.PI / 4;
+    const runeStudLow = makeBox(0.05, 0.05, 0.03, trim, 0, 1.22, -0.46);
+    runeStudLow.rotation.z = Math.PI / 4;
 
     const head = makeSphere(0.26, materials.skin, 0, 2.02, 0);
     const beardTop = makeBox(0.32, 0.22, 0.09, materials.bone, 0, 1.88, -0.22);
@@ -13073,17 +15375,20 @@ import {
     const brow = makeBox(0.3, 0.05, 0.06, materials.skin, 0, 2.11, -0.24);
     const leftEye = makeSphere(0.032, glow, -0.08, 2.06, -0.24);
     const rightEye = makeSphere(0.032, glow.clone(), 0.08, 2.06, -0.24);
-    const hatBrim = makeCylinder(0.43, 0.43, 0.08, 24, hatMat, 0, 2.23, 0);
-    const hatCone = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.82, 24), hatMat.clone());
-    hatCone.position.set(0.02, 2.67, 0.02);
-    hatCone.rotation.z = -0.1;
+    const hatBrim = makeCylinder(0.3, 0.5, 0.1, 24, hatMat, 0, 2.25, 0);
+    hatBrim.rotation.z = 0.07;
+    hatBrim.rotation.x = 0.05;
+    const hatCone = new THREE.Mesh(new THREE.ConeGeometry(0.31, 0.78, 24), hatMat.clone());
+    hatCone.position.set(0.03, 2.66, 0.02);
+    hatCone.rotation.z = -0.14;
     addShadow(hatCone);
-    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 16), hatMat.clone());
-    hatTip.position.set(-0.12, 3.0, 0.05);
-    hatTip.rotation.z = 0.66;
+    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.34, 16), hatMat.clone());
+    hatTip.position.set(-0.1, 2.98, 0.05);
+    hatTip.rotation.z = 0.7;
     addShadow(hatTip);
-    const hatBand = makeCylinder(0.27, 0.3, 0.08, 18, trim, 0, 2.35, 0);
-    const hatStar = makeBox(0.1, 0.1, 0.04, trim, 0, 2.4, -0.29);
+    const hatBand = makeCylinder(0.26, 0.3, 0.08, 18, trim, 0, 2.34, 0);
+    hatBand.rotation.z = -0.05;
+    const hatStar = makeBox(0.09, 0.09, 0.04, trim, 0, 2.39, -0.28);
     hatStar.rotation.z = Math.PI / 4;
 
     function makeWizLeg(x) {
@@ -13098,7 +15403,7 @@ import {
     const leftLeg = makeWizLeg(-0.22);
     const rightLeg = makeWizLeg(0.22);
 
-    function makeWizArm(x) {
+    function makeWizArm(x, staffHand) {
       const arm = new THREE.Group();
       arm.position.set(x, 1.69, 0);
       const upper = makeCylinder(0.14, 0.16, 0.4, 12, robe.clone(), 0, -0.2, 0);
@@ -13108,24 +15413,38 @@ import {
       const hand = makeSphere(0.105, materials.skin, 0, -0.78, -0.03);
       const drape = makeBox(0.2, 0.32, 0.06, robe.clone(), 0, -0.42, 0.08);
       arm.add(upper, forearm, cuff, hand, drape);
+      if (staffHand) {
+        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.77, -0.03);
+        arm.add(wrap);
+      }
       return arm;
     }
-    const leftArm = makeWizArm(-0.58);
-    const rightArm = makeWizArm(0.58);
+    const leftArm = makeWizArm(-0.58, false);
+    const rightArm = makeWizArm(0.58, true);
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
     staffPivot.add(buildWeaponModel(defaultWeaponByCharacter.wizard));
     staffPivot.rotation.set(0.08, 0, -0.16);
 
+    // Replicated cast visuals (mirrors the local wizard's castGlow/burstRing).
+    const castGlow = makeSphere(0.13, materials.lightningCore.clone(), -0.52, 1.05, -0.18);
+    castGlow.visible = false;
+    const burstRing = new THREE.Mesh(new THREE.RingGeometry(0.65, 0.82, 48), materials.arcane.clone());
+    burstRing.rotation.x = Math.PI / 2;
+    burstRing.position.y = 0.08;
+    burstRing.visible = false;
+
     group.add(
-      robeLower, robeUpper, sash, frontTrim, shoulderWrap, cape, hemRing, fold1, fold2, fold3,
+      robeUpper, robeLower, hemRing, frontPanelLeft, frontPanelRight, backPanel,
+      belt, beltBuckle, sashPouch, sidePouch, scrollCase, satchelStrap,
+      mantle, mantleTrim, mantleClasp, cape, frontTrim, runeStudTop, runeStudLow,
       head, beardTop, beardBottom, nose, brow, leftEye, rightEye, hatBrim, hatCone, hatTip, hatBand, hatStar,
       leftLeg, rightLeg,
       leftArm, rightArm,
-      staffPivot
+      staffPivot, castGlow, burstRing
     );
-    return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: staffPivot, nameTagY: 3.36 };
+    return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: staffPivot, castGlow, burstRing, nameTagY: 3.36 };
   }
 
   function createRemoteRangerDetails(group, palette) {
@@ -13193,6 +15512,77 @@ import {
     return { leftLeg, rightLeg, leftArm, rightArm, body: chest, weaponPivot: bowPivot, nameTagY: 3.0 };
   }
 
+  function createRemoteSentinelDetails(group, palette) {
+    const coat = paletteMaterial(palette.primary, 0.86, 0.04);
+    const sash = paletteMaterial(palette.cape, 0.88, 0.02);
+    const trim = paletteMaterial(palette.trim, 0.45, 0.3);
+    const glow = paletteGlow(palette.glow);
+
+    function makeSentinelLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeCylinder(0.125, 0.135, 0.4, 12, sash.clone(), 0, -0.18, 0);
+      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.16, -0.1);
+      knee.scale.set(1, 0.6, 0.7);
+      const shin = makeCylinder(0.105, 0.115, 0.4, 12, materials.darkLeather, 0, -0.5, 0.01);
+      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.73, -0.05);
+      leg.add(thigh, knee, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeSentinelLeg(-0.22);
+    const rightLeg = makeSentinelLeg(0.22);
+
+    const hips = makeCylinder(0.45, 0.53, 0.66, 16, coat, 0, 0.76, 0);
+    const chest = makeCylinder(0.54, 0.43, 0.92, 16, coat.clone(), 0, 1.41, 0);
+    const breastplate = makeBox(0.62, 0.66, 0.1, materials.steel.clone(), 0, 1.46, -0.46);
+    const belt = makeCylinder(0.5, 0.51, 0.12, 16, materials.darkLeather, 0, 1.02, 0);
+    const beltBuckle = makeBox(0.16, 0.11, 0.05, trim, 0, 1.02, -0.47);
+    const surcoat = makeBox(0.4, 0.86, 0.06, sash.clone(), 0, 0.78, -0.42);
+    const surcoatStripe = makeBox(0.09, 0.8, 0.03, trim.clone(), 0, 0.78, -0.46);
+    const backCape = makeBox(0.8, 0.78, 0.06, sash.clone(), 0, 1.5, 0.46);
+    backCape.rotation.x = -0.08;
+
+    const head = makeSphere(0.26, materials.skin, 0, 2.06, 0);
+    const leftEye = makeSphere(0.03, glow, -0.08, 2.09, -0.23);
+    const rightEye = makeSphere(0.03, glow.clone(), 0.08, 2.09, -0.23);
+    const helmBrim = makeCylinder(0.43, 0.47, 0.07, 16, materials.steel, 0, 2.22, 0);
+    const helmDome = makeSphere(0.28, materials.steel.clone(), 0, 2.25, 0);
+    helmDome.scale.set(1, 0.74, 1);
+    const helmBand = makeCylinder(0.29, 0.3, 0.07, 16, materials.iron, 0, 2.27, 0);
+    const helmCrest = makeBox(0.07, 0.07, 0.07, trim.clone(), 0, 2.46, 0);
+
+    function makeSentinelArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.72, 0);
+      const upper = makeCylinder(0.115, 0.105, 0.4, 12, coat.clone(), 0, -0.2, 0);
+      const elbow = makeSphere(0.095, sash.clone(), 0, -0.4, 0);
+      const bracer = makeCylinder(0.1, 0.115, 0.34, 10, materials.leather, 0, -0.58, -0.01);
+      const hand = makeSphere(0.105, materials.skin, 0, -0.8, -0.02);
+      arm.add(upper, elbow, bracer, hand);
+      return arm;
+    }
+    const leftArm = makeSentinelArm(-0.58);
+    const rightArm = makeSentinelArm(0.58);
+    const leftPauldron = makeCylinder(0.16, 0.26, 0.18, 12, materials.iron.clone(), -0.58, 1.78, 0);
+    const rightPauldron = makeCylinder(0.16, 0.26, 0.18, 12, materials.iron.clone(), 0.58, 1.78, 0);
+    leftPauldron.rotation.z = Math.PI / 2;
+    rightPauldron.rotation.z = Math.PI / 2;
+
+    const halberdPivot = new THREE.Group();
+    halberdPivot.position.set(0.66, 1.12, -0.04);
+    halberdPivot.add(buildWeaponModel(defaultWeaponByCharacter.sentinel));
+    halberdPivot.rotation.set(SENTINEL_HALBERD_REST.x, SENTINEL_HALBERD_REST.y, SENTINEL_HALBERD_REST.z);
+
+    group.add(
+      leftLeg, rightLeg,
+      hips, chest, breastplate, belt, beltBuckle, surcoat, surcoatStripe, backCape,
+      head, leftEye, rightEye, helmBrim, helmDome, helmBand, helmCrest,
+      leftArm, rightArm, leftPauldron, rightPauldron,
+      halberdPivot
+    );
+    return { leftLeg, rightLeg, leftArm, rightArm, body: chest, weaponPivot: halberdPivot, nameTagY: 3.1 };
+  }
+
   function createRemotePlayerModel(character, id) {
     const group = new THREE.Group();
     const rider = new THREE.Group();
@@ -13209,6 +15599,8 @@ import {
       ? createRemoteWizardDetails(rider, palette)
       : character === "ranger"
       ? createRemoteRangerDetails(rider, palette)
+      : character === "sentinel"
+      ? createRemoteSentinelDetails(rider, palette)
       : createRemoteKnightDetails(rider, palette);
     const nameTag = createNameTag("", allyMode ? palette.glow : palette.trim);
     nameTag.sprite.position.set(0, details.nameTagY, 0);
@@ -13230,6 +15622,11 @@ import {
       rightArm: details.rightArm,
       body: details.body,
       weaponPivot: details.weaponPivot,
+      shieldPivot: details.shieldPivot || null,
+      slashArc: details.slashArc || null,
+      resolveAura: details.resolveAura || null,
+      castGlow: details.castGlow || null,
+      burstRing: details.burstRing || null,
       renderedWeaponId: defaultWeaponByCharacter[characterKey(character)],
       character,
       modeKey: game.mode,
@@ -13239,7 +15636,13 @@ import {
       maxHealth: 100,
       mountTackId: "",
       renderedMountId: "horse",
-      walkTime: 0
+      walkTime: 0,
+      // Replicated ability pose state, driven by triggerRemoteActionPose.
+      actionAnim: "",
+      actionAnimTimer: 0,
+      actionAnimDuration: 0,
+      actionAnimHitDone: false,
+      resolveVisualTimer: 0
     };
   }
 
@@ -13328,15 +15731,11 @@ import {
 
   function updateHorseModelLocalAnimation(model, speed, dt) {
     model.walkTime += dt * (1.4 + speed * 1.5);
-    const moving = Math.min(1, speed / 7.5);
-    const bob = Math.sin(model.walkTime * 2.2) * 0.045 * moving;
-    for (let i = 0; i < model.legs.length; i += 1) {
-      const phase = Math.sin(model.walkTime * 5.2 + i * 0.85) * 0.34 * moving;
-      model.legs[i].rotation.x = phase;
-    }
+    const motion = mountRideMotion(model, speed);
+    animateMountLimbs(model, motion.moving, dt);
     model.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
-    animateMountWings(model, moving);
-    return bob;
+    animateMountWings(model, motion.moving);
+    return motion.lift + motion.bob;
   }
 
   function upsertRemotePlayer(state) {
@@ -13396,7 +15795,7 @@ import {
     remote.targetYaw = state.yaw || 0;
     remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
     remote.mountTackId = state.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
-    const nextMountId = state.mountId === "drake" ? "drake" : "horse";
+    const nextMountId = state.mountId === "drake" || state.mountId === "courser" ? state.mountId : "horse";
     if (remote.horse && remote.renderedMountId !== nextMountId) {
       const mountPosition = remote.horse.group.position.clone();
       const mountYaw = remote.horse.group.rotation.y;
@@ -13439,7 +15838,12 @@ import {
       remote.walkTime += moved * 2.8;
       const riderEase = 1 - Math.pow(0.0001, dt);
       if (remote.rider) {
-        remote.rider.position.y = lerp(remote.rider.position.y, remote.mounted ? 1.2 : 0, riderEase);
+        // Hovering mounts carry their rider above the ground sample, so the
+        // remote rider seat includes the mount's saddle lift. seatHeight
+        // matches the scaled saddle line of the remote mount model.
+        const remoteSeat = remote.horse && remote.horse.seatHeight ? remote.horse.seatHeight : 1.2;
+        const riderSeat = remote.mounted ? remoteSeat + mountSaddleLift(remote.horse) : 0;
+        remote.rider.position.y = lerp(remote.rider.position.y, riderSeat, riderEase);
       }
       const swing = Math.sin(remote.walkTime * 7.2) * Math.min(0.28, moved * 8);
       if (remote.leftLeg && remote.rightLeg) {
@@ -13451,6 +15855,7 @@ import {
           remote.rightLeg.rotation.x = -swing;
         }
       }
+      updateRemoteActionPose(remote, dt);
       if (remote.horse) {
         remote.horse.group.visible = !!remote.hasHorse;
         if (remote.hasHorse) {
@@ -13507,6 +15912,9 @@ import {
     // Horizontal check: remote action sources arrive with y=0 while enemies
     // carry a terrain-height y, so a 3D distance would shrink (or kill) the
     // range on elevated ground. Local melee/ability checks are horizontal too.
+    // This also makes the host cone tolerant of pitched remote shots: aim
+    // elevation (state.aimPitch) changes the rendered trajectory while hit
+    // approximation stays damage-neutral on the ground plane.
     toTarget.y = 0;
     const distance = toTarget.length();
     if (distance > range || distance < 0.001) {
@@ -13533,6 +15941,8 @@ import {
       playPositionalSfx("roll", source, 0.7, 24);
     } else if (action === "resolve") {
       playPositionalSfx("block", source, 0.8, 28);
+    } else if (action === "thrust" || action === "shove" || action === "moulinet" || action === "hook" || action === "skewer") {
+      playPositionalSfx(action, source, 0.8, 30);
     } else {
       playPositionalSfx("slash", source, 0.78, 30);
     }
@@ -13541,12 +15951,278 @@ import {
     } else if (action === "arrow" || action === "pierce" || action === "heartseeker") {
       spawnRemoteArrowVisual(source, state.yaw || 0, action === "pierce" ? "flaming" : action === "heartseeker" ? "heartseeker" : "arrow");
     }
+    triggerRemoteActionPose(action, state);
     if (options.broadcast) {
       broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
     }
 
     if (options.damageEnemies && game.mode === "exploration") {
       applyRemoteActionToEnemies(action, source, state.yaw || 0, forward, state);
+    }
+  }
+
+  // Mirror local level 5+ ability poses on the remote player model. Driven
+  // purely from the existing action replication (no new message kinds);
+  // durations match the local attackDuration / pose timers, and resolve uses
+  // the known 4s buff duration for the persistent aura.
+  function triggerRemoteActionPose(action, state) {
+    const remote = state && state.id ? online.remotePlayers.get(state.id) : null;
+    if (!remote) {
+      return;
+    }
+    if (action === "resolve") {
+      remote.resolveVisualTimer = 4.0;
+    }
+    const duration = action === "sweep" ? 0.62
+      : action === "frostbind" ? 0.5
+      : action === "stormcrown" ? 0.62
+      : action === "heartseeker" ? 0.7
+      : action === "parting" ? 0.3
+      : action === "resolve" ? 0.45
+      : action === "thrust" ? 0.44
+      : action === "shove" ? 0.4
+      : action === "moulinet" ? 0.62
+      : action === "hook" ? 0.55
+      : action === "skewer" ? 0.66
+      : 0;
+    if (duration <= 0) {
+      return;
+    }
+    remote.actionAnim = action;
+    remote.actionAnimTimer = 0;
+    remote.actionAnimDuration = duration;
+    remote.actionAnimHitDone = false;
+  }
+
+  function endRemoteActionPose(remote) {
+    remote.actionAnim = "";
+    if (remote.slashArc) {
+      remote.slashArc.visible = false;
+      remote.slashArc.rotation.set(1.25, 0, -0.78);
+      remote.slashArc.scale.set(1, 1, 1);
+    }
+    if (remote.castGlow) {
+      remote.castGlow.visible = false;
+    }
+    if (remote.burstRing) {
+      remote.burstRing.visible = false;
+    }
+  }
+
+  function updateRemoteActionPose(remote, dt) {
+    // Persistent Warden's Resolve aura, replicated via the resolve action.
+    if (remote.resolveAura) {
+      remote.resolveVisualTimer = Math.max(0, (remote.resolveVisualTimer || 0) - dt);
+      const auraActive = remote.resolveVisualTimer > 0;
+      remote.resolveAura.visible = auraActive;
+      if (auraActive) {
+        const pulse = 1 + Math.sin(clock.elapsedTime * 5.2) * 0.07;
+        remote.resolveAura.scale.set(pulse, pulse, 1);
+        remote.resolveAura.material.opacity = (0.46 + Math.sin(clock.elapsedTime * 5.2) * 0.12)
+          * Math.min(1, remote.resolveVisualTimer / 0.6);
+      }
+    }
+    const ease = 1 - Math.pow(0.00001, dt);
+    if (!remote.actionAnim) {
+      // Relax everything the action poses touch back to the rest pose.
+      if (remote.weaponPivot) {
+        const wizard = remote.character === "wizard";
+        const ranger = remote.character === "ranger";
+        const sentinel = remote.character === "sentinel";
+        remote.weaponPivot.rotation.x = lerp(remote.weaponPivot.rotation.x, wizard ? 0.08 : ranger ? 0 : sentinel ? SENTINEL_HALBERD_REST.x : -0.22, ease);
+        remote.weaponPivot.rotation.y = lerp(remote.weaponPivot.rotation.y, wizard ? 0 : ranger ? -0.3 : sentinel ? SENTINEL_HALBERD_REST.y : -0.24, ease);
+        remote.weaponPivot.rotation.z = lerp(remote.weaponPivot.rotation.z, wizard ? -0.16 : ranger ? -0.06 : sentinel ? SENTINEL_HALBERD_REST.z : -0.42, ease);
+        if (remote.character === "wizard") {
+          remote.weaponPivot.position.y = lerp(remote.weaponPivot.position.y, 1.02, ease);
+        }
+        if (sentinel) {
+          remote.weaponPivot.position.z = lerp(remote.weaponPivot.position.z, -0.04, ease);
+        }
+      }
+      if (remote.shieldPivot) {
+        remote.shieldPivot.rotation.y = lerp(remote.shieldPivot.rotation.y, 0.38, ease);
+        remote.shieldPivot.rotation.z = lerp(remote.shieldPivot.rotation.z, 0, ease);
+        remote.shieldPivot.position.y = lerp(remote.shieldPivot.position.y, 1.32, ease);
+        remote.shieldPivot.position.z = lerp(remote.shieldPivot.position.z, -0.08, ease);
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = lerp(remote.leftArm.rotation.x, 0, ease);
+        remote.leftArm.rotation.z = lerp(remote.leftArm.rotation.z, 0, ease);
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = lerp(remote.rightArm.rotation.x, 0, ease);
+        remote.rightArm.rotation.z = lerp(remote.rightArm.rotation.z, 0, ease);
+      }
+      return;
+    }
+    remote.actionAnimTimer += dt;
+    const t = remote.actionAnimTimer / remote.actionAnimDuration;
+    if (t >= 1) {
+      endRemoteActionPose(remote);
+      return;
+    }
+    const action = remote.actionAnim;
+    const swing = Math.sin(clamp(t, 0, 1) * Math.PI);
+    if (action === "sweep" && remote.weaponPivot) {
+      const travel = smoothstep(0.14, 0.78, t);
+      remote.weaponPivot.rotation.set(-1.16 - swing * 0.18, 1.45 - travel * 2.95, -1.3 + travel * 0.42);
+      if (remote.slashArc) {
+        remote.slashArc.visible = true;
+        remote.slashArc.rotation.set(1.52, 0, 1.0 - travel * 2.75);
+        remote.slashArc.scale.set(1.55, 1.55, 1);
+        remote.slashArc.material.opacity = Math.max(0, 0.85 * Math.sin(clamp((t - 0.14) / 0.7, 0, 1) * Math.PI));
+      }
+      return;
+    }
+    if (action === "resolve" && remote.shieldPivot) {
+      // Brief shield-raise flourish; the aura above persists independently.
+      remote.shieldPivot.rotation.z = lerp(remote.shieldPivot.rotation.z, -1.9, ease);
+      remote.shieldPivot.position.y = lerp(remote.shieldPivot.position.y, 1.94, ease);
+      return;
+    }
+    if (action === "frostbind") {
+      const raise = Math.sin(clamp(t / 0.32, 0, 1) * Math.PI * 0.5);
+      const thrust = smoothstep(0.26, 0.48, t);
+      const settle = 1 - smoothstep(0.8, 1, t);
+      if (remote.weaponPivot) {
+        remote.weaponPivot.position.y = 1.02;
+        remote.weaponPivot.rotation.x = (0.08 + raise * 0.42 - thrust * 1.85) * settle + 0.08 * (1 - settle);
+        remote.weaponPivot.rotation.y = -thrust * 0.14 * settle;
+        remote.weaponPivot.rotation.z = -0.16 - thrust * 0.08 * settle;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -raise * 0.5 * settle;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = (-raise * 0.35 - thrust * 1.25) * settle;
+      }
+      if (remote.castGlow) {
+        remote.castGlow.visible = true;
+        remote.castGlow.material.color.setHex(0xbfe9ff);
+        remote.castGlow.position.set(-0.52, 1.05, -0.18);
+        remote.castGlow.scale.setScalar(0.7 + raise * 0.9 + thrust * 0.7);
+        remote.castGlow.material.opacity = (0.3 + raise * 0.4 + thrust * 0.35) * settle;
+      }
+      return;
+    }
+    if (action === "stormcrown") {
+      const charge = smoothstep(0.04, 0.45, t);
+      const settle = 1 - smoothstep(0.78, 1, t);
+      if (remote.weaponPivot) {
+        remote.weaponPivot.position.y = 1.02 + charge * 0.62 * settle;
+        remote.weaponPivot.rotation.x = 0.08 - charge * 0.3 * settle;
+        remote.weaponPivot.rotation.z = -0.16 + charge * 0.28 * settle;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -charge * 2.55 * settle;
+        remote.leftArm.rotation.z = -charge * 0.34 * settle;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = -charge * 2.55 * settle;
+        remote.rightArm.rotation.z = charge * 0.34 * settle;
+      }
+      if (remote.castGlow) {
+        remote.castGlow.visible = true;
+        remote.castGlow.material.color.setHex(0xf4fdff);
+        remote.castGlow.position.set(0, 1.05 + charge * 1.85, -0.05);
+        remote.castGlow.scale.setScalar(0.7 + charge * 2.6);
+        remote.castGlow.material.opacity = (0.24 + charge * 0.66) * settle;
+      }
+      if (remote.burstRing) {
+        remote.burstRing.visible = true;
+        const scale = 0.75 + smoothstep(0.12, 0.92, t) * 5.8;
+        remote.burstRing.scale.set(scale, scale, scale);
+        remote.burstRing.material.opacity = 0.72 * (1 - smoothstep(0.42, 1, t));
+      }
+      if (!remote.actionAnimHitDone && t > 0.45) {
+        remote.actionAnimHitDone = true;
+        // Crown of sparks above the remote caster at the blast frame.
+        const crown = remote.group.position.clone();
+        crown.y += 1.9;
+        spawnImpact(crown, 0xbfe2ff, 12);
+      }
+      return;
+    }
+    if (action === "heartseeker") {
+      const draw = smoothstep(0, 0.52, t);
+      const anchor = smoothstep(0.4, 0.56, t);
+      const pose = draw * (1 - smoothstep(0.62, 0.95, t));
+      if (remote.weaponPivot) {
+        remote.weaponPivot.rotation.y = -0.3 - pose * 1.06;
+        remote.weaponPivot.rotation.z = -0.06 - pose * 0.18;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -pose * 1.34;
+        remote.leftArm.rotation.z = pose * 0.16;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = -pose * (1.12 + anchor * 0.14);
+        remote.rightArm.rotation.z = -pose * 0.52;
+      }
+      return;
+    }
+    if (action === "parting") {
+      const snap = Math.pow(clamp(1 - t, 0, 1), 0.6);
+      if (remote.weaponPivot) {
+        remote.weaponPivot.rotation.y = -0.3 - snap * 1.05;
+        remote.weaponPivot.rotation.z = -0.06 + snap * 0.72;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -snap * 1.5;
+        remote.leftArm.rotation.z = snap * 0.3;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = snap * 0.85;
+        remote.rightArm.rotation.z = -snap * 0.22;
+      }
+      return;
+    }
+    if (action === "moulinet") {
+      const level = smoothstep(0.04, 0.3, t);
+      const travel = smoothstep(0.12, 0.88, t);
+      if (remote.weaponPivot) {
+        remote.weaponPivot.rotation.x = SENTINEL_HALBERD_REST.x - level * 1.02;
+        remote.weaponPivot.rotation.y = -travel * TAU;
+        remote.weaponPivot.rotation.z = SENTINEL_HALBERD_REST.z;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -level * 0.7;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = -level * 0.9;
+      }
+      return;
+    }
+    if (action === "shove") {
+      const push = swing;
+      if (remote.weaponPivot) {
+        remote.weaponPivot.rotation.x = SENTINEL_HALBERD_REST.x - push * 0.4;
+        remote.weaponPivot.rotation.y = push * 0.5;
+        remote.weaponPivot.rotation.z = SENTINEL_HALBERD_REST.z - push * 0.3;
+        remote.weaponPivot.position.z = -0.04 - push * 0.42;
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -push * 1.05;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = -push * 1.05;
+      }
+      return;
+    }
+    if (action === "thrust" || action === "hook" || action === "skewer") {
+      const drive = action === "skewer" ? smoothstep(0.08, 0.4, t) * (1 - smoothstep(0.86, 1, t)) : swing;
+      if (remote.weaponPivot) {
+        remote.weaponPivot.rotation.x = SENTINEL_HALBERD_REST.x - drive * 1.04;
+        remote.weaponPivot.rotation.y = drive * (action === "hook" ? 0.2 : 0.08);
+        remote.weaponPivot.rotation.z = SENTINEL_HALBERD_REST.z - drive * 0.06;
+        remote.weaponPivot.position.z = -0.04 - drive * (action === "skewer" ? 0.62 : 0.5);
+      }
+      if (remote.leftArm) {
+        remote.leftArm.rotation.x = -drive * 0.65;
+      }
+      if (remote.rightArm) {
+        remote.rightArm.rotation.x = -drive * 1.05;
+      }
     }
   }
 
@@ -13627,6 +16303,80 @@ import {
       return;
     }
 
+    if (action === "moulinet") {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !matchesActivity(enemy)) {
+          continue;
+        }
+        const distance = Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z);
+        if (distance > tuning.moulinetRadius + enemy.radius) {
+          continue;
+        }
+        const direction = enemy.position.clone().sub(source);
+        direction.y = 0;
+        direction.normalize();
+        damageEnemy(enemy, tuning.moulinetDamageMin, direction, 0.2, sourceId);
+        enemy.velocity.addScaledVector(direction, 3.2);
+      }
+      return;
+    }
+
+    if (action === "shove") {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.4 + enemy.radius, 0.2)) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.shoveDamageMin, forward, tuning.shoveStun, sourceId);
+        enemy.velocity.addScaledVector(forward, tuning.shoveVelocity);
+      }
+      return;
+    }
+
+    if (action === "thrust") {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), tuning.thrustRange + enemy.radius, 0.82)) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.thrustDamageMin + tuning.thrustDamageBonus, forward, tuning.thrustKnockback, sourceId);
+      }
+      return;
+    }
+
+    if (action === "skewer") {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), tuning.skewerRange + enemy.radius, 0.6)) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.skewerDamageMin, forward, 0.5, sourceId);
+        enemy.velocity.addScaledVector(forward, 5.2);
+      }
+      return;
+    }
+
+    if (action === "hook") {
+      let hooked = null;
+      let hookedDistance = Infinity;
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), tuning.hookRange + enemy.radius, 0.86)) {
+          continue;
+        }
+        const distance = Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z);
+        if (distance < hookedDistance) {
+          hooked = enemy;
+          hookedDistance = distance;
+        }
+      }
+      if (hooked) {
+        const pull = source.clone().sub(hooked.position);
+        pull.y = 0;
+        pull.normalize();
+        damageEnemy(hooked, tuning.hookDamageMin, pull.clone().multiplyScalar(0.1), tuning.hookStun, sourceId);
+        hooked.velocity.addScaledVector(pull, tuning.hookPull);
+        spawnImpact(hooked.position.clone(), 0xd8b06a, 14);
+      }
+      return;
+    }
+
     if (action === "pierce") {
       // Flaming Arrow keeps the legacy `pierce` action id for compatibility.
       for (const enemy of game.enemies) {
@@ -13634,6 +16384,9 @@ import {
           continue;
         }
         damageEnemy(enemy, tuning.pierceDamageMin, forward, 0.4, sourceId);
+        if (!enemy.dead) {
+          igniteEnemyBurn(enemy, tuning, sourceId);
+        }
         spawnImpact(enemy.group ? enemy.group.position : enemy.position, 0xff7b2e, 8);
         playPositionalSfx("flamingArrowImpact", enemy.group ? enemy.group.position : enemy.position, 0.55, 34);
       }
@@ -13677,8 +16430,8 @@ import {
     if (action === "roll" || action === "resolve") {
       return;
     }
-    if (action === "burst" || action === "stormcrown") {
-      hit = player.position.distanceTo(source) < (action === "stormcrown" ? 5.2 : 3.35);
+    if (action === "burst" || action === "stormcrown" || action === "moulinet") {
+      hit = player.position.distanceTo(source) < (action === "stormcrown" ? 5.2 : action === "moulinet" ? 3.0 : 3.35);
     } else {
       const range = action === "lightning" ? 14.0
         : action === "arrow" ? 13.0
@@ -13687,6 +16440,10 @@ import {
         : action === "bash" ? 2.55
         : action === "sweep" ? 3.2
         : action === "parting" ? 2.5
+        : action === "thrust" ? 3.6
+        : action === "shove" ? 2.4
+        : action === "hook" ? 7.5
+        : action === "skewer" ? 6.0
         : 2.7;
       const minDot = action === "lightning" ? 0.55
         : action === "arrow" || action === "pierce" || action === "frostbind" ? 0.72
@@ -13694,6 +16451,10 @@ import {
         : action === "bash" ? 0.24
         : action === "sweep" ? 0.26
         : action === "parting" ? 0.5
+        : action === "thrust" ? 0.82
+        : action === "shove" ? 0.2
+        : action === "hook" ? 0.86
+        : action === "skewer" ? 0.6
         : 0.18;
       hit = pointInAttackCone(source, yaw, player.position.clone(), range, minDot);
     }
@@ -13710,6 +16471,11 @@ import {
       : action === "stormcrown" ? 26
       : action === "parting" ? 10
       : action === "heartseeker" ? 32
+      : action === "thrust" ? 20
+      : action === "shove" ? 8
+      : action === "moulinet" ? 14
+      : action === "hook" ? 8
+      : action === "skewer" ? 28
       : 24;
     const guardDamage = action === "bash" ? 36 : damage + 12;
     applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
@@ -15156,8 +17922,10 @@ import {
     game.nextWaveIn = 0;
     game.state = "playing";
     game.cameraYaw = 0;
+    game.cameraPitch = CAMERA_PITCH_DEFAULT;
     game.saveTimer = 0;
     game.startedOnce = true;
+    hideActivityResult(true);
     if (game.mode === "exploration") {
       setArenaVisible(false);
       setDungeonVisible(false);
@@ -15180,7 +17948,7 @@ import {
     setPlayerCharacter(game.selectedCharacter, true);
     if (game.mode === "exploration") {
       restoreSavedResources();
-      if (localGodModeEnabled() || progression.exploration.horseUnlocked || progression.exploration.drakeUnlocked) {
+      if (localGodModeEnabled() || progression.exploration.horseUnlocked || progression.exploration.drakeUnlocked || progression.exploration.courserUnlocked) {
         spawnHorseNearPlayer(false);
       }
     }
@@ -15211,6 +17979,66 @@ import {
     banner.textContent = text;
     banner.classList.add("visible");
     game.bannerTime = duration;
+  }
+
+  // Activity outcome overlay: a non-interactive centered panel that holds the
+  // arena/dungeon result (victory/defeat/withdrawal) on screen long enough to
+  // read. pointer-events stays none, so it can never trap input or block
+  // Escape/pause; the world transition already happened behind it.
+  function showActivityResult(presentation) {
+    if (!presentation || !activityResult) {
+      return;
+    }
+    activityResult.classList.remove("victory", "defeat", "withdraw", "visible");
+    activityResult.classList.add(presentation.tone || "withdraw");
+    activityResultKicker.textContent = presentation.kicker || "";
+    activityResultTitle.textContent = presentation.title || "";
+    activityResultFlavor.textContent = presentation.flavor || "";
+    activityResultRows.textContent = "";
+    for (const row of presentation.rows || []) {
+      if (!row || !row.text) {
+        continue;
+      }
+      const line = document.createElement("div");
+      line.textContent = row.text;
+      if (row.muted) {
+        line.classList.add("result-row-muted");
+      }
+      activityResultRows.appendChild(line);
+    }
+    activityResult.hidden = false;
+    // Force a style flush so the opacity transition runs even when the panel
+    // was hidden this same frame.
+    void activityResult.offsetWidth;
+    activityResult.classList.add("visible");
+    game.activityResultTime = presentation.duration || 3.4;
+    game.activityResultFade = 0;
+  }
+
+  function hideActivityResult(immediate = false) {
+    game.activityResultTime = 0;
+    game.activityResultFade = 0;
+    activityResult.classList.remove("visible");
+    if (immediate) {
+      activityResult.hidden = true;
+    }
+  }
+
+  function updateActivityResult(dt) {
+    if (game.activityResultTime > 0) {
+      game.activityResultTime -= dt;
+      if (game.activityResultTime <= 0) {
+        activityResult.classList.remove("visible");
+        game.activityResultFade = 0.32;
+      }
+      return;
+    }
+    if (game.activityResultFade > 0) {
+      game.activityResultFade -= dt;
+      if (game.activityResultFade <= 0) {
+        activityResult.hidden = true;
+      }
+    }
   }
 
   function spawnImpact(position, color, count) {
@@ -15273,6 +18101,7 @@ import {
       activityType: options.activityType || "",
       activityId: options.activityId || "",
       pickupRadius: numberOrZero(options.pickupRadius) > 0 ? options.pickupRadius : (fullHeal ? 1.25 : 0.9),
+      droppedAt: clock.elapsedTime,
       bobSeed: Math.random() * 10
     }, options.netId);
   }
@@ -15390,6 +18219,110 @@ import {
   function rightFromYaw(yaw, out) {
     out.set(Math.cos(yaw), 0, -Math.sin(yaw));
     return out.normalize();
+  }
+
+  // Fallback aim elevation (used only if a ranged launch fires without a
+  // captured reticle aim), relative to the default camera pitch so the resting
+  // camera keeps flat shots. Positive aims up.
+  function playerAimPitch() {
+    return clamp(game.cameraPitch - CAMERA_PITCH_DEFAULT, AIM_PITCH_MIN, AIM_PITCH_MAX);
+  }
+
+  function aimDirectionFromYawPitch(yaw, pitch, out) {
+    const cos = Math.cos(pitch);
+    out.set(-Math.sin(yaw) * cos, Math.sin(pitch), -Math.cos(yaw) * cos);
+    return out;
+  }
+
+  // Resolve the world point under the screen-center reticle: an analytic ray
+  // march from the camera against enemy aim spheres and the terrain sampler
+  // (flat y=0 floors in arena/dungeon activities). No THREE.Raycaster / scene
+  // traversal - this runs once per ranged attack start, not per frame.
+  function resolveReticleTarget(origin, dir, out) {
+    const maxRange = 60;
+    // Ignore hits between the camera and the character: the camera orbits
+    // behind the player, so anything closer than the player along the ray is
+    // behind the character's back and would produce backward launches.
+    const minT = Math.max(2, origin.distanceTo(player.group.position) - 1);
+    let bestT = Infinity;
+    for (const enemy of game.enemies) {
+      if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+        continue;
+      }
+      getEnemyAimPosition(enemy, aimRayTmp).sub(origin);
+      const t = aimRayTmp.dot(dir);
+      if (t < minT || t > maxRange || t >= bestT) {
+        continue;
+      }
+      const slack = enemy.radius + 0.9;
+      if (aimRayTmp.lengthSq() - t * t <= slack * slack) {
+        bestT = t;
+      }
+    }
+    const groundLimit = Math.min(bestT, maxRange);
+    const sampleTerrain = game.mode === "exploration" && !localPlayerInSharedActivity();
+    if (sampleTerrain) {
+      // Coarse march, then a short bisection refine on the crossing step.
+      let prev = minT;
+      for (let s = minT; s <= groundLimit; s += 1.5) {
+        const y = origin.y + dir.y * s;
+        const ground = explorationGroundWorldY(origin.x + dir.x * s, origin.z + dir.z * s);
+        if (y <= ground + 0.05) {
+          let lo = prev;
+          let hi = s;
+          for (let k = 0; k < 4; k += 1) {
+            const mid = (lo + hi) * 0.5;
+            const my = origin.y + dir.y * mid;
+            const mg = explorationGroundWorldY(origin.x + dir.x * mid, origin.z + dir.z * mid);
+            if (my <= mg + 0.05) hi = mid; else lo = mid;
+          }
+          bestT = Math.min(bestT, hi);
+          break;
+        }
+        prev = s;
+      }
+    } else if (dir.y < -0.001) {
+      const t = -origin.y / dir.y;
+      if (t > minT && t < groundLimit) {
+        bestT = Math.min(bestT, t);
+      }
+    }
+    const t = Number.isFinite(bestT) ? bestT : maxRange;
+    return out.copy(dir).multiplyScalar(t).add(origin);
+  }
+
+  // Ranged attacks aim by reticle convergence: raycast from the camera through
+  // the screen-center reticle, then launch from the character toward that
+  // world point, so shots land where the reticle points. Facing snaps to the
+  // launch yaw and the aim is frozen at attack start so the launch frame and
+  // the replicated action state (yaw + additive aimPitch) describe the same
+  // trajectory. Melee and movement stay yaw-driven on the ground plane.
+  function captureRangedAim() {
+    aimRayOrigin.copy(camera.position);
+    // Ray through the reticle's actual screen position (slightly above
+    // center), not the camera axis.
+    aimRayDir.set(0, RETICLE_NDC_Y, 0.5).unproject(camera).sub(aimRayOrigin).normalize();
+    resolveReticleTarget(aimRayOrigin, aimRayDir, aimTargetVec);
+    window.__dbgLastAim = { target: aimTargetVec.toArray() }; // TEMP smoke-test hook
+    // Direction FROM the character's muzzle TOWARD the aim point. The spawn
+    // point stays on the weapon (the launch functions keep their localToWorld
+    // hand/bow/staff offsets); only the direction comes from the reticle ray.
+    aimTargetVec.sub(aimRayTmp.copy(player.group.position).setY(player.group.position.y + 1.5));
+    const horizontal = Math.hypot(aimTargetVec.x, aimTargetVec.z);
+    const camHorizontal = Math.hypot(aimRayDir.x, aimRayDir.z);
+    const forwardAlignment = horizontal > 0.001 && camHorizontal > 0.001
+      ? (aimTargetVec.x * aimRayDir.x + aimTargetVec.z * aimRayDir.z) / (horizontal * camHorizontal)
+      : -1;
+    if (aimTargetVec.lengthSq() < 4 || forwardAlignment < 0.1) {
+      // Degenerate aim point (behind/inside the character): fall back to
+      // muzzle-forward along the camera view direction.
+      aimTargetVec.copy(aimRayDir);
+    }
+    player.yaw = Math.atan2(-aimTargetVec.x, -aimTargetVec.z);
+    player.attackAimYaw = player.yaw;
+    player.attackAimPitch = clamp(
+      Math.atan2(aimTargetVec.y, Math.hypot(aimTargetVec.x, aimTargetVec.z)),
+      AIM_PITCH_MIN, AIM_PITCH_MAX);
   }
 
   function yawFromDirection(direction) {
@@ -15530,9 +18463,11 @@ import {
     player.utilityCooldown = Math.max(0, player.utilityCooldown - dt);
     player.payoffCooldown = Math.max(0, player.payoffCooldown - dt);
     player.resolveTimer = Math.max(0, player.resolveTimer - dt);
+    player.resolveFlourishTimer = Math.max(0, (player.resolveFlourishTimer || 0) - dt);
+    player.partingPoseTimer = Math.max(0, (player.partingPoseTimer || 0) - dt);
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.rollTimer = Math.max(0, player.rollTimer - dt);
-    if (player.character === "wizard" || player.character === "ranger") {
+    if (player.character === "wizard" || player.character === "ranger" || player.character === "sentinel") {
       player.mana = Math.min(player.maxMana, player.mana + dt * player.manaRegen);
       player.potionCooldown = Math.max(0, player.potionCooldown - dt);
       player.blocking = false;
@@ -15567,6 +18502,8 @@ import {
         ? (player.attacking ? 4.45 : 6.65)
         : player.character === "ranger"
         ? (player.attacking ? 4.9 : 6.9)
+        : player.character === "sentinel"
+        ? (player.attacking ? 4.3 : 6.25)
         : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
       const speed = mounted ? baseSpeed : baseSpeed * (player.kitMoveSpeedMul || 1);
       player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
@@ -15580,7 +18517,7 @@ import {
 
     if (player.attacking) {
       const forward = forwardFromYaw(player.yaw, tmpVec2);
-      player.velocity.addScaledVector(forward, dt * (player.character === "wizard" ? 2.0 : player.character === "ranger" ? 0.6 : 4.8));
+      player.velocity.addScaledVector(forward, dt * (player.character === "wizard" ? 2.0 : player.character === "ranger" ? 0.6 : player.character === "sentinel" ? 3.0 : 4.8));
     }
 
     player.position.addScaledVector(player.velocity, dt);
@@ -15604,6 +18541,22 @@ import {
         updateWizardCastAnimation(t, swing);
       } else if (player.character === "ranger") {
         updateRangerDrawAnimation(t, swing);
+      } else if (player.character === "sentinel") {
+        updateSentinelPolearmAnimation(t, swing);
+      } else if (player.attackKind === "sweep") {
+        // Sweeping Cut: heavy horizontal arc. Slow shoulder-high windup, then
+        // the blade travels ~150 degrees flat across (matching the hit cone)
+        // with the slash arc widened and laid almost level so the area reads.
+        const travel = smoothstep(0.14, 0.78, t);
+        player.swordPivot.rotation.set(
+          -1.16 - swing * 0.18,
+          1.45 - travel * 2.95,
+          -1.3 + travel * 0.42
+        );
+        player.slashArc.visible = true;
+        player.slashArc.rotation.set(1.52, 0, 1.0 - travel * 2.75);
+        player.slashArc.scale.set(1.55, 1.55, 1);
+        player.slashArc.material.opacity = Math.max(0, 0.85 * Math.sin(clamp((t - 0.14) / 0.7, 0, 1) * Math.PI));
       } else if (player.attackKind === "bash") {
         player.swordPivot.rotation.set(-0.28 + swing * 0.2, -0.58 + swing * 0.22, -0.86 + swing * 0.28);
         player.slashArc.visible = false;
@@ -15623,6 +18576,11 @@ import {
         : player.attackKind === "stormcrown" ? t > 0.45
         : player.attackKind === "heartseeker" ? t > 0.6
         : player.attackKind === "sweep" ? t > 0.4
+        : player.attackKind === "thrust" ? t > 0.3
+        : player.attackKind === "shove" ? t > 0.24
+        : player.attackKind === "moulinet" ? t > 0.42
+        : player.attackKind === "hook" ? t > 0.36
+        : player.attackKind === "skewer" ? t > 0.34
         : t > 0.34 && t < 0.68;
       if (!player.attackHitDone && hitFrame) {
         player.attackHitDone = true;
@@ -15638,6 +18596,16 @@ import {
           performCrownOfStorms();
         } else if (player.attackKind === "sweep") {
           performSweepingCut();
+        } else if (player.attackKind === "thrust") {
+          performSentinelThrust();
+        } else if (player.attackKind === "shove") {
+          performSentinelShove();
+        } else if (player.attackKind === "moulinet") {
+          performSentinelMoulinet();
+        } else if (player.attackKind === "hook") {
+          performSentinelHook();
+        } else if (player.attackKind === "skewer") {
+          performSentinelSkewer();
         } else if (player.attackKind === "arrow" || player.attackKind === "pierce" || player.attackKind === "heartseeker") {
           launchArrow(player.attackKind);
         } else {
@@ -15649,6 +18617,9 @@ import {
         player.attacking = false;
         if (player.slashArc) {
           player.slashArc.visible = false;
+          // Sweep widens/flattens the arc; restore the regular slash framing.
+          player.slashArc.rotation.set(1.25, 0, -0.78);
+          player.slashArc.scale.set(1, 1, 1);
         }
         if (player.burstRing) {
           player.burstRing.visible = false;
@@ -15660,7 +18631,13 @@ import {
     } else if (player.character === "wizard") {
       resetWizardCastPose(dt);
     } else if (player.character === "ranger") {
-      resetRangerDrawPose(dt);
+      if (player.partingPoseTimer > 0) {
+        updatePartingShotPose();
+      } else {
+        resetRangerDrawPose(dt);
+      }
+    } else if (player.character === "sentinel") {
+      resetSentinelPose(dt);
     } else {
       player.swordPivot.rotation.x = lerp(player.swordPivot.rotation.x, -0.22, 1 - Math.pow(0.00001, dt));
       player.swordPivot.rotation.y = lerp(player.swordPivot.rotation.y, -0.24, 1 - Math.pow(0.00001, dt));
@@ -15669,12 +18646,27 @@ import {
 
     if (player.character === "knight") {
       const bashing = player.attacking && player.attackKind === "bash";
-      const shieldTargetY = bashing ? -0.42 : player.blocking ? -0.15 : 0.38;
-      const shieldTargetZ = bashing ? -0.78 : player.blocking ? -0.42 : 0;
-      const shieldTargetPosZ = bashing ? -0.58 : player.blocking ? -0.42 : -0.08;
+      const sweeping = player.attacking && player.attackKind === "sweep";
+      // Warden's Resolve cast flourish: shield thrust skyward for a beat.
+      const flourishing = player.resolveFlourishTimer > 0;
+      const shieldTargetY = flourishing ? -0.1 : bashing ? -0.42 : sweeping ? 0.66 : player.blocking ? -0.15 : 0.38;
+      const shieldTargetZ = flourishing ? -1.9 : bashing ? -0.78 : player.blocking ? -0.42 : 0;
+      const shieldTargetPosZ = flourishing ? -0.16 : bashing ? -0.58 : player.blocking ? -0.42 : -0.08;
+      const shieldTargetPosY = flourishing ? 1.94 : 1.32;
       player.shieldPivot.rotation.y = lerp(player.shieldPivot.rotation.y, shieldTargetY, 1 - Math.pow(0.00001, dt));
       player.shieldPivot.rotation.z = lerp(player.shieldPivot.rotation.z, shieldTargetZ, 1 - Math.pow(0.00001, dt));
       player.shieldPivot.position.z = lerp(player.shieldPivot.position.z, shieldTargetPosZ, 1 - Math.pow(0.00001, dt));
+      player.shieldPivot.position.y = lerp(player.shieldPivot.position.y, shieldTargetPosY, 1 - Math.pow(0.00001, dt));
+      if (player.resolveAura) {
+        const resolveActive = player.resolveTimer > 0;
+        player.resolveAura.visible = resolveActive;
+        if (resolveActive) {
+          const pulse = 1 + Math.sin(clock.elapsedTime * 5.2) * 0.07;
+          player.resolveAura.scale.set(pulse, pulse, 1);
+          player.resolveAura.material.opacity = (0.46 + Math.sin(clock.elapsedTime * 5.2) * 0.12)
+            * Math.min(1, player.resolveTimer / 0.6);
+        }
+      }
     }
 
     const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
@@ -15682,9 +18674,12 @@ import {
       ? explorationGroundWorldY(player.position.x, player.position.z)
       : 0;
     if (mounted) {
+      // Rider follows the mount's ride motion: hover lift keeps the player
+      // on the drake's saddle, and the bob matches the mount body exactly.
       const horse = game.exploration.horse;
-      const rideBob = horse ? Math.sin(horse.walkTime * 2.2) * 0.04 : 0;
-      player.group.position.set(player.position.x, playerGroundY + 1.2 + rideBob, player.position.z);
+      const rideMotion = horse ? mountRideMotion(horse, horse.velocity.length()) : { lift: 0, bob: 0 };
+      const seat = horse && horse.seatHeight ? horse.seatHeight : 1.2;
+      player.group.position.set(player.position.x, playerGroundY + seat + rideMotion.lift + rideMotion.bob, player.position.z);
     } else {
       player.group.position.set(player.position.x, playerGroundY + walkBob, player.position.z);
     }
@@ -15703,7 +18698,75 @@ import {
   }
 
   function updateWizardCastAnimation(t, swing) {
+    const kind = player.attackKind;
+    if (kind === "frostbind") {
+      // Frostbind Bolt: short gather, then the staff punches straight forward
+      // at the release frame — a thrust, not the generic wave.
+      const raise = Math.sin(clamp(t / 0.32, 0, 1) * Math.PI * 0.5);
+      const thrust = smoothstep(0.26, 0.48, t);
+      const settle = 1 - smoothstep(0.8, 1, t);
+      if (player.staffPivot) {
+        player.staffPivot.position.y = 1.02;
+        player.staffPivot.rotation.x = (0.08 + raise * 0.42 - thrust * 1.85) * settle + 0.08 * (1 - settle);
+        player.staffPivot.rotation.y = -thrust * 0.14 * settle;
+        player.staffPivot.rotation.z = -0.16 - thrust * 0.08 * settle;
+      }
+      if (player.leftArm) {
+        player.leftArm.rotation.x = -raise * 0.5 * settle;
+        player.leftArm.rotation.z = -raise * 0.2 * settle;
+      }
+      if (player.rightArm) {
+        player.rightArm.rotation.x = (-raise * 0.35 - thrust * 1.25) * settle;
+        player.rightArm.rotation.z = thrust * 0.22 * settle;
+      }
+      if (player.castGlow) {
+        player.castGlow.visible = true;
+        player.castGlow.material.color.setHex(0xbfe9ff);
+        player.castGlow.position.set(-0.52, 1.05, -0.18);
+        player.castGlow.scale.setScalar(0.7 + raise * 0.9 + thrust * 0.7);
+        player.castGlow.material.opacity = (0.3 + raise * 0.4 + thrust * 0.35) * settle;
+      }
+      if (player.burstRing) {
+        player.burstRing.visible = false;
+      }
+      return;
+    }
+    if (kind === "stormcrown") {
+      // Crown of Storms: both arms and the staff climb overhead while the cast
+      // glow swells into a charge above the hat, then the ring blast lands.
+      const charge = smoothstep(0.04, 0.45, t);
+      const settle = 1 - smoothstep(0.78, 1, t);
+      if (player.staffPivot) {
+        player.staffPivot.position.y = 1.02 + charge * 0.62 * settle;
+        player.staffPivot.rotation.x = 0.08 - charge * 0.3 * settle;
+        player.staffPivot.rotation.y = 0;
+        player.staffPivot.rotation.z = -0.16 + charge * 0.28 * settle;
+      }
+      if (player.leftArm) {
+        player.leftArm.rotation.x = -charge * 2.55 * settle;
+        player.leftArm.rotation.z = -charge * 0.34 * settle;
+      }
+      if (player.rightArm) {
+        player.rightArm.rotation.x = -charge * 2.55 * settle;
+        player.rightArm.rotation.z = charge * 0.34 * settle;
+      }
+      if (player.castGlow) {
+        player.castGlow.visible = true;
+        player.castGlow.material.color.setHex(0xf4fdff);
+        player.castGlow.position.set(0, 1.05 + charge * 1.85, -0.05);
+        player.castGlow.scale.setScalar(0.7 + charge * 2.6);
+        player.castGlow.material.opacity = (0.24 + charge * 0.66) * settle;
+      }
+      if (player.burstRing) {
+        player.burstRing.visible = true;
+        const scale = 0.75 + smoothstep(0.12, 0.92, t) * 5.8;
+        player.burstRing.scale.set(scale, scale, scale);
+        player.burstRing.material.opacity = 0.72 * (1 - smoothstep(0.42, 1, t));
+      }
+      return;
+    }
     if (player.staffPivot) {
+      player.staffPivot.position.y = 1.02;
       player.staffPivot.rotation.x = 0.08 - swing * 0.34;
       player.staffPivot.rotation.y = swing * 0.2;
       player.staffPivot.rotation.z = -0.16 - swing * 0.2;
@@ -15718,15 +18781,16 @@ import {
     }
     if (player.castGlow) {
       player.castGlow.visible = true;
+      player.castGlow.material.color.setHex(0xf4fdff);
+      player.castGlow.position.set(-0.52, 1.05, -0.18);
       player.castGlow.scale.setScalar(0.7 + swing * (player.attackKind === "burst" ? 2.2 : 1.35));
       player.castGlow.material.opacity = 0.28 + swing * 0.7;
     }
     if (player.burstRing) {
-      const burst = player.attackKind === "burst" || player.attackKind === "stormcrown";
+      const burst = player.attackKind === "burst";
       player.burstRing.visible = burst;
       if (burst) {
-        const reach = player.attackKind === "stormcrown" ? 5.8 : 3.45;
-        const scale = 0.75 + smoothstep(0.12, 0.92, t) * reach;
+        const scale = 0.75 + smoothstep(0.12, 0.92, t) * 3.45;
         player.burstRing.scale.set(scale, scale, scale);
         player.burstRing.material.opacity = 0.72 * (1 - smoothstep(0.42, 1, t));
       }
@@ -15734,6 +18798,26 @@ import {
   }
 
   function updateRangerDrawAnimation(t, swing) {
+    if (player.attackKind === "heartseeker") {
+      // Heartseeker: deliberate 0.7s draw — ease to a full anchor, hold almost
+      // perfectly still at aim through the hit frame, then a clean follow-through.
+      const draw = smoothstep(0, 0.52, t);
+      const anchor = smoothstep(0.4, 0.56, t);
+      const pose = draw * (1 - smoothstep(0.62, 0.95, t));
+      if (player.bowPivot) {
+        player.bowPivot.rotation.y = -0.3 - pose * 1.06;
+        player.bowPivot.rotation.z = -0.06 - pose * 0.18;
+      }
+      if (player.leftArm) {
+        player.leftArm.rotation.x = -pose * 1.34;
+        player.leftArm.rotation.z = pose * 0.16;
+      }
+      if (player.rightArm) {
+        player.rightArm.rotation.x = -pose * (1.12 + anchor * 0.14);
+        player.rightArm.rotation.z = -pose * 0.52;
+      }
+      return;
+    }
     if (player.bowPivot) {
       player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -1.25, swing);
       player.bowPivot.rotation.z = -0.06 - swing * 0.1;
@@ -15748,6 +18832,25 @@ import {
     }
   }
 
+  function updatePartingShotPose() {
+    // Parting Shot: instant point-blank snap — bow whipped across low while
+    // the body springs backward (rollTimer drives the spring), easing out
+    // over the 0.3s pose timer back to the rest pose.
+    const snap = Math.pow(clamp(player.partingPoseTimer / 0.3, 0, 1), 0.6);
+    if (player.bowPivot) {
+      player.bowPivot.rotation.y = -0.3 - snap * 1.05;
+      player.bowPivot.rotation.z = -0.06 + snap * 0.72;
+    }
+    if (player.leftArm) {
+      player.leftArm.rotation.x = -snap * 1.5;
+      player.leftArm.rotation.z = snap * 0.3;
+    }
+    if (player.rightArm) {
+      player.rightArm.rotation.x = snap * 0.85;
+      player.rightArm.rotation.z = -snap * 0.22;
+    }
+  }
+
   function resetRangerDrawPose(dt) {
     const ease = 1 - Math.pow(0.00001, dt);
     if (player.bowPivot) {
@@ -15756,8 +18859,100 @@ import {
     }
   }
 
+  // Sentinel polearm choreography. The halberd rests upright (swordPivot
+  // rotation.x ~ 1.08, head skyward); thrusting levels it toward -Z.
+  function updateSentinelPolearmAnimation(t, swing) {
+    const pivot = player.swordPivot;
+    if (!pivot) {
+      return;
+    }
+    const kind = player.attackKind;
+    if (kind === "moulinet") {
+      // Level the haft and carry it one full horizontal turn around the body.
+      const level = smoothstep(0.04, 0.3, t);
+      const travel = smoothstep(0.12, 0.88, t);
+      pivot.rotation.x = SENTINEL_HALBERD_REST.x - level * 1.02;
+      pivot.rotation.y = -travel * TAU;
+      pivot.rotation.z = SENTINEL_HALBERD_REST.z;
+      if (player.leftArm) {
+        player.leftArm.rotation.x = -level * 0.7;
+        player.leftArm.rotation.z = -level * 0.3;
+      }
+      if (player.rightArm) {
+        player.rightArm.rotation.x = -level * 0.9;
+        player.rightArm.rotation.z = level * 0.25;
+      }
+      if (player.slashArc) {
+        player.slashArc.visible = true;
+        player.slashArc.position.set(0, 1.18, 0);
+        player.slashArc.rotation.set(Math.PI / 2, 0, -travel * TAU);
+        player.slashArc.scale.set(1.15, 1.15, 1);
+        player.slashArc.material.opacity = Math.max(0, 0.8 * Math.sin(clamp((t - 0.1) / 0.8, 0, 1) * Math.PI));
+      }
+      return;
+    }
+    if (kind === "shove") {
+      // Haft held crosswise and punched forward: a guardsman's push, no blade.
+      const push = Math.sin(clamp(t, 0, 1) * Math.PI);
+      pivot.rotation.x = SENTINEL_HALBERD_REST.x - push * 0.4;
+      pivot.rotation.y = push * 0.5;
+      pivot.rotation.z = SENTINEL_HALBERD_REST.z - push * 0.3;
+      pivot.position.z = -0.04 - push * 0.42;
+      if (player.leftArm) {
+        player.leftArm.rotation.x = -push * 1.05;
+        player.leftArm.rotation.z = push * 0.15;
+      }
+      if (player.rightArm) {
+        player.rightArm.rotation.x = -push * 1.05;
+        player.rightArm.rotation.z = -push * 0.15;
+      }
+      if (player.slashArc) {
+        player.slashArc.visible = false;
+      }
+      return;
+    }
+    // thrust / hook / skewer: level the point and drive it forward. The hook
+    // recovers with a backward drag; the skewer holds the lunge longer.
+    const drive = kind === "skewer" ? smoothstep(0.08, 0.4, t) * (1 - smoothstep(0.86, 1, t)) : swing;
+    pivot.rotation.x = SENTINEL_HALBERD_REST.x - drive * 1.04;
+    pivot.rotation.y = drive * (kind === "hook" ? 0.2 : 0.08);
+    pivot.rotation.z = SENTINEL_HALBERD_REST.z - drive * 0.06;
+    pivot.position.z = -0.04 - drive * (kind === "skewer" ? 0.62 : 0.5);
+    if (player.leftArm) {
+      player.leftArm.rotation.x = -drive * 0.65;
+      player.leftArm.rotation.z = -drive * 0.18;
+    }
+    if (player.rightArm) {
+      player.rightArm.rotation.x = -drive * 1.05;
+      player.rightArm.rotation.z = drive * 0.2;
+    }
+    if (player.slashArc) {
+      player.slashArc.visible = false;
+    }
+  }
+
+  function resetSentinelPose(dt) {
+    const ease = 1 - Math.pow(0.00001, dt);
+    const pivot = player.swordPivot;
+    if (pivot) {
+      pivot.rotation.x = lerp(pivot.rotation.x, SENTINEL_HALBERD_REST.x, ease);
+      pivot.rotation.y = lerpAngle(pivot.rotation.y, SENTINEL_HALBERD_REST.y, ease);
+      pivot.rotation.z = lerp(pivot.rotation.z, SENTINEL_HALBERD_REST.z, ease);
+      pivot.position.z = lerp(pivot.position.z, -0.04, ease);
+    }
+    if (player.leftArm) {
+      player.leftArm.rotation.x = lerp(player.leftArm.rotation.x, 0, ease);
+      player.leftArm.rotation.z = lerp(player.leftArm.rotation.z, 0, ease);
+    }
+    if (player.rightArm) {
+      player.rightArm.rotation.x = lerp(player.rightArm.rotation.x, 0, ease);
+      player.rightArm.rotation.z = lerp(player.rightArm.rotation.z, 0, ease);
+    }
+  }
+
   function resetWizardCastPose(dt) {
     if (player.staffPivot) {
+      player.staffPivot.position.y = lerp(player.staffPivot.position.y, 1.02, 1 - Math.pow(0.00001, dt));
       player.staffPivot.rotation.x = lerp(player.staffPivot.rotation.x, 0.08, 1 - Math.pow(0.00001, dt));
       player.staffPivot.rotation.y = lerp(player.staffPivot.rotation.y, 0, 1 - Math.pow(0.00001, dt));
       player.staffPivot.rotation.z = lerp(player.staffPivot.rotation.z, -0.16, 1 - Math.pow(0.00001, dt));
@@ -15838,6 +19033,16 @@ import {
       player.attackDuration = 0.34;
       player.attackCooldown = 0.65;
       playSfx("arrow", 0.95);
+    } else if (player.character === "sentinel") {
+      if (!hasAbility("thrust")) {
+        showAbilityLocked("thrust");
+        return;
+      }
+      // Thrust costs no vigor: the sentinel's bread-and-butter poke.
+      player.attackKind = "thrust";
+      player.attackDuration = 0.44;
+      player.attackCooldown = 0.6;
+      playSfx("thrust", 0.95);
     } else {
       player.attackKind = "slash";
       player.attackDuration = 0.42;
@@ -15847,6 +19052,9 @@ import {
     player.attacking = true;
     player.attackTimer = 0;
     player.attackHitDone = false;
+    if (player.attackKind === "lightning" || player.attackKind === "arrow") {
+      captureRangedAim();
+    }
     sendOnlineAction(player.attackKind);
   }
 
@@ -15860,6 +19068,10 @@ import {
     }
     if (player.character === "ranger") {
       startRangerRoll();
+      return;
+    }
+    if (player.character === "sentinel") {
+      startSentinelShove();
       return;
     }
     if (game.state !== "playing" || player.attacking || player.secondaryCooldown > 0) {
@@ -15969,8 +19181,60 @@ import {
     player.attackDuration = 0.52;
     player.attackCooldown = 1.1;
     player.attackHitDone = false;
+    captureRangedAim();
     playSfx("flamingArrow", 1.05);
     sendOnlineAction("pierce");
+    return true;
+  }
+
+  function startSentinelShove() {
+    if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.character !== "sentinel" || player.attacking || player.secondaryCooldown > 0) {
+      return false;
+    }
+    if (!hasAbility("shove")) {
+      showAbilityLocked("shove");
+      return false;
+    }
+    const tuning = combatTuningFor();
+    if (player.mana < tuning.shoveVigorCost) {
+      showBanner("Not enough vigor");
+      return false;
+    }
+    player.mana -= tuning.shoveVigorCost;
+    player.attacking = true;
+    player.attackKind = "shove";
+    player.attackTimer = 0;
+    player.attackDuration = 0.4;
+    player.attackCooldown = 0.55;
+    player.secondaryCooldown = 0.9;
+    player.attackHitDone = false;
+    playSfx("shove", 1.05);
+    sendOnlineAction("shove");
+    return true;
+  }
+
+  function startSentinelMoulinet() {
+    if (game.state !== "playing" || !questDialog.hidden || isPlayerMounted() || player.character !== "sentinel" || player.attacking || player.attackCooldown > 0) {
+      return false;
+    }
+    if (!hasAbility("moulinet")) {
+      showAbilityLocked("moulinet");
+      return false;
+    }
+    const tuning = combatTuningFor();
+    if (player.mana < tuning.moulinetVigorCost) {
+      showBanner("Not enough vigor");
+      return false;
+    }
+    player.mana -= tuning.moulinetVigorCost;
+    player.attacking = true;
+    player.attackKind = "moulinet";
+    player.attackTimer = 0;
+    player.attackDuration = 0.62;
+    player.attackCooldown = tuning.moulinetCooldown;
+    player.attackHitDone = false;
+    playSfx("moulinet", 1.05);
+    sendOnlineAction("moulinet");
     return true;
   }
 
@@ -15990,6 +19254,7 @@ import {
         return false;
       }
       player.resolveTimer = tuning.resolveDuration;
+      player.resolveFlourishTimer = 0.45;
       player.utilityCooldown = tuning.resolveCooldown;
       spawnImpact(player.position, 0xffd889, 18);
       showBanner("Warden's Resolve", 1.6);
@@ -16017,6 +19282,7 @@ import {
       player.attackDuration = 0.5;
       player.attackCooldown = 0.6;
       player.attackHitDone = false;
+      captureRangedAim();
       playSfx("lightning", 0.8);
       sendOnlineAction("frostbind");
       return true;
@@ -16033,6 +19299,33 @@ import {
       player.mana -= tuning.partingFocusCost;
       player.utilityCooldown = tuning.partingCooldown;
       performPartingShot(tuning);
+      return true;
+    }
+    if (player.character === "sentinel") {
+      // Billhook Pull: the resolution (performSentinelHook), animation timing,
+      // HUD slot, and remote "hook" action were already wired; this branch
+      // supplies the missing local cast so F actually fires it.
+      if (player.attacking) {
+        return false;
+      }
+      if (!hasAbility("hook")) {
+        showAbilityLocked("hook");
+        return false;
+      }
+      if (player.mana < tuning.hookVigorCost) {
+        showBanner("Not enough vigor");
+        return false;
+      }
+      player.mana -= tuning.hookVigorCost;
+      player.utilityCooldown = tuning.hookCooldown;
+      player.attacking = true;
+      player.attackKind = "hook";
+      player.attackTimer = 0;
+      player.attackDuration = 0.55;
+      player.attackCooldown = 0.7;
+      player.attackHitDone = false;
+      playSfx("hook", 1.05);
+      sendOnlineAction("hook");
       return true;
     }
     return false;
@@ -16105,8 +19398,33 @@ import {
       player.attackDuration = 0.7;
       player.attackCooldown = 0.85;
       player.attackHitDone = false;
+      captureRangedAim();
       playSfx("pierce", 1.1);
       sendOnlineAction("heartseeker");
+      return true;
+    }
+    if (player.character === "sentinel") {
+      if (!hasAbility("skewer")) {
+        showAbilityLocked("skewer");
+        return false;
+      }
+      if (player.mana < tuning.skewerVigorCost) {
+        showBanner("Not enough vigor");
+        return false;
+      }
+      player.mana -= tuning.skewerVigorCost;
+      player.payoffCooldown = tuning.skewerCooldown;
+      player.attacking = true;
+      player.attackKind = "skewer";
+      player.attackTimer = 0;
+      player.attackDuration = 0.66;
+      player.attackCooldown = 0.85;
+      player.attackHitDone = false;
+      // Charge: a short burst of forward momentum carries the lunge.
+      const forward = forwardFromYaw(player.yaw, tmpVec);
+      player.velocity.addScaledVector(forward, 11.5);
+      playSfx("skewer", 1.1);
+      sendOnlineAction("skewer");
       return true;
     }
     return false;
@@ -16137,6 +19455,8 @@ import {
     // Spring backward, away from facing.
     player.velocity.addScaledVector(forward, -10);
     player.rollTimer = Math.max(player.rollTimer, 0.3);
+    // Snap-shot pose, decayed in updatePlayer (parting bypasses player.attacking).
+    player.partingPoseTimer = 0.3;
     playSfx("arrow", 1.05);
     sendOnlineAction("parting");
   }
@@ -16190,11 +19510,18 @@ import {
       }
     }
     spawnImpact(player.position, hitAny ? 0x7ae8ff : 0xbff8ff, hitAny ? 34 : 20);
+    // Crown of sparks above the caster at the blast frame.
+    const crown = player.group.position.clone();
+    crown.y += 1.9;
+    spawnImpact(crown, 0xbfe2ff, 12);
   }
 
   function launchFrostbindBolt() {
     const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
-    const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+    const direction = aimDirectionFromYawPitch(
+      player.attackAimYaw ?? player.yaw,
+      player.attackAimPitch ?? playerAimPitch(),
+      new THREE.Vector3());
     const tuning = combatTuningFor("wizard");
     const projectile = createLightningProjectile(source, direction.multiplyScalar(22), {
       life: 1.6,
@@ -16275,6 +19602,152 @@ import {
     spawnImpact(impactPosition, hitAny ? 0xffd889 : 0xc7d3d3, hitAny ? 16 : 8);
   }
 
+  // Sentinel halberd resolutions. All host-authoritative: joiners broadcast
+  // the action and the host applies it via applyRemoteActionToEnemies.
+  function performSentinelThrust() {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    const tuning = combatTuningFor("sentinel");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > tuning.thrustRange + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        // Narrow jab corridor: reach beats the knight, width does not.
+        if (forward.dot(tmpVec2) < 0.82) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.thrustDamageMin + tuning.thrustDamageBonus + Math.floor(Math.random() * tuning.thrustDamageSpread), forward, tuning.thrustKnockback);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position.clone().addScaledVector(forward, 2.2), hitAny ? 0xbfd2dd : 0xc7d3d3, hitAny ? 12 : 6);
+  }
+
+  function performSentinelShove() {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    const tuning = combatTuningFor("sentinel");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > 2.4 + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        if (forward.dot(tmpVec2) < 0.2) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.shoveDamageMin + Math.floor(Math.random() * tuning.shoveDamageSpread), forward, tuning.shoveStun);
+        enemy.velocity.addScaledVector(forward, tuning.shoveVelocity);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position.clone().addScaledVector(forward, 1.3), hitAny ? 0xd8e2e8 : 0xc7d3d3, hitAny ? 14 : 8);
+  }
+
+  function performSentinelMoulinet() {
+    const tuning = combatTuningFor("sentinel");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+          continue;
+        }
+        const direction = tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(direction.x, direction.z));
+        if (distance > tuning.moulinetRadius + enemy.radius) {
+          continue;
+        }
+        direction.y = 0;
+        direction.multiplyScalar(1 / distance);
+        damageEnemy(enemy, tuning.moulinetDamageMin + Math.floor(Math.random() * tuning.moulinetDamageSpread), direction.clone(), 0.2);
+        enemy.velocity.addScaledVector(direction, 3.2);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position.clone(), hitAny ? 0xbfd2dd : 0xc7d3d3, hitAny ? 20 : 10);
+  }
+
+  function performSentinelHook() {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    const tuning = combatTuningFor("sentinel");
+    let hooked = null;
+    let hookedDistance = Infinity;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > tuning.hookRange + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        if (forward.dot(tmpVec2) < 0.86) {
+          continue;
+        }
+        if (distance < hookedDistance) {
+          hooked = enemy;
+          hookedDistance = distance;
+        }
+      }
+    }
+    if (hooked) {
+      // Pull is the payload: drag the target toward the sentinel's spear-line.
+      const pull = tmpVec2.copy(player.position).sub(hooked.position);
+      pull.y = 0;
+      pull.normalize();
+      damageEnemy(hooked, tuning.hookDamageMin + Math.floor(Math.random() * tuning.hookDamageSpread), pull.clone().multiplyScalar(0.1), tuning.hookStun);
+      hooked.velocity.addScaledVector(pull, tuning.hookPull);
+      spawnImpact(hooked.position.clone(), 0xd8b06a, 14);
+    } else {
+      spawnImpact(player.position.clone().addScaledVector(forward, 3.0), 0xc7d3d3, 6);
+    }
+  }
+
+  function performSentinelSkewer() {
+    const forward = forwardFromYaw(player.yaw, tmpVec);
+    const tuning = combatTuningFor("sentinel");
+    let hitAny = false;
+    if (canSimulateSharedWorld()) {
+      for (const enemy of game.enemies) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
+          continue;
+        }
+        tmpVec2.copy(enemy.position).sub(player.position);
+        const distance = Math.max(0.001, Math.hypot(tmpVec2.x, tmpVec2.z));
+        if (distance > tuning.skewerRange + enemy.radius) {
+          continue;
+        }
+        tmpVec2.y = 0;
+        tmpVec2.multiplyScalar(1 / distance);
+        // Lance corridor along the charge line.
+        if (forward.dot(tmpVec2) < 0.6) {
+          continue;
+        }
+        damageEnemy(enemy, tuning.skewerDamageMin + Math.floor(Math.random() * tuning.skewerDamageSpread), forward, 0.5);
+        enemy.velocity.addScaledVector(forward, 5.2);
+        hitAny = true;
+      }
+    }
+    spawnImpact(player.position.clone().addScaledVector(forward, 2.4), hitAny ? 0xe8d9a8 : 0xc7d3d3, hitAny ? 20 : 8);
+  }
+
   function createLightningProjectile(source, velocity, options = {}) {
     const group = new THREE.Group();
     group.position.copy(source);
@@ -16335,7 +19808,10 @@ import {
       group.add(flame, core, ember);
       flameParts.push(flame, core, ember);
     }
+    // Yaw then local pitch so the shaft tilts along an elevated trajectory.
+    group.rotation.order = "YXZ";
     group.rotation.y = Math.atan2(-velocity.x, -velocity.z);
+    group.rotation.x = Math.atan2(velocity.y, Math.hypot(velocity.x, velocity.z));
     scene.add(group);
     return {
       netId: options.netId || nextNetworkId("projectile"),
@@ -16366,7 +19842,10 @@ import {
 
   function launchArrow(kind = "arrow") {
     const source = player.group.localToWorld(new THREE.Vector3(0.32, 1.5, -0.62));
-    const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+    const direction = aimDirectionFromYawPitch(
+      player.attackAimYaw ?? player.yaw,
+      player.attackAimPitch ?? playerAimPitch(),
+      new THREE.Vector3());
     const tuning = combatTuningFor("ranger");
     const pierce = kind === "pierce";
     const heartseeker = kind === "heartseeker";
@@ -16392,7 +19871,10 @@ import {
 
   function launchLightningBall() {
     const source = player.group.localToWorld(new THREE.Vector3(0.55, 1.55, -0.72));
-    const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
+    const direction = aimDirectionFromYawPitch(
+      player.attackAimYaw ?? player.yaw,
+      player.attackAimPitch ?? playerAimPitch(),
+      new THREE.Vector3());
     const velocity = direction.clone().multiplyScalar(12.8);
     const tuning = combatTuningFor("wizard");
     game.playerProjectiles.push(tagActiveCombatActor(createLightningProjectile(source, velocity, {
@@ -16403,9 +19885,9 @@ import {
     })));
   }
 
-  function spawnRemoteLightningVisual(source, yaw) {
+  function spawnRemoteLightningVisual(source, yaw, aimPitch = 0) {
     const start = source.clone();
-    const direction = forwardFromYaw(yaw, new THREE.Vector3());
+    const direction = aimDirectionFromYawPitch(yaw, aimPitch, new THREE.Vector3());
     start.y = (game.mode === "exploration" ? explorationGroundWorldY(start.x, start.z) : 0) + 1.45;
     start.addScaledVector(direction, 0.72);
     game.playerProjectiles.push(createLightningProjectile(start, direction.multiplyScalar(12.8), {
@@ -16416,9 +19898,9 @@ import {
     }));
   }
 
-  function spawnRemoteArrowVisual(source, yaw, variant = "arrow") {
+  function spawnRemoteArrowVisual(source, yaw, variant = "arrow", aimPitch = 0) {
     const start = source.clone();
-    const direction = forwardFromYaw(yaw, new THREE.Vector3());
+    const direction = aimDirectionFromYawPitch(yaw, aimPitch, new THREE.Vector3());
     const flaming = variant === "flaming";
     const heavy = flaming || variant === "heartseeker";
     start.y = (game.mode === "exploration" ? explorationGroundWorldY(start.x, start.z) : 0) + 1.5;
@@ -16640,6 +20122,9 @@ import {
             hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
           }
           damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
+          if (projectile.flaming && !enemy.dead) {
+            igniteEnemyBurn(enemy, combatTuningFor("ranger"));
+          }
           spawnImpact(projectile.group.position, impactColor, projectile.impactCount ?? 16);
           if (projectile.impactSfx) {
             playPositionalSfx(projectile.impactSfx, projectile.group.position, 0.62, 34);
@@ -16659,11 +20144,23 @@ import {
         continue;
       }
 
+      // Downward-pitched shots burst on the ground instead of tunneling under
+      // the terrain. Only sampled for descending projectiles, so flat launches
+      // keep their legacy cost and lifetime. Shared-activity floors sit at y 0
+      // and do not follow the terrain sampler.
+      let groundHit = false;
+      if (projectile.velocity.y < -0.01) {
+        const groundY = game.mode === "exploration" && !localPlayerInSharedActivity()
+          ? explorationGroundWorldY(projectile.group.position.x, projectile.group.position.z)
+          : 0;
+        groundHit = projectile.group.position.y <= groundY + 0.06;
+      }
+
       const dist = game.mode === "exploration"
         ? projectile.group.position.distanceTo(game.exploration.origin)
         : Math.hypot(projectile.group.position.x, projectile.group.position.z);
       const maxProjectileDistance = game.mode === "exploration" ? game.exploration.radius + 28 : arenaRadius + 14;
-      if (projectile.life <= 0 || dist > maxProjectileDistance) {
+      if (groundHit || projectile.life <= 0 || dist > maxProjectileDistance) {
         spawnImpact(projectile.group.position, impactColor, projectile.expireImpactCount ?? (projectile.type === "arrow" ? 6 : 10));
         if (projectile.impactSfx && projectile.flaming) {
           playPositionalSfx(projectile.impactSfx, projectile.group.position, 0.4, 30);
@@ -16672,6 +20169,33 @@ import {
         game.playerProjectiles.splice(i, 1);
       }
     }
+  }
+
+  // Flaming Arrow ember burn. Set on the host/solo sim only (projectile hits
+  // and the remote "pierce" action both resolve there), ticked from the enemy
+  // update loops, applied through damageEnemy so death/rewards/replication
+  // stay on the existing authoritative path. Burns refresh, never stack.
+  const burnTickDirection = new THREE.Vector3();
+  function igniteEnemyBurn(enemy, tuning, sourceId = online.localId) {
+    enemy.burnTicksLeft = tuning.pierceBurnTicks;
+    enemy.burnTickDamage = tuning.pierceBurnTickDamage;
+    enemy.burnTickInterval = tuning.pierceBurnTickInterval;
+    enemy.burnTickIn = tuning.pierceBurnTickInterval;
+    enemy.burnSourceId = sourceId;
+  }
+
+  function updateEnemyBurn(enemy, dt) {
+    if (!enemy.burnTicksLeft || enemy.dead) {
+      return;
+    }
+    enemy.burnTickIn -= dt;
+    if (enemy.burnTickIn > 0) {
+      return;
+    }
+    enemy.burnTicksLeft -= 1;
+    enemy.burnTickIn = enemy.burnTickInterval || 0.8;
+    spawnImpact(enemy.position, 0xff7b2e, 5);
+    damageEnemy(enemy, enemy.burnTickDamage || 0, burnTickDirection.set(0, 0, 0), 0, enemy.burnSourceId || online.localId);
   }
 
   function damageEnemy(enemy, damage, direction, stun, sourceId = online.localId) {
@@ -16742,6 +20266,7 @@ import {
       return;
     }
     const delay = (WILDS_RESPAWN_DELAY + Math.random() * WILDS_RESPAWN_JITTER) * wildsTierDelayMultiplier(tier);
+    record.scheduledAt = clock.elapsedTime;
     record.respawnAt = clock.elapsedTime + delay;
     record.clearedBonus = 0;
     // Cleared-zone pushback: every kill delays already-empty neighbor points,
@@ -16781,8 +20306,41 @@ import {
     enemy.wildsSeedId = record.id;
     seedExplorationEnemy(enemy, new THREE.Vector3(record.x, 0, record.z), Math.random, record.awareness, record.homeRadius);
     record.respawnAt = 0;
+    record.scheduledAt = 0;
     record.clearedBonus = 0;
     return enemy;
+  }
+
+  // Host-side view of how many room members are actually fighting in the
+  // OVERWORLD: the local (host) player plus every remote member whose state
+  // says playing. Arena/dungeon participants and their late-join queue are
+  // excluded because shared activities spawn their own waves (in practice the
+  // overworld director is fully paused while one runs, so the exclusion is a
+  // documented invariant). Joiners never run the director, so this never
+  // consults a joiner's stale membership view.
+  function wildsActivePlayerCount() {
+    let count = 1;
+    if (online.role === "host") {
+      const activity = activeCombatActivity();
+      for (const [id, remote] of online.remotePlayers) {
+        if (remote.playing !== true) {
+          continue;
+        }
+        if (activity && (arenaListIncludes(activity.participants, id) || arenaListIncludes(activity.pendingParticipants, id))) {
+          continue;
+        }
+        count += 1;
+      }
+    }
+    return clamp(count, 1, WILDS_PLAYER_COUNT_MAX);
+  }
+
+  // 1 at one player; each extra playing member shortens every pending refill
+  // wait (base delay, jitter, tier multiplier, AND cleared-zone pushback) by
+  // 1 / (1 + factor * extras). Applied at check time against scheduledAt, so
+  // joins/leaves rescale already-running timers immediately.
+  function wildsPlayerDelayMultiplier(playerCount) {
+    return 1 / (1 + WILDS_PLAYER_REFILL_FACTOR * (playerCount - 1));
   }
 
   function updateWildsDirector(dt) {
@@ -16811,9 +20369,19 @@ import {
       }
     }
     const targets = combatTargets();
+    // T-020 player-count scaling: more playing members shorten pending waits
+    // and raise the per-tick/per-pocket budgets. WILDS_ENEMY_CAP stays the
+    // absolute live ceiling regardless of player count.
+    const playerCount = wildsActivePlayerCount();
+    const playerDelayMul = wildsPlayerDelayMultiplier(playerCount);
+    const spawnBudget = Math.min(
+      WILDS_SPAWNS_PER_TICK_MAX,
+      WILDS_SPAWNS_PER_TICK + Math.floor((playerCount - 1) * WILDS_PLAYER_SPAWNS_PER_TICK)
+    );
+    const areaCap = Math.min(WILDS_AREA_CAP_MAX, WILDS_AREA_CAP + (playerCount - 1) * WILDS_PLAYER_AREA_CAP_BONUS);
     const checks = Math.min(WILDS_CHECKS_PER_TICK, total);
     let spawns = 0;
-    for (let i = 0; i < checks && spawns < WILDS_SPAWNS_PER_TICK; i += 1) {
+    for (let i = 0; i < checks && spawns < spawnBudget; i += 1) {
       const record = wilds.seedPoints[wilds.cursor % total];
       wilds.cursor = (wilds.cursor + 1) % total;
       if (record.respawnAt <= 0) {
@@ -16822,11 +20390,16 @@ import {
         // Crownring clears all enemies); schedule a normal refill.
         if (!liveSeedIds.has(record.id)) {
           record.clearedBonus = 0;
+          record.scheduledAt = now;
           record.respawnAt = now + (WILDS_RESPAWN_DELAY + Math.random() * WILDS_RESPAWN_JITTER) * wildsTierDelayMultiplier(wildsTierAt(record.x, record.z));
         }
         continue;
       }
-      if (now < record.respawnAt || liveCount >= WILDS_ENEMY_CAP) {
+      // The record stores its full unscaled wait (delay + cleared-zone
+      // pushback); the player multiplier compresses it at check time so the
+      // pacing reacts to joins/leaves mid-wait.
+      const scaledDue = record.scheduledAt + (record.respawnAt - record.scheduledAt) * playerDelayMul;
+      if (now < scaledDue || liveCount >= WILDS_ENEMY_CAP) {
         continue;
       }
       // Never spawn in sight: the point must be far from EVERY player
@@ -16854,12 +20427,12 @@ import {
         const dz = enemy.position.z - record.z;
         if (dx * dx + dz * dz < WILDS_AREA_RADIUS * WILDS_AREA_RADIUS) {
           nearby += 1;
-          if (nearby >= WILDS_AREA_CAP) {
+          if (nearby >= areaCap) {
             break;
           }
         }
       }
-      if (nearby >= WILDS_AREA_CAP) {
+      if (nearby >= areaCap) {
         continue;
       }
       // Re-validate the point at spawn time. Seed points already passed the
@@ -17574,6 +21147,10 @@ import {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.stunned = Math.max(0, enemy.stunned - dt);
+      updateEnemyBurn(enemy, dt);
+      if (enemy.dead) {
+        continue;
+      }
       if (maybeResetAbandonedEnemyCombat(enemy)) {
         continue;
       }
@@ -17826,6 +21403,10 @@ import {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.stunned = Math.max(0, enemy.stunned - dt);
+      updateEnemyBurn(enemy, dt);
+      if (enemy.dead) {
+        continue;
+      }
 
       const target = nearestCombatTarget(enemy);
       enemy.targetId = target.id;
@@ -18192,18 +21773,14 @@ import {
     // Apply XP progress loss before the recovery flows below restore vitals.
     const penalty = applyDeathLevelPenalty();
     if (localPlayerInArenaActivity()) {
+      // The outcome overlay shown by exitLocalArenaActivity reports the loss.
+      pendingActivityDeathPenalty = penalty;
       endCrownringArenaActivity("defeat");
-      if (penalty) {
-        showBanner("Recovered at Crownford infirmary - level " + penalty.level + " progress lost", 3.2);
-      }
       return;
     }
     if (localPlayerInDungeonActivity()) {
-      const def = activeDungeonDefinition();
+      pendingActivityDeathPenalty = penalty;
       endDungeonActivity("defeat");
-      if (penalty) {
-        showBanner(def.defeatCopy + " - level " + penalty.level + " progress lost", 3.2);
-      }
       return;
     }
     if (game.mode === "exploration" || online.connected) {
@@ -18367,7 +21944,9 @@ import {
 
       const distance = Math.hypot(player.position.x - potion.position.x, player.position.z - potion.position.z);
       if (distance < potion.pickupRadius) {
-        const wantsStore = player.health >= player.maxHealth && !!storedPotionFromDrop(potion);
+        const wantsStore = player.health >= player.maxHealth
+          && !!storedPotionFromDrop(potion)
+          && potionStorableNow(potion);
         if (wantsStore && !canStorePotionDrop(potion)) {
           if (!potion.storageNoticeCooldown || potion.storageNoticeCooldown <= 0) {
             potion.storageNoticeCooldown = 1.8;
@@ -18449,19 +22028,48 @@ import {
       if (keys.has("KeyE")) game.cameraYaw -= dt * 1.8;
     }
     const mounted = isPlayerMounted();
-    const shoulder = new THREE.Vector3(0.95, mounted ? 4.9 : 4.1, mounted ? 9.2 : 7.7);
-    shoulder.applyAxisAngle(up, game.cameraYaw);
-    const cameraAnchor = tmpVec.copy(player.position);
-    if (game.mode === "exploration") {
-      cameraAnchor.y = explorationGroundWorldY(player.position.x, player.position.z);
+    // Clamp at use so dismounting restores the full pitch range without
+    // snapping the stored value.
+    const pitch = mounted
+      ? clamp(game.cameraPitch, CAMERA_PITCH_MOUNTED_MIN, CAMERA_PITCH_MOUNTED_MAX)
+      : clamp(game.cameraPitch, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX);
+    const headHeight = mounted ? 1.85 : 1.35;
+    // Orbit distances reproduce the legacy shoulder offsets (0.95, 4.1, 7.7)
+    // and (0.95, 4.9, 9.2) at the default pitch.
+    const orbitDistance = mounted ? 9.69 : 8.18;
+    const shoulderX = mounted ? CAMERA_SHOULDER_X_MOUNTED : CAMERA_SHOULDER_X;
+    cameraShoulderVec.set(shoulderX, headHeight - Math.sin(pitch) * orbitDistance, Math.cos(pitch) * orbitDistance);
+    cameraShoulderVec.applyAxisAngle(up, game.cameraYaw);
+    const anchorY = game.mode === "exploration"
+      ? explorationGroundWorldY(player.position.x, player.position.z)
+      : 0;
+    const desired = tmpVec.set(player.position.x, anchorY, player.position.z).add(cameraShoulderVec);
+    // Terrain clearance: keep the camera above the ground both at the player's
+    // anchor and at the camera's own footprint (slopes can rise behind the
+    // player). When the clamp lifts the camera, lift the look target by the
+    // same amount so the requested view direction is preserved instead of
+    // flattening out. Shared activities (Crownring/dungeon floors at y 0) skip
+    // the footprint sample because their floors do not follow the sampler.
+    let minCameraY = anchorY + 0.75;
+    if (game.mode === "exploration" && !localPlayerInSharedActivity()) {
+      minCameraY = Math.max(minCameraY, explorationGroundWorldY(desired.x, desired.z) + 0.75);
     }
-    const desired = cameraAnchor.add(shoulder);
+    let lookLift = 0;
+    if (desired.y < minCameraY) {
+      lookLift = minCameraY - desired.y;
+      desired.y = minCameraY;
+    }
     camera.position.lerp(desired, 1 - Math.pow(0.00004, dt));
     const look = tmpVec2.copy(player.position);
     if (game.mode === "exploration") {
       look.y = explorationGroundWorldY(player.position.x, player.position.z);
     }
-    look.y += mounted ? 1.85 : 1.35;
+    look.y += headHeight + lookLift;
+    // Shift the look target by the same lateral shoulder offset (rotated into
+    // the yaw frame) so the view axis is parallel-shifted over the right
+    // shoulder instead of re-centering the character under the reticle.
+    look.x += shoulderX * Math.cos(game.cameraYaw);
+    look.z -= shoulderX * Math.sin(game.cameraYaw);
     camera.lookAt(look);
   }
 
@@ -18478,7 +22086,8 @@ import {
     const key = characterKey(player.character);
     const wizard = key === "wizard";
     const ranger = key === "ranger";
-    const usesMana = wizard || ranger;
+    const sentinel = key === "sentinel";
+    const usesMana = wizard || ranger || sentinel;
     const resourceValue = usesMana ? player.mana : player.guard;
     const resourceMax = usesMana ? player.maxMana : player.maxGuard;
     const guardPct = clamp(resourceValue / resourceMax, 0, 1);
@@ -18526,16 +22135,34 @@ import {
     }
     const tuning = combatTuningFor();
     updateAbilityLocks();
-    attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning" || player.attackKind === "arrow"));
-    blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : ranger ? player.rollTimer > 0 : player.blocking);
+    attackIcon.classList.toggle("active", player.attacking && (player.attackKind === "slash" || player.attackKind === "lightning" || player.attackKind === "arrow" || player.attackKind === "thrust"));
+    blockIcon.classList.toggle("active", wizard ? player.attacking && player.attackKind === "burst" : ranger ? player.rollTimer > 0 : sentinel ? player.attacking && player.attackKind === "shove" : player.blocking);
     blockIcon.classList.toggle("ready", (wizard && hasAbility("burst") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= tuning.burstManaCost)
-      || (ranger && hasAbility("roll") && player.secondaryCooldown <= 0 && player.mana >= tuning.rollFocusCost));
-    potionIcon.classList.toggle("active", player.attacking && (wizard ? false : ranger ? player.attackKind === "pierce" : player.attackKind === "bash"));
+      || (ranger && hasAbility("roll") && player.secondaryCooldown <= 0 && player.mana >= tuning.rollFocusCost)
+      || (sentinel && hasAbility("shove") && !player.attacking && player.secondaryCooldown <= 0 && player.mana >= tuning.shoveVigorCost));
+    potionIcon.classList.toggle("active", player.attacking && (wizard ? false : ranger ? player.attackKind === "pierce" : sentinel ? player.attackKind === "moulinet" : player.attackKind === "bash"));
     potionIcon.classList.toggle("ready", wizard
       ? hasAbility("potion") && player.potionCooldown <= 0
       : ranger
       ? hasAbility("pierce") && !player.attacking && player.attackCooldown <= 0 && player.mana >= tuning.pierceFocusCost
+      : sentinel
+      ? hasAbility("moulinet") && !player.attacking && player.attackCooldown <= 0 && player.mana >= tuning.moulinetVigorCost
       : hasAbility("bash") && !player.attacking && player.attackCooldown <= 0 && player.guard >= tuning.bashGuardCost);
+    const resolveActive = !wizard && !ranger && !sentinel && player.resolveTimer > 0;
+    const utilityAffordable = wizard ? player.mana >= tuning.frostbindManaCost : ranger ? player.mana >= tuning.partingFocusCost : sentinel ? player.mana >= tuning.hookVigorCost : true;
+    const payoffAffordable = wizard ? player.mana >= tuning.stormcrownManaCost : ranger ? player.mana >= tuning.heartseekerFocusCost : sentinel ? player.mana >= tuning.skewerVigorCost : player.guard >= tuning.sweepGuardCost;
+    utilityIcon.classList.toggle("active", resolveActive || (player.attacking && (player.attackKind === "frostbind" || player.attackKind === "parting" || player.attackKind === "hook")));
+    utilityIcon.classList.toggle("empowered", resolveActive);
+    utilityIcon.classList.toggle("ready", hasAbility(utilityAbilityId(key)) && player.utilityCooldown <= 0 && utilityAffordable && !((wizard || sentinel) && player.attacking));
+    payoffIcon.classList.toggle("active", player.attacking && (player.attackKind === "sweep" || player.attackKind === "stormcrown" || player.attackKind === "heartseeker" || player.attackKind === "skewer"));
+    payoffIcon.classList.toggle("ready", hasAbility(payoffAbilityId(key)) && player.payoffCooldown <= 0 && !player.attacking && player.attackCooldown <= 0 && payoffAffordable);
+    updateCooldownOverlay(utilityCooldownFill, utilityCooldownTime,
+      resolveActive ? 0 : player.utilityCooldown,
+      wizard ? tuning.frostbindCooldown : ranger ? tuning.partingCooldown : sentinel ? tuning.hookCooldown : tuning.resolveCooldown,
+      resolveActive ? player.resolveTimer : 0);
+    updateCooldownOverlay(payoffCooldownFill, payoffCooldownTime,
+      player.payoffCooldown,
+      wizard ? tuning.stormcrownCooldown : ranger ? tuning.heartseekerCooldown : sentinel ? tuning.skewerCooldown : tuning.sweepCooldown);
   }
 
   function tick() {
@@ -18560,9 +22187,11 @@ import {
       }
       updatePotions(dt);
       if (game.mode === "exploration") {
+        updateBellwaterDrainage();
         if (!localPlayerInSharedActivity()) {
           updateExplorationGoals();
           updateQuestItems(dt);
+          updateHerbNodes(dt);
           updateHorse(dt);
           updateTalkPrompt();
         } else {
@@ -18591,6 +22220,7 @@ import {
           banner.classList.remove("visible");
         }
       }
+      updateActivityResult(dt);
     } else {
       talkPrompt.hidden = true;
       updateParticles(dt);
@@ -18639,6 +22269,10 @@ import {
       if (event.repeat && event.code !== "Space" && questDialog.hidden) return;
       if (!questDialog.hidden) {
         handleQuestDialogKey(event);
+        return;
+      }
+      if (!benchDialog.hidden) {
+        handleBenchDialogKey(event);
         return;
       }
       if ((event.code === "Enter" || event.code === "NumpadEnter")
@@ -18713,6 +22347,8 @@ import {
           startKnightBash();
         } else if (player.character === "ranger") {
           startRangerPierce();
+        } else if (player.character === "sentinel") {
+          startSentinelMoulinet();
         } else {
           startAttack();
         }
@@ -18747,7 +22383,7 @@ import {
     });
 
     window.addEventListener("mousedown", event => {
-      if (game.state !== "playing" || !questDialog.hidden || chat.open) return;
+      if (game.state !== "playing" || !questDialog.hidden || !benchDialog.hidden || chat.open) return;
       if (event.button === 0) {
         startAttack();
       }
@@ -18760,6 +22396,8 @@ import {
           startKnightBash();
         } else if (player.character === "ranger") {
           startRangerPierce();
+        } else if (player.character === "sentinel") {
+          startSentinelMoulinet();
         } else {
           dropWizardHealthPotion();
         }
@@ -18802,9 +22440,32 @@ import {
       if (chat.open) return;
       if (document.pointerLockElement === document.body) {
         game.cameraYaw -= event.movementX * 0.0026;
-        game.cameraPitch = clamp(game.cameraPitch - event.movementY * 0.0014, -0.45, -0.05);
+        game.cameraPitch = clamp(game.cameraPitch - event.movementY * 0.0022, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX);
       }
     });
+
+    // TEMP smoke-test hooks (pointer-lock mousemove cannot be synthesized).
+    window.__dbgCam = (pitch, yaw) => {
+      if (Number.isFinite(pitch)) game.cameraPitch = pitch;
+      if (Number.isFinite(yaw)) game.cameraYaw = yaw;
+      return { pitch: game.cameraPitch, yaw: game.cameraYaw };
+    };
+    window.__dbgShoot = () => { startAttack(); return player.attackKind; };
+    window.__dbgInfo = () => ({
+      state: game.state,
+      pitch: game.cameraPitch,
+      yaw: game.cameraYaw,
+      cam: camera.position.toArray(),
+      playerPos: player.position.toArray(),
+      attackAim: { yaw: player.attackAimYaw, pitch: player.attackAimPitch },
+      focus: player.focus,
+      character: player.character,
+      projectiles: game.playerProjectiles.map(p => ({ pos: p.group.position.toArray(), vel: p.velocity.toArray() }))
+    });
+    window.__dbgProject = (x, y, z) => {
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      return [v.x, v.y, v.z];
+    };
 
     document.addEventListener("pointerlockchange", () => {
       const wasPointerActive = game.pointerActive;
@@ -18854,6 +22515,8 @@ import {
             startKnightBash();
           } else if (player.character === "ranger") {
             startRangerPierce();
+          } else if (player.character === "sentinel") {
+            startSentinelMoulinet();
           } else {
             dropWizardHealthPotion();
           }

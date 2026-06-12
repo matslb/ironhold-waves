@@ -97,6 +97,7 @@ Done evidence:
 - Third ambience feedback pass: removed the continuous procedural ambience/hum entirely. Future ambience should either remain sparse one-shots or use vetted free-to-use assets with documented licenses.
 - Music hum feedback pass: removed persistent low/fifth/high music oscillators; music is now scheduled one-shot phrases and brief bass ticks only.
 - Composition pass: added procedural motif themes for the homestead, meadow villages, mountain village, desert village, swamp village, Crownford, Crownring, wilderness biomes, and skirmishes.
+- Composition pass 2 (medieval voicing): themes are now modal question/answer phrase pairs (antecedent ends off-tonic, consequent resolves over an open-fifth pluck) with occasional grace notes/turns. New one-shot voices: lute (filtered triangle+square pluck with brightness decay), recorder flute (sine, soft attack, per-note vibrato LFO), shawm (bandpassed sawtooth, martial themes only), and tabor (muffled noise tap + low thump) on Crownford/Crownring/skirmish strong beats. Biome identities: homestead warm mixolydian lute/flute, meadow lilting, mountain austere flute over pentatonic fifths, desert dark double-harmonic with sparse ornament, swamp low and hesitant with internal rests, briar dorian with ornaments, Crownford slow stately processional, Crownring/skirmish martial shawm+tabor. No drones: every note has a stop scheduled at creation, durations capped at 1.4s, max ~24 sources per phrase (budget 30, max 8 concurrent measured), and phrases keep at least ~1.1s of silence before the next phrase window. Music bus level unchanged; pause fade/resume-with-fresh-phrase verified.
 - Pause/menu pass: music bus now fades out while gameplay is paused or in menus and resumes from a fresh phrase when play continues.
 - Dialogue pass: NPC conversations now trigger subtle short procedural voice blips, with pitch profiles varied by NPC biome/name.
 - Footstep mix pass: player, horse, remote-player, enemy, and spider walking cues were lowered heavily while leaving attacks, hits, and UI cues unchanged. Keep steps as low background texture unless later playtests ask for more presence.
@@ -479,7 +480,277 @@ Acceptance:
 - Asking Steward Bryn about rewards points to Crownring class kits and the first-bell training boon.
 - Asking generic Briarfall or city villagers about rewards returns area-level guidance.
 
-## Phase 1: Remove Arena As A Top-Level Mode
+### T-020: Player-Count World Population Scaling
+
+Primary owner: Gameplay Systems Agent
+
+Reviewers: Multiplayer / Netcode Agent, Rendering / Performance Agent
+
+Status: `[~] Active`
+
+Scope:
+- Multiplayer sessions ran out of enemies: Wilds Director refill waits (T-013 vocabulary: refill delay, jitter, tier delay multipliers, cleared-zone pushback) were fixed regardless of how many players were killing, and the director refilled at most 1 seed point per 1.25s tick. The host now scales overworld respawn pacing by the active player count.
+- Player count rule (host-authoritative): 1 (the host's local player) + every remote member whose replicated state says `playing === true`, EXCLUDING arena/dungeon `participants` and `pendingParticipants` (queued late joiners) — shared activities spawn their own waves, and the overworld director is fully paused while one runs (`updateEnemies` routes to the activity loop), so the exclusion is a documented invariant rather than a hot path. Count is re-read every director tick (1.25s), so joins/leaves and players entering/leaving activities take effect immediately, including on waits already in progress (records now store `scheduledAt`; the multiplier compresses the remaining wait at check time). Joiners never run the director.
+- Formula: every pending refill wait (base delay + jitter + tier multiplier + cleared-zone pushback, all unchanged at rest) is multiplied by `1 / (1 + WILDS_PLAYER_REFILL_FACTOR * (count - 1))`, count clamped to `WILDS_PLAYER_COUNT_MAX`. Per-tick spawn budget grows `+WILDS_PLAYER_SPAWNS_PER_TICK` per extra player (hard max `WILDS_SPAWNS_PER_TICK_MAX`), and the per-pocket area cap grows `+WILDS_PLAYER_AREA_CAP_BONUS` per extra player (hard max `WILDS_AREA_CAP_MAX`).
+- Existing protections untouched: `WILDS_MIN_PLAYER_DISTANCE` 80 from EVERY player (local + remotes), tier bands, biome rosters, seed-point-only spawning, and road/blocked re-validation are unchanged. Cleared-zone pushback still applies; it just compresses with the same multiplier (max 180s solo -> ~124s at 2 players -> ~77s at 4+).
+- Solo behavior is exactly unchanged (all knobs neutral at count 1); solo pacing was not retuned. T-013's solo pacing did not look starved in review, so no flag raised.
+
+Tuning knobs (all in `src/config/gameplay.js` with the other Wilds Director constants):
+- `WILDS_PLAYER_COUNT_MAX = 4` — extra members beyond 4 do not accelerate further.
+- `WILDS_PLAYER_REFILL_FACTOR = 0.45` — wait multiplier 1.0 / 0.69 / 0.53 / 0.43 at 1/2/3/4 players (avg tier-1 wait 375s -> 258/197/159s; tier-3 208s -> 144/110/89s).
+- `WILDS_PLAYER_SPAWNS_PER_TICK = 1` and `WILDS_SPAWNS_PER_TICK_MAX = 3` — refill throughput 0.8/1.6/2.4/2.4 spawns per second at 1/2/3/4 players.
+- `WILDS_PLAYER_AREA_CAP_BONUS = 1` and `WILDS_AREA_CAP_MAX = 13` — pocket density 10/11/12/13 at 1/2/3/4 players.
+
+Done evidence:
+- `src/main.js`: `wildsActivePlayerCount()` + `wildsPlayerDelayMultiplier()` (new, beside the Wilds Director block), `updateWildsDirector` (scaled due time, spawn budget, area cap), `scheduleWildsRespawn` + self-heal branch + `spawnWildsEnemy` (`scheduledAt` bookkeeping), seed-point record in `seedExplorationEnemy` (`scheduledAt` field). `src/config/gameplay.js`: six knobs above.
+- Performance note (Rendering / Performance review): the structural population ceiling is unchanged at any player count — enemies only respawn at the 91 build-time seed points (one live enemy per seed), under the absolute `WILDS_ENEMY_CAP = 96`. So max live enemies at 2/3/4 players = 91, identical to solo; scaling only raises how quickly steady-state occupancy recovers toward that existing budget. Worst-case world snapshot (~91 enemies x ~23 fields ~= 35-40KB JSON at the existing 0.12s host send cadence), host AI tick cost, and joiner draw calls are therefore the same worst case as before this change. Director tick overhead added: one O(remotePlayers) count + constant math per 1.25s tick.
+- Verification: `npm run check` green, `git diff --check` clean, scaling math simulated via node against the exported tuning (table above), solo browser smoke on 127.0.0.1:8765 (resume -> exploration HUD, movement, multiple director ticks, `window.__errs` empty).
+
+Remaining work:
+- Two-client smoke (host + 4-digit-code joiner): confirm faster refills with 2 playing members, count dropping when the joiner enters Crownring/dungeon or returns to menus, and snapshot responsiveness during a refill burst.
+- Multiplayer playtest of the pacing numbers (especially `WILDS_PLAYER_REFILL_FACTOR` and whether tier-3 waits at 4 players feel too fast) before any retune.
+
+Acceptance:
+- With 2+ players roaming, emptied areas refill noticeably faster than solo without enemies appearing on or next to any player.
+- Solo refill pacing is byte-identical to T-013 behavior.
+- Players in menus, queued for, or inside Crownring/dungeon activities do not raise the overworld population target.
+- Live enemy count never exceeds `WILDS_ENEMY_CAP` regardless of room size.
+
+### T-019: Potion Crafting And Herb Gathering
+
+Primary owner: Game Director / Integrator (this slice implemented directly; RPG Mechanics owns recipe/cap tuning, World & Content owns bench/herb placement, Multiplayer / Netcode reviews the shared-draught path, UI / UX owns the bench dialog and HUD herb count)
+
+Status: `[~] Active`
+
+Scope (three connected potion-acquisition paths):
+1. Wizard Healing Draughts shared with everyone: wounded players still consume them on contact; full-health players can now pocket a draught into a free unlocked pouch slot. Rule: a pocketed draught becomes a standard stored health potion carrying the draught's heal amount (the shared splash/radius support behavior does not carry); it is drunk later with `H` like any pouch potion. To stop the caster vacuuming a support drop the moment it lands, a draught must settle on the ground for `WIZARD_DRAUGHT_POCKET_DELAY` (2s, `src/config/gameplay.js`) before anyone may pocket it.
+2. Potion benches in every settlement: all six biome villages get a brewing work table beside the well, and Crownford gets one on the beacon plaza diagonal (clear of the four waystones, the map table, and the road arms). `E` opens a keyboard-first crafting dialog (same pattern as the quest dialog: W/S or arrows select, Enter or 1-2 brews, Esc/E closes; pointer lock stays engaged; Esc layering matches).
+3. Gatherable valley herbs: ~51 deterministic herb tufts seeded from the shared world random as patches of 2-3 (9 meadow patches of 2-3 tufts plus 4 patches of 2 per outer biome; meadow stays densest as the starter biome - measured 20 meadow / 8-8-8-7 outer on the live seed). Patch anchors slide toward the nearest tree/rock collider so herbs hug treelines and boulders instead of uniform open-field scatter; per-tuft `isExplorationBlocked` checks keep every node off roads, lakes, villages, and colliders. Walk-over pickup, respawn 80-115s, capped at `HERB_POUCH_CAP` (9). Stored as `progression.exploration.herbs` (+ `herbHintSeen`), normalized in `normalizeProgression`, so the count survives save/load. Herb count shows under the potion pouch HUD panel once you carry any. (Density raised from the original ~24 singles after playtest feedback.) Tuning observation: with patches of 2-3, filling the 9-cap takes ~3-4 patch stops - not trivially instant, so the cap and respawn pacing were deliberately left as shipped; revisit together if a later playtest still wants more.
+
+Recipes (first set, deliberately small; no currency introduced):
+- 3 herbs -> Field Potion (+32 health) into a free pouch slot.
+- 7 herbs -> Full Recovery Potion into a free pouch slot.
+- Pouch full + wounded: the brew is consumed immediately at the bench. Pouch full + unhurt: the bench refuses (herbs are never wasted, no dupe window).
+- Rationale: 3:1 matches existing field-potion strength (28-34 heals); 7-of-9-cap makes the full potion a real save-up choice; gathered herbs give no XP so they stay a material, not an XP farm.
+
+Done evidence:
+- `storedPotionFromDrop` now converts wizard draughts; `potionStorableNow` enforces the settle delay on both the solo path (`updatePotions`) and the host-approval path (`handlePotionPickupRequest`). Pickups stay host-authoritative: the host removes the potion once (`removePotionById`) before acknowledging, so a second concurrent claim finds no potion and is dropped.
+- Pre-existing netcode bug fixed while extending this path: the host's `potionPicked` acknowledgment had a duplicate `kind` key (`kind: "potionPicked"` then `kind: potion.kind`), so the second value clobbered the message kind and joiners never dispatched `handlePotionPicked` (no heal/storage applied on the requester). The drop type now rides an additive `potionKind` field and `storedPotionFromMessage` reads it.
+- World: `addPotionBench` (biome-styled frame/top, mortar, bottles, kettle, drying rack) called from `addExplorationVillage` and `addCrownfordCity`; terrain-conforming via `makeDecorGroup`/`setExplorationLocalGroundPosition`; `addExplorationCollider(.., 1.05, "decor")` per bench. Benches register into `game.exploration.potionBenches` (cleared in `clearExplorationWorld`).
+- Herbs: `createHerbNode`/`addHerbClusters`/`updateHerbNodes` in `src/main.js`; visuals are low leafy tufts with pale blossoms (shared materials, cached primitive geometry, NO point lights, no glow ring) so they read as plants, not quest items. The one-time greenfire "herbs" QUEST items are untouched and visually distinct (glowing teal bloom + ring + light).
+- UI: `#benchDialog` (reuses `.quest-dialog` panel styling + new `.bench-option` rows) and a `#herbReadout` row in the potion pouch panel in `index.html`/`styles/app.css`; talk prompt shows `E Brew - Potion Bench` when no NPC is nearer; first herb pickup shows a discovery banner pointing at village benches; Help gained an "Herbs And Potion Benches" section and an updated Healing Draught line.
+- Input wiring: the bench-open E hook is a dedicated `keydown` listener registered next to `handleBenchDialogKey` rather than a branch inside the main input handler (that handler is being concurrently rewritten by the T-025 session and a branch added there was clobbered twice by racing full-file writes). The listener is guarded so it cannot double-fire: it skips when any dialog is open, when an NPC outranks the bench, or when `event.defaultPrevented` is set; `handleBenchDialogKey` in turn ignores already-consumed presses so the E that opens the dialog cannot immediately close it.
+- Multiplayer authority notes: brewing and herbs are pure local progression - no new message kinds, no shared drops spawned, nothing to dupe across clients (verified by code path: `brewBenchRecipe` mutates only `progression.exploration` and the local pouch, then `saveProgress`). Draught pocketing reuses the existing host-approved `potionPickup`/`potionPicked` request flow with additive fields only.
+- Performance note: herb nodes are a bounded array (~51 after the density raise) scanned with cheap squared-distance checks in `updateHerbNodes` (same cost class as the existing quest-item loop; no grid needed at this size - regrid only if a future pass goes into the hundreds); the cover-nudge at seed time uses the existing collider grid (`explorationCollidersNear`) and runs once per patch during world build, not per frame; benches add ~16 shared-material meshes per settlement (7 total) and one collider each; `nearestPotionBench` scans 7 entries only inside `updateTalkPrompt`. No new lights, textures, or per-frame allocations.
+- Verification: `npm run check` green, `git diff --check` clean. Full local browser smoke run on 127.0.0.1:8765: herb walk-over gather increments the HUD count and survives a reload + Resume; bench dialog opens with E at every brew branch exercised (Field brew into free slot 9->6 herbs, Full Recovery refused at 6/7 herbs with no herbs spent, pouch-full + unhurt refusal, pouch-full + wounded drinks warm at the bench, W/S + Enter on Step Away closes, Esc closes without leaking into the session menu); a settled wizard draught pocketed at full health as a stored +30 potion and a second draught healed a wounded player on contact; the greenfire herbs quest ran 1/6 -> 6/6 to "ready - return to Mira" alongside the new system with the gatherable pouch untouched at 0; `window.__errs` stayed empty throughout; temp debug hook removed after the run.
+
+Remaining work:
+- Two-client smoke of the draught pocket path (joiner requests store, host approves, `potionKind` conversion lands) - reasoned through in code, not yet run live.
+- Creative / Narrative pass: fold a bench mention into Mira's `herbs` dialogue pack lines (`src/content/dialogue.js` is the Claude session's lane; the current discovery hooks are the first-pickup banner, the bench prompt, and Help).
+- Balance pass on herb density/respawn and the 3/7 herb costs after playtests.
+
+Acceptance:
+- A full-health player can pocket a settled wizard draught into a free unlocked slot; wounded players still consume on contact; no double-claims solo or online.
+- Every settlement and Crownford has a readable, collidable bench near the well/plaza that opens with E and brews per the recipes above.
+- Herb count persists through save/load, caps at 9, and the greenfire quest still completes.
+
+### T-024: Crownford Wall Terrain Fit
+
+Primary owner: World & Content Agent (Game Director / Integrator session)
+
+Reviewers: Rendering / Performance Agent, QA / Playtest Agent
+
+Status: `[x] Done`
+
+Diagnosis:
+- `addCurtainWall` sampled terrain ONCE at each segment center, and Crownford's 30-unit wall runs sit on a ±37 ring whose corners are ~52-60 units from the preset flat-zone center (12,132) r53 — inside/past the 53→71 blend band where real slope begins. Probed in-browser: ~2.5 units of ground relief along the east wall line; the worst segment floated ~1.3 at one end while the adjacent run buried ~2 units, with a hard parapet seam at their junction. Crownring's smaller ring (corners ~38-47 from its r46 zone) only grazes its blend band but shares the same code path.
+
+Decision: CONFORM the wall to the hill, not move the city. The relief under the ring is workable, old-world walls climbing terrain fits the civic-castle fantasy, and moving the preset flat zone would reshape the baked terrain mesh and risk everything placed relative to the city.
+
+Done evidence:
+- `addCurtainWall` now samples the ground at 5 points along each run and, where the run crosses real slope, splits into short terraced pieces (per-piece terrain sample at the piece's own (x,z), ~0.55 max height step, max 6 pieces, min 4-unit piece). Each piece's battered base course continues 1.7 below grade (boardwalk-post pattern) so downhill ends stay rooted; per-piece merlon rows make the parapet step deliberately. Flat runs stay a single piece with the old silhouette.
+- `addWallTower` gained a below-grade footing cylinder so towers on blend slopes show no gap under the downhill side of the shaft.
+- Colliders unchanged by design: wall plan positions did not move and `addExplorationLineColliders`/`addExplorationCollider` footprints are 2D radial. Walked the wall in-browser: blocking holds along the stepped run; the south gatehouse opening still passes.
+- Gate/road alignment verified: the south gatehouse is provably inside the flat radius for all seeds (max city offset + 37 < 53) and the road runs through the arch at grade (walked through; Crownford discovery fired).
+- Before/after screenshots: SE corner crossing and east wall (floating base + parapet seam before; seated terraced steps after), plus a Crownring wall check (flat under its ring this session; the shared fix covers seeds where its corners poke the blend band).
+- Verification: `npm run check` green, `git diff --check` clean, `window.__errs` empty after resume + teleports, this slice's temp debug hooks removed (other in-flight workstreams' `__dbg*` hooks left untouched).
+- Performance note: zero cost for flat runs (same mesh count; the deeper base course reuses one cached box geometry per wall size). Sloped runs add 2 boxes per extra terrace piece (typically 2-6 pieces on the handful of segments that cross slope — low tens of meshes worldwide); piece lengths are `length/pieces` so geometry stays cache-shared across same-size walls, and merlon totals are unchanged.
+
+Remaining work:
+- None for this slice. If a future terrain retune pushes more relief under either city ring, the walls adapt automatically; props inside the rings remain covered by the preset flat zones.
+
+### T-025: Full Ability Kit UI And Animations
+
+Primary owner: Game Director / Integrator (Cursor session), delegated to UI / UX Agent and Gameplay Systems Agent
+
+Reviewers: Rendering / Performance Agent (budget rules baked into the animation ticket), QA / Playtest Agent (browser smoke by the integrator)
+
+Status: `[~] Active`
+
+Done evidence:
+- UI slice: the action dock now shows all five ability slots. New `#utilityIcon` (F) and `#payoffIcon` (C) slots carry per-class hand-drawn SVG icons (knight: shield-rays/sweep arc; wizard: snowflake/storm crown; ranger: backward arrow/pierced heart), `title` names from `abilityDisplayNames`, locked styling with gold `LV n` badges from `abilityUnlockLevels`, ready/active classes mirroring the `startUtilityAbility`/`startPayoffAbility` gating, a `scaleY` cooldown shade with remaining-seconds text driven by `player.utilityCooldown`/`player.payoffCooldown`, and a gold `.empowered` glow with remaining seconds while Warden's Resolve is up. Touch controls untouched (deferred scope); Help already documented F/C.
+- Animation slice: every level 5+ ability has a distinct local + remote animation using only existing action replication. Sweeping Cut: flat ~170-degree yaw travel with a widened horizontal slash arc and tucked shield. Warden's Resolve: shield-raise flourish plus a persistent pulsing gold ground ring (built once per knight model, local and remote, 4s remote timer from the `resolve` action). Frostbind: cold blue-white castGlow tint and staff thrust on release. Crown of Storms: arms-overhead charge, glow swell above the hat, crown-of-sparks at the hit frame (also fired remotely at the replicated t=0.45). Heartseeker: deliberate anchored 0.7s draw with aim hold, distinct from quick-shot swings. Parting Shot: new 0.3s snap-shot/kick pose (`player.partingPoseTimer`) blended with the backward spring. Hit-frame timings, damage, costs, cooldowns, message kinds, and SFX hooks unchanged.
+- Integrator verification: `npm run check` green, `git diff --check` clean, browser smoke on a local server for all three classes (god mode for unlocks, plus a non-god host alias to verify real locked badges and the "unlocks at level N" banner). Mid-animation canvas captures confirmed sweep windup/travel, resolve aura ring, frostbind staff thrust with icy glow, stormcrown overhead charge with expanding ring and spark fall-off, heartseeker draw/release, parting backward spring. `window.__errs` stayed empty across all sessions.
+- Performance note: per frame, the two new slots cost one transform write plus class toggles (seconds text written only on change). New meshes: +1 aura ring per local knight, +2 per remote knight, +2 per remote wizard, all built once at model build from cloned existing materials; zero per-frame allocations; no new lights.
+
+Coordination note:
+- RESOLVED with the Sentinel workstream: the Sentinel owner extended this slice's dock wiring with `hook`/`skewer` mappings in `utilityAbilityId()`/`payoffAbilityId()`, sentinel F/C dock icons, vigor affordability, hook/skewer active kinds, and cooldown durations, and added the local F/C cast branches in `startUtilityAbility`/`startPayoffAbility`. Integrator verified in god mode: five sentinel slots render (thrust/shove/moulinet/billhook/skewer), F fires Billhook Pull and C fires Skewer Charge with working cooldown shades/ready/active states, no console errors.
+
+Remaining work:
+- Two-client smoke for the remote ability poses/aura (sweep, resolve ring, frostbind, stormcrown sparks, heartseeker draw, parting) and the dock states on a joiner.
+- Screenshot QA at 1366x768 and ultrawide for dock overflow with five slots.
+
+### T-026: Ability Theme Audit And Help Descriptions
+
+Primary owner: UI / UX Agent + Creative / Narrative Agent (one session), with Gameplay Systems / RPG Mechanics hats for the two functional fixes below
+
+Status: `[~] Active` (descriptions shipped; functional changes await playtest sign-off)
+
+Help descriptions:
+- New `abilityDescriptions` export in `src/content/rpg.js` (co-located with `abilityDisplayNames`): one mechanics-first sentence per ability id in `abilityUnlockLevels`, all four classes covered. `buildHelpContent()` renders it in Classes & Abilities as `[key] Name - description. Unlock text.`; a guide entry's hand-written `note` in `helpClassGuide` is now the fallback for ids without a description, so existing notes were left in place.
+
+Audit verdicts (description follows the implementation in every case):
+- OK as-is: slash, block, bash, resolve, sweep, lightning, burst, potion, frostbind, stormcrown, arrow, roll, parting, heartseeker, thrust, shove, moulinet, skewer.
+- `pierce` (Flaming Arrow) - FUNCTION CHANGED: the arrow pierced a line of enemies (canon identity) but "flaming" was pure tint/SFX. Added a small ember burn on each enemy the shaft passes through: new tuning keys `pierceBurnTicks` (3) / `pierceBurnTickDamage` (2) / `pierceBurnTickInterval` (0.8s) in `defaultCombatTuning`, base `pierceDamageMin` shifted 32 -> 30 to keep the hit near value-neutral (net ~+4 per enemy over 2.4s). Host-authoritative: burns are set only where pierce damage already resolves (local flaming-projectile hits in the projectile loop; the remote `pierce` branch of `applyRemoteActionToEnemies`), tick via `updateEnemyBurn` in both enemy update loops, and apply damage through `damageEnemy`, so death/rewards/replication ride the existing path. No message shape changes; burns refresh rather than stack. Playtest note: watch line-clear value vs Quick Shot spam and whether 3 burn ticks of hit feedback read as fire or as noise.
+- `hook` (Billhook Pull) - FUNCTION FIXED (missing local cast): everything was wired (HUD F slot, `performSentinelHook`, hit-frame timing, remote `hook` action, sfx) but `startUtilityAbility()` had no sentinel branch, so pressing F did nothing for sentinels. Added the branch (vigor cost + `hookCooldown` from tuning, 0.55s swing matching the remote action duration). Playtest note: first time the ability is actually castable; cost/cooldown numbers are the sentinel owner's to retune.
+- Flagged, not changed: the `helpClassGuide` sentinel note says Billhook Pull "hooks a lane of enemies" but the implementation hooks only the nearest enemy in the cone; the new description says "nearest enemy" and now takes precedence in Help, so the stale note no longer displays. Left the note text itself to the sentinel owner.
+
+Verification: `npm run check` green, `git diff --check` clean, Help panel screenshots per class on the local dev server.
+
+### T-023: Activity Outcome Presentation
+
+Primary owner: UI / UX Agent (Game Director session)
+
+Support: Gameplay Systems, Multiplayer / Netcode, Creative / Narrative, Sound, QA / Playtest
+
+Status: `[~] Active` (solo verified; two-client smoke remaining)
+
+Scope:
+- Arena and shared-dungeon endings (victory, defeat, withdrawal) were presented only as transient banners and an instant teleport, so the outcome was easy to miss. This slice adds a dedicated centered outcome panel (`#activityResult` in `index.html`, `.activity-result` in `styles/app.css`) that holds ~3.4-4.2s with an outcome title, an Ironhold-voiced flavor line, and a truthful reward summary, then fades back to exploration.
+
+Timing/teleport decision:
+- The world teleport still happens immediately inside `exitLocalArenaActivity`/`exitLocalDungeonActivity`; the overlay covers the cut and holds afterwards. Delaying the transition was rejected because the host-authoritative state machine (snapshots, spectator moves, queued late joiners, room phases) keys off the transition completing; covering the cut is robust for solo, host, and joiner alike. The player is never frozen: they are already at a safe return point (infirmary / entrance / pre-entry spot) behind the panel, the panel is `pointer-events: none` and z-indexed under the pause overlay, so it can never trap input, fire world actions underneath, or block Escape/pause.
+
+How outcomes are derived (no new message kinds or fields):
+- Solo/host: `endCrownringArenaActivity`/`completeDungeonActivity`/`endDungeonActivity` -> `exitLocal*Activity(reason, endInfo)` with the live activity state.
+- Joiner personal defeat/yield: the local death/Y-key path runs the same end functions before any network round trip, so a player who personally fell sees the defeat presentation even if the rest of the room later clears (the host only removes them from `participants`; reward messages already exclude them).
+- Joiner pulled out by the host's end: `apply*ActivitySnapshot` captures pre-overwrite wave/phase/exitOpen and passes them to the exit. A run that ends in `defeat` while the local player is still standing presents as "The Match Is Called"/"The Bell Calls You Out" (run ended, no personal XP-loss claim) - `applyDeathLevelPenalty` floors health to 1, so a personal fall is flagged explicitly by the local end path (`endInfo.personalFall`) rather than inferred from health.
+- Queued late joiners are never in `participants`, never run the exit path, and get no overlay for a run they did not fight.
+- Reward truth: new local-only fields `localXpEarned` (arena + dungeon) and `localFirstClearBoon` (dungeon) accumulate exactly where grants land (`grantCrownringWaveReward`, `handleArenaReward`, `applyDungeonReward`) and survive snapshot overwrites for the same activityId. The overlay prints only captured grants, so it cannot misreport or double-claim; the redundant dungeon clear banner/chime in `applyDungeonReward` was folded into the overlay.
+- Arena semantics: leaving at the intermission bell (exitOpen) presents as the victory/claim moment ("The Crowd Stands For You" + waves cleared + purse kept); mid-wave `Y` presents as withdrawal with the current wave purse forfeited; defeat presents the infirmary wake plus the current-level XP wipe when one applied. Dungeon copy is per-`dungeonId` via a `result` block in `dungeonDefinitions`.
+- Audio reuses existing one-shots at presentation time: `arenaMilestone` (victory), `arenaDefeat` (personal fall), `arenaYield` (withdrawal/run ended). No new loops or drones.
+
+Done evidence:
+- Solo browser smoke on the local dev server (god-mode session): arena mid-wave yield, arena defeat at the infirmary, arena wave clear + intermission leave (victory, +26 XP purse shown from real grants), Bellwater clear (+80 XP + first-clear boon row), Bellwater second clear (boon row correctly absent), Bellwater defeat with and without the level-progress-lost row, Bellwater yield, Siltwell yield (per-dungeon copy). Overlay fades back to exploration with HUD live; pause menu opens above the overlay mid-hold. No console errors; `npm run check` and `git diff --check` green; temp debug hooks removed.
+
+Remaining work:
+- Two-client smoke: joiner personal fall while host clears (divergent overlays), host defeat pulling a surviving joiner out ("run ended" variant), queued late joiner seeing no overlay, and reward-message/snapshot ordering on a real broker.
+- Optional follow-up: an explicit intermission claim/continue choice UI (this slice presents outcomes; it does not add a mid-intermission decision panel).
+
+### T-027: Biome Ground / Sampler Unification
+
+Primary owner: Rendering / Performance Agent (Game Director / Integrator session). Support hats: World & Content (flat-zone/world-build ordering), Gameplay Systems (ground anchoring), QA / Playtest (per-biome tour). (Task was briefed as "T-025" but that number was already taken by the ability-kit slice.)
+
+Status: `[x] Done`
+
+Diagnosis:
+- The visible ground was baked in `setupExplorationWorld` with only the preset zones from `setupExplorationFlatZones()`, but two builders registered MORE flat zones AFTER that bake: `addExplorationLake` (6 lakes, strength 0.82) and `addExplorationVillage` (6 villages, strength 0.94) - the exact pattern the Beacon Writs slice removed from Crownford/Crownring. Post-bake zones move the walk-height sampler but not the rendered mesh, so characters sank where the mesh sat above the sampler and floated where it sat below.
+- The 4 biome ground patches (Amber Dunes sand, Dragonspine, Mistfen, Briarfall overlays in `createBiomePatchGeometry`) had the same desync: they conform per-vertex via `explorationRenderedGroundLocalY`, but were built inside `setupExplorationBiomes` before any lake/village zone existed - and the mountain/desert/swamp/briar villages sit ON those patches.
+- Measured in-browser pre-fix (raycast mesh vs sampler): meadow village edge +1.15 (knight waist-deep, screenshot), mountain village +1.14 (knight, NPC, and horse chest-deep on the patch, screenshot), first lake shore -1.68 (knight floating, screenshot), second meadow village +0.60, desert village +0.59.
+- Not desynced (already conform after zones at build time): roads (`createRoadRibbonGeometry` per-vertex), `addCityPavement`, swamp boardwalk/bog pools/oasis/markers (all built after villages), Crownford/Crownring (preset zones only, T-024/Beacon Writs).
+
+Decision (preset-zone over re-bake):
+- All flat zones now register BEFORE the bake. `setupExplorationWorld` draws the 6 lake and 6 village positions from the seeded stream into `lakeSpecs`/`villageSpecs` right after `setupExplorationBiomes`, registers their zones (same parameters, same order: presets -> lakes -> villages, so overlap lerp order is unchanged), then adds the 4 biome patches, then bakes the ground mesh; the specs are passed to `addExplorationLake`/`addExplorationVillage`, which no longer register zones. A post-hoc re-bake was rejected: it would leave everything sampled mid-build (lake surfaces, shore rocks, herb quest items) on the stale field and keep two sources of truth. Placement logic/ranges are byte-identical; hoisting the position draws reorders the seeded stream, which only shifts the per-session jitter that already changes on every resume (seed = room code, random per session).
+- Call sites fixed: `registerExplorationFlatZone` removed from `addExplorationLake` and `addExplorationVillage` (comments point at the pre-bake block); `addBiomePatch` calls moved out of `setupExplorationBiomes` into `setupExplorationWorld` after zone registration.
+
+Done evidence:
+- Post-fix in-browser scans (same raycast-vs-sampler probe): every village interior and lake shore delta is now in the 0.0001-0.04 range (was up to 1.7). Worst remaining deltas in ±30 scan boxes are 0.2-0.9 at box corners on raw steep slopes (lake-rim cliffs, preset blend seams) - verified to equal the bilinear-of-sampler mesh value, i.e. pre-existing 5.8-unit grid resolution, not a zone desync.
+- After screenshots: meadow village edge and Crownford plaza (knight/horse/NPCs feet-on-ground), lake shore (standing on the shoreline), mountain village (previously chest-deep spot now grounded), Amber Dunes sand patch, Briarfall village, Mistfen marsh, Dragonspine slopes near the roost (worst local delta 0.16). No z-fighting shimmer (patch/lake/road lifts and render orders untouched).
+- Crownford re-verified after the change (its preset zones and the T-024 wall are unaffected; plaza delta -0.005). `npm run check` and `git diff --check` green; `window.__errs` empty across all resumes; this slice's temp `__dbgT25` hook removed (other in-flight sessions' `__dbg*` hooks left untouched).
+- Performance: zero per-frame cost - zone registration moved earlier, patch/ground vertex sampling happens once at world build exactly as before (same vertex counts; the sampler loop just sees the full zone list during the bake).
+
+Remaining work:
+- Steep-slope mid-cell residual (sampler smooth vs 5.8-unit linear mesh, worst ~0.9 on lake-rim cliffs / preset blend seams) is a separate, pre-existing resolution issue; if it ever reads badly in play, options are densifying the terrain grid locally or walking on `explorationRenderedTerrainHeight`.
+- Lake/bog water discs are center-sampled single surfaces; their rims can meet sloped shores unevenly (waterline look, unchanged by this slice).
+
+### T-028: Three-Axis Camera Look, Reticle Aiming, Over-The-Shoulder Framing
+
+Primary owner: Gameplay Systems Agent (Game Director / Integrator session). Support hats: UI / UX (pointer-lock input, reticle, help text), Rendering / Performance (terrain clearance, no per-frame allocation).
+
+Status: `[x] Done`
+
+Scope shipped:
+- Full mouse-look: `game.cameraPitch` driven by mouse Y under pointer lock (sensitivity 0.0022, invert-free), clamped to -1.05..0.61 rad on foot and -0.85..0.38 rad mounted (clamped at use, so dismounting restores the full range). Same gating as yaw (chat/dialog/pause/pointer-lock-drop freeze both). Pitch resets to the default -0.34 rad alongside every existing yaw reset (arena/dungeon enter+exit, resets).
+- Camera rig: pitch orbits the player at the legacy-equivalent distance (8.18 on foot / 9.69 mounted); existing terrain clearance preserved and extended - the camera footprint is clamped >= ground + 0.75 and, when clamped, the look target lifts by the same amount so the requested view direction survives slopes.
+- Over-the-shoulder framing: camera rig AND look target shift laterally to the player's right (`CAMERA_SHOULDER_X` 1.15, 1.45 mounted) so the character sits left of screen center with a clear sight line. Reticle raised to 44% viewport height (`.reticle` in styles/app.css) for a natural eye-line; `RETICLE_NDC_Y` in main.js keeps the aim ray in lockstep with the CSS position.
+- Aim integration (core deliverable): reticle convergence. At ranged attack start, `captureRangedAim()` raycasts from the camera through the reticle's actual screen point (analytic: enemy aim spheres + terrain-sampler march with bisection refine, flat y=0 floors in shared activities; no THREE.Raycaster) to a world aim point, then launches the projectile FROM the character's weapon (unchanged `localToWorld` muzzle offsets) TOWARD that point. Hits between camera and character are ignored (minT = camera-player distance - 1); degenerate aim points (behind/inside the player) fall back to muzzle-forward along the view ray. Applies to ranger arrow/pierce/heartseeker and wizard lightning/frostbind. Arrows orient to their 3D velocity (YXZ order); descending projectiles expire on ground impact.
+- Neutral band: with no enemy under the reticle and the camera at/above the default tilt, flat shots keep the legacy horizontal launch (prevents resting-camera shots stabbing the ground a few meters out). Enemy convergence and deliberate up/down aiming bypass it.
+- Replication (additive, no message-shape change): `serializePlayerState` carries `aimPitch` (the captured converged pitch, default 0). `applyRemoteAction` clamps it and feeds `spawnRemoteArrowVisual`/`spawnRemoteLightningVisual`, so remote clients render the same muzzle-origin elevated trajectory; older clients ignore the field and degrade to flat (yaw-only). Host hit approximation stays the existing horizontal yaw-cone (`pointInAttackCone`) - damage-neutral, tolerant of pitched shots.
+- Help panel mouse-look line updated (vertical look + ranged aim, Q/E note).
+
+Done evidence:
+- In-browser (Ranger, exploration): flat/neutral shot launches level from the bow (vel y = 0); pitched-up shot velocity pitch 0.572 == captured aim pitch; pitched-down shot converges on the terrain point and expires on ground impact; enemy-under-reticle shot (bandit archer at 10 m) converges on the enemy aim sphere and bypasses the neutral band. Converged world targets re-projected to screen land exactly on the reticle point (NDC y 0.120 vs reticle 0.12) for both ground and elevated targets.
+- Over-the-shoulder: screenshots at default yaw and rotated 90 deg show the character left of center with a clear aim line over the right shoulder; offset rotates with yaw.
+- Terrain clearance re-verified on Dragonspine-facing slopes (camera >= ground + 0.75 with lookLift); `npm run check` + `git diff --check` green; `window.__errs` empty across all test sessions.
+- Performance: no per-frame allocation added (module-scoped scratch vectors); convergence raycast is analytic and runs once per ranged attack start, not per frame.
+
+Remaining work:
+- Structure/tree occlusion (camera clipping through walls/canopies when orbiting) remains out of scope, as briefed - height/distance clamps only.
+- Mounted shoulder offset (1.45) and mounted pitch clamps are first-pass tuned; revisit after a mounted combat playtest.
+- Host-side cones stay 2D; if elevated targets (roost dragons) ever need remote-shot damage parity, carry the full 3D direction into host hit checks as a follow-up.
+
+### T-022: Mount Expansion — Drake Hover, Brood Rebalance, Desert Mount
+
+Primary owner: Game Director / Integrator session. Support hats: Rendering / Performance (mount models, hover/stride animation), World & Content (egg spread, desert quest placement), RPG Mechanics (difficulty/reward), Creative / Narrative (Saffa dialogue, inline pending canon-owner review), Multiplayer / Netcode (replication review), QA (browser smoke).
+
+Status: `[x] Done` (code + local browser smoke; two-client playtest remains)
+
+Scope shipped:
+- Drake hover locomotion: new `locomotion` field on the mount contract ("hover"/"stride"/default gallop) drives shared helpers `mountRideMotion` (lift/bob for mount body + rider seat), `animateMountLimbs` (tucked legs + speed lean for hover, opposed leg swing + neck peck for stride, classic four-beat otherwise), and `mountSaddleLift`. Drake legs reworked tucked (bent shin, curled talons), wings widened (0.74 scale membranes), `hoverLift` 0.85 above the terrain sampler, group rotation order YXZ for the speed lean. Wingbeat is a constant-rate, constant-amplitude flap on the wall clock (user direction: wings always carry the hover; never speed-driven), and the hover bob is a slow low-amplitude drift (sin 1.1 Hz-ish * 0.025) so the drake is the smoothest mount. Local and remote mounts share the same animation path (`updateHorseAnimation` / `updateHorseModelLocalAnimation` both route through the helpers).
+- Skyhatched Brood rebalance: 5 eggs (was 3) spread across the wider Dragonspine roost/peaks via `randomPointInBiome` with separation filtering (terrain-conform, collision-checked placements); quest copy/dialogue updated to five; reward 80 -> 90 XP. Quest id `skyDrake` preserved. Mid-quest saves reconcile via the existing clamp in `applySavedExplorationProgress` (progress N of 3 becomes N of 5; items respawn, nothing bricks; completed players keep the drake).
+- Dune Courser (third mount, desert): chosen over a giant sand-beetle and a horned dune elk — a tall flightless strider bird fits Amber Dunes' practical, lived-in herding/well-rider canon, has a clearly distinct silhouette (two legs, long neck, plume tail) and adds a third locomotion flavor ("stride": springy two-beat bounce + neck peck) vs gallop and hover. Procedural model from shared cached geometry + three new cheap material variants (courserFeather/Plume/Skin). Quest "The Well-Road Courser" (`duneCourser`, giver Saffa at an oasis-edge courser camp in the desert village area): recover 5 waterskin caches spread along the dune line, 85 XP + mount. Dialogue inline per the briarStalkers/skyDrake pattern with a review note for the Creative/Narrative canon owner (`src/content/dialogue.js` untouched). Reward wiring: `courserUnlocked` + `activeMountId` in progression, normalized in `normalizeProgression`; M-cycling, god-mode test mounts (T-015), Help permanent-rewards rows, quest color/map hint (`questColor`, `questLocationHint`, `questMapAreas` desert band) all extended.
+- Mount scale pass (user feedback): all mounts ~30% larger so the ~2.3u rider reads as carried (horse 1.30, drake 1.26, courser 1.32 group scale) with per-model `seatHeight` (1.65/1.6/1.72) replacing the hardcoded 1.2 rider seat locally and remotely; mounted collision radii, dismount step-off (1.45 -> 1.85), and mount reach (`mountDistance` 2.8/3.0 -> 3.2/3.4) updated to match. Tack details are group children so they scale with the model. Camera untouched (framing verified acceptable in smoke).
+- Mount naming sweep (user feedback): new `activeMountDisplayName()` helper routes the R ride/dismount prompt and the mounted banner through `mountDisplayNames`; kit/status label already dynamic; static Help text stays generic/quest-specific ("your active mount"; Pell/Rowan horse-quest copy intentionally still says horse).
+- Follow tuning pass (user feedback, "mounts follow too close"): per-mount follow gaps in `createHorse` scaled with body size — horse follow 7.0 / min 4.6 / mount reach 7.6 (tacked 6.4 / 4.2 / 7.0), drake 7.4 / 4.9 / 8.0, courser 7.8 / 5.2 / 8.4. Settle band widened to ~2.4-2.6 so the mount idles in range instead of micro-adjusting; `mountDistance` now exceeds `followDistance` so the resting mount always sits inside R-mount reach, and `nearestHorse()` defaults its prompt range to the mount's own reach. `updateHorse` now reads follow/min from the entity fields (hardcoded tack overrides removed — `applyMountTackToHorse` already encodes them).
+- Courser neck rebuild (user bug report, visible seam): the two neck cylinders used positive `rotation.x` (tops leaning backward) while their offsets marched forward, opening a ~0.24u gap between segments. Re-chained with negative tilts so each joint tucks inside its neighbor (base buried in breast, upper tucked in lower's top, neck top inside the head sphere); head/beak/crest/eyes re-anchored to the new column.
+- Replication: `serializePlayerState` mountId sanitization extended to "courser" on receipt; `upsertRemotePlayer` rebuilds remote mount models on mountId change; remote rider seat uses `seatHeight` + `mountSaddleLift`. Hover/stride audio: "hover" surface (wing-wash) for drake replaces hoofbeats, local + remote.
+
+Done evidence:
+- `npm run check` + `git diff --check` green; no linter errors; `window.__smokeErrors` empty across smoke sessions.
+- Browser smoke (local god mode, resumed knight->ranger save): mount/dismount + M-cycle through all three mounts; drake hovers with tucked legs, constant wingbeat, calm drift, no leg gait (screenshots smoke2-drake-*, smoke3-drake-*); courser strides with neck peck (smoke2/3-courser-*); horse gait unchanged (smoke3-horse-mounted); scaled mounts read as carrying the rider, hooves/feet grounded when dismounted (smoke3-horse-dismounted); prompts/banners name the active mount ("Dismount Skyhatched Drake", "Mounted: Skyhatched Drake", "Ride Horse").
+- Save compat: resumed save with `activeMountId: "courser"` restores the courser; old saves normalize `courserUnlocked` false; completed `duneCourser` quests backfill the unlock.
+- Incident note: a parallel workstream clobbered the shared mount-animation helpers mid-task (calls survived, definitions lost -> ReferenceError froze the loop on mount). Restored and re-verified; if you edit `updateHorseAnimation` / `updateHorseModelLocalAnimation`, keep the `mountRideMotion`/`animateMountLimbs`/`mountSaddleLift` block beside `animateMountWings`.
+
+Performance note: one new procedural model (courser) from shared cached primitives, 3 new MeshStandardMaterial variants with existing detail-texture styles, zero new lights/particles/per-frame allocations; mount animation helpers are branch-only math on existing per-frame paths.
+
+Remaining work:
+- Two-client smoke (remote hover/stride animation + scaled remote mounts reasoned through in code, not yet run live).
+- Courser non-speed perk niche (currently speed 11.0, between horse and drake) flagged as an open tuning decision.
+- Creative/Narrative canon owner to review Saffa's inline dialogue and optionally migrate it into `src/content/dialogue.js`.
+- Mounted camera framing for the larger mounts is acceptable in smoke; revisit only if the camera workstream's shoulder-offset changes interact badly.
+
+### T-029: Bellwater Lake Removal + Entrance Waterfall
+
+Primary owner: World & Content Agent. Review hats: Rendering / Performance (procedural visuals, no lights, no particles), QA / Playtest (browser before/after, collision, dungeon entry).
+
+Status: `[~] Active`
+
+Removed:
+- The shore lake beside the Bellwater Underworks entrance (the first `lakeSpecs` entry in `setupExplorationWorld`, local ~(58-68, 76-85), rx 17 / rz 10 - the largest lake in the world, and it hugged the POI apron/road). Removing the spec removes everything driven by it: pre-bake flat zone, water disc + 14 shore rocks (`addExplorationLake`), and the `game.exploration.lakes` entry (player/horse water clamp, road lake detour, minimap ellipse, herb "lake shores" map area; herb shore spawns now distribute over the remaining 5 lakes).
+- `BELLWATER_UNDERWORKS_SHORE_LAKE` constant: `bellwaterUnderworksPlacement()` now uses the identical literal coordinates (x 72, z 102.2, approach x 93.5), so the POI flat zone, road spur, and dungeon return point are unchanged.
+
+Added (Underworks drainage, at the facade's right flank):
+- A grated stone culvert (rubble/darkStone boxes + 3 iron bars), a narrow two-sheet waterfall (cloned `materials.water` boxes), a foam pad, and a small terrain-conforming puddle (water disc, epsilon above ground, no collider, no flat zone, walk-through). One POI rubble spot moved (3.4,-1.9 -> 5.6,-3.2) to clear the feature and frame the puddle.
+- Animation: `updateBellwaterDrainage()` in the exploration tick - waterfall sheets stretch from a fixed top so only the base churns, foam pulses scale/opacity. ~6 sine evaluations per frame, no particles, no lights, no per-frame allocation; reference nulled in `clearExplorationWorld`.
+
+Done evidence:
+- Before/after browser screenshots at the per-session seed: lake beside the facade before; clean ground, sane road, no crater after; culvert/waterfall/puddle visible at the entrance from gameplay distance.
+- Walk test: puddle does not block, facade colliders still do; scout dialog opens; Enter Underworks works; ring-out returns the player at the grate beside the new drainage.
+- `npm run check`, `git diff --check` green; `window.__errs` empty across resumes; temp teleport hook removed.
+
+Remaining work:
+- Sound agent follow-up: optional faint water-trickle ambience at the grate.
+- Dialogue check: only generic "cold lakes" herb-quest lines reference lakes (still valid with 5 lakes); no Bellwater-specific lake line exists in `src/content/dialogue.js`, nothing to flag.
 
 Primary owner: UI / UX Agent
 
@@ -630,7 +901,7 @@ Done evidence:
 - Crownring wave XP and the first Crownring quest are implemented.
 
 Remaining work:
-- Add a clearer intermission/claim/continue presentation instead of relying mostly on immediate rewards and the `Y` yield prompt.
+- Add a clearer intermission/claim/continue presentation instead of relying mostly on immediate rewards and the `Y` yield prompt. (Partially covered by T-023: leaving at the bell now gets a victory/claim outcome panel with waves + purse; an in-arena continue-or-leave choice UI is still open.)
 - Decide whether a physical yield bell/gate object is required for the first shipped arena loop.
 - Add persisted arena rank fields such as `bestWave`, `completions`, and `rank`.
 
@@ -826,6 +1097,45 @@ Done evidence (shipped by Cursor agent):
 Remaining follow-up:
 - Playtest pass on ranger numbers vs Crownring waves (arrow DPS vs wizard at range, pierce value vs burst, roll cost vs knight block) and remote-ranger PvP cone tuning in legacy waves mode.
 - Ranger has no Crownring quest-reward kit hook yet; the Recurve is defined but only obtainable via the same trial claim if added to `grantRpgRewardForQuest` in a future slice.
+
+## New Class: Sentinel
+
+Primary owner: Game Director / Integrator (Cursor agent)
+
+Support profiles applied: RPG Mechanics / Economy, Creative / Narrative, Gameplay Systems, Rendering / Performance, UI / UX, Multiplayer / Netcode, Sound
+
+Status: `[x] Done` (implementation complete; playtest/balance follow-up below)
+
+Design decision (candidates considered, one chosen):
+- Candidate A - Sentinel (halberd wall-guard, sustained melee damage + crowd control): CHOSEN. Fills the real gap in the trio - nothing does melee damage-dealing or melee disruption (the knight tanks, the others shoot). Mechanically cheapest and safest: every ability reuses the existing instant melee-cone/radius pipeline (no new projectile or actor types), so host authority is preserved by construction. Lore fit is direct: Crownford's civic order and wall-watch are established canon, and a polearm reads at low-poly silhouette range.
+- Candidate B - Friar (non-healing support with banner/chant buffs): rejected. Buff auras would need new replicated timed state on every player (new message fields), and "support that does not heal" overlaps the wizard's room-share potion identity anyway.
+- Candidate C - Houndmaster (summon-light skirmisher with a hound): rejected. A persistent companion actor must live in the host snapshot, pathfind, and survive activity scoping - the highest-risk netcode footprint of the three for the least roster clarity.
+
+Class identity:
+- Sentinel: halberd-armed wall-guard of the civic watch. Sustained melee damage and crowd control - long-reach pokes, shoves, a spinning clear, a hook that drags a target out of formation, and a charging skewer. Strong where the knight is weak (damage, control), weak where the knight is strong (no block, no dodge, mid-speed); strong where the ranged classes are weak (melee), weak where they are strong (zero ranged options).
+- Resource: Vigor (reuses the mana fields like Focus/Magica; HUD label "Vigor", steel blue-gray meter via `#hud.sentinel-mode`). Slow regen is the brake on the control loop.
+
+Balance numbers as shipped (tuning in `src/content/rpg.js`):
+- Health 68 +5/level (between knight 78 +6 and ranger 54 +4). Vigor 58 +5/level, regen 10.5 +0.4/level (slowest resource in the game). Move 6.25 (knight 5.8, ranger 6.9).
+- Thrust (LMB/Space, lvl 1): free, narrow cone (dot 0.82) at range 3.6 - longest melee reach in the game - 24+1d6, light knockback, 0.6s cooldown.
+- Haft Shove (RMB/K, lvl 1): 16 vigor, short wide cone (2.4, dot 0.2), 8+1d4 + 0.35s stun + strong push (7.5). The sentinel's "block substitute" is making space, not negating damage.
+- Moulinet (J/MMB, lvl 3): 26 vigor, full 360-degree sweep radius 3.0, 18+1d6, small radial knockback, 1.15s cooldown.
+- Billhook Pull (F, lvl 5): 22 vigor, 7s cd, single target in a narrow lane up to 7.5 - 8+1d4, 0.7s stun, drags the target toward the sentinel (pull 6.5).
+- Skewer Charge (C, lvl 8): 34 vigor, 8s cd, forward lunge impulse + corridor hit (range 6.0, dot 0.6), 34+1d9, knockback.
+- Kits: Ironshod Halberd (default, balanced) and Crownring Partisan sidegrade (+4 thrust dmg, reach 3.9, +6 HP / shove costs 20, 0.97x speed), granted without auto-equip by the Crownring trial claim. `crownford_drill` perk reduces shove cost to 12 (from cityWrits claim), `briarfall_pathcraft` reduces moulinet to 21 (briarStalkers claim).
+
+Done evidence (shipped by Cursor agent):
+- `src/content/rpg.js`: both weapon defs + tuning, all `thrust*`/`shove*`/`moulinet*`/`hook*`/`skewer*` combat tuning keys, vigor costs, `abilityUnlockLevels` (thrust/shove 1, moulinet 3, hook 5, skewer 8), `abilityDisplayNames`, `defaultWeaponByCharacter.sentinel`, perk hooks on `crownford_drill` and `briarfall_pathcraft`.
+- `src/content/help.js`: `helpClassGuide.sentinel` (tagline + 5 abilities), tuning labels for every new key, kit source labels. The data-driven Help lists pick the rest up from rpg.js (verified: class guide, kit list, unlock levels all render from data).
+- `index.html`: Sentinel character card (kettle-helm + halberd SVG glyph). `styles/app.css`: `#hud.sentinel-mode` steel blue-gray meter + crest tint.
+- `src/main.js`: `characterKey()` accepts sentinel; progression defaults + `normalizeProgression` backfill (existing knight/wizard/ranger saves load untouched, sentinel added additively); `progressionStatsFor` branch; `createSentinel` local model (kettle helm with brim/band/crest, breastplate over a slate coat, civic surcoat stripe, pauldrons, jointed hip/shoulder limbs) and `createRemoteSentinelDetails` palette variant; `buildSentinelWeapon` in the `buildWeaponModel` factory (halberd: spike/axe blade/back hook; partisan: broad point/gold lugs/tassel); all five abilities through the attack-kind pipeline (`thrust`/`shove`/`moulinet`/`hook`/`skewer` hit-frames in `updatePlayer`, perform functions mirroring the knight's host-authority pattern); `updateSentinelPolearmAnimation`/`resetSentinelPose` choreography (upright rest pose, leveled jabs, full-turn moulinet with slash-arc ring); input dispatch (J/MMB third slot, F utility, C payoff, touch buttons relabeled); replication - `sendOnlineAction` for all five, `applyRemoteAction` SFX/poses, `triggerRemoteActionPose` + `updateRemoteActionPose` sentinel branches, `applyRemoteActionToEnemies` host handling for all five (including single-target hook pull), `applyRemoteActionToPlayer` ranges/damages; HUD icons for all five slots with lock/ready/active/cooldown states wired into the F/C cooldown sweeps; roster/resume labels via `characterDisplayName`; five procedural SFX (`thrust`, `shove`, `moulinet`, `hook`, `skewer`); G kit cycling works unchanged (data-driven via `equipmentDefs`).
+- Concurrency: built while the Ability HUD/animations and Potion crafting workstreams were editing the same `src/main.js` regions; integrated with their shipped patterns (abilityCooldownMarkup F/C sweeps, per-kind animation choreography, `benchDialog` input guard) rather than duplicating, re-reading each region before edit.
+- Reconciled with the ability theme/description audit agent: the `startUtilityAbility` sentinel branch they landed matches this design exactly (hookVigorCost/hookCooldown from tuning, 0.55s swing, `hook` SFX/action id) - verified single branch, no duplicate. Billhook Pull decision: stays SINGLE-TARGET (nearest enemy in the narrow lane), as designed here and as `performSentinelHook` implements - a multi-target lane pull would stack enemies into Moulinet for free AoE and complicate the host-side pull replication. The stale "hooks a lane of enemies" note in `helpClassGuide` was corrected to single-target; the new data-driven `abilityDescriptions.hook` in rpg.js already followed the code and needed no change.
+
+Remaining follow-up (flagged for playtest):
+- Numbers pass vs Crownring waves: thrust DPS vs knight slash sustain, moulinet clear value vs wizard burst, whether 10.5 vigor regen starves the kit at low levels, hook pull strength vs dread-tier enemy mass.
+- Real two-client smoke of the five actions (replication reasoned through in code; not yet exercised over the wire).
+- Touch layout only relabels the three existing buttons (F/C utility/payoff stay desktop-only, same as the other classes).
 
 ## RPG Mechanics Backlog
 
