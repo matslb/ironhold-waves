@@ -5164,6 +5164,7 @@ import {
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
     const briarFork = { x: 98, z: -72 };
+    const desert = game.exploration.biomes.find(biome => biome.id === "desert");
 
     addExplorationRoad(group, [
       homeDoor,
