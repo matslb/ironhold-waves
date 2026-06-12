@@ -433,7 +433,7 @@ export const ambientBarks = [
   { biome: "briar", mood: "warning", when: "always", text: "The woods remember every shortcut. Stay on the timber road unless you know which roots are sleeping." },
   { biome: "briar", mood: "greeting", when: "always", text: "Smoke and shade to you. If you smell charcoal, you are close enough to shout for help." },
   { biome: "briar", mood: "smalltalk", when: "always", text: "The moss roofs held through last night's rain. That means the old oaks approve of us for one more day." },
-  { biome: "briar", mood: "rumor", when: "questActive", text: "Edda says the thornbound have lost their nerve. The lane may open before the next charcoal burn." },
+  { biome: "briar", mood: "rumor", when: "questActive", text: "Edda says the briarbacks have stopped testing the lane. The next charcoal burn may have a road again." },
   // City
   { biome: "city", mood: "warning", when: "always", text: "Keep to the paved streets near the ring. The castle bells make it easy to find your way back." },
   { biome: "city", mood: "greeting", when: "always", text: "Welcome to Crownford. Mind the cart lanes, trust the bells, and the city will treat you fairly." },

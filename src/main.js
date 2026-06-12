@@ -885,7 +885,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     const surface = enemySurface(enemy);
-    const stride = enemy.type === "spider" ? 0.72 : surface === "mud" ? 0.95 : 1.08;
+    const stride = enemy.type === "spider" ? 0.72 : enemy.type === "briarBeast" ? 0.84 : surface === "mud" ? 0.95 : 1.08;
     enemy.audioStepDistance = (enemy.audioStepDistance || Math.random() * stride) + speed * dt;
     if (enemy.audioStepDistance >= stride) {
       enemy.audioStepDistance %= stride;
@@ -942,7 +942,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       playPositionalSfx("spiderLunge", position, 0.95, 38);
     } else if (enemy.type === "wisp" && previousState !== "pulse" && enemy.state === "pulse") {
       playPositionalSfx("wispPulse", position, 0.9, 42);
-    } else if ((enemy.type === "barbarian" || enemy.type === "briarRaider") && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
+    } else if ((enemy.type === "barbarian" || enemy.type === "briarBeast") && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
       playPositionalSfx(enemy.attackType === "heavy" ? "barbarianHeavy" : "barbarianAttack", position, 0.9, 36);
     }
   }
@@ -1423,7 +1423,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     npc: 1.3,
     barbarianBase: 1.08,
     dragonBase: 1.06,
-    spiderBase: 1.32
+    spiderBase: 1.32,
+    briarBeastBase: 1.18
   };
 
   const game = {
@@ -5969,7 +5970,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     }
     if (quest.id === "raiders") {
       const positions = game.enemies
-        .filter(enemy => !enemy.dead && (enemy.type === "barbarian" || enemy.type === "briarRaider"))
+        .filter(enemy => !enemy.dead && (enemy.type === "barbarian" || enemy.type === "briarBeast"))
         .map(enemy => enemy.position);
       const area = aggregateQuestArea(positions, 40, 58, 150);
       return area ? [{ ...area, color }] : [{ x: game.exploration.origin.x, z: game.exploration.origin.z, radius: 130, color }];
@@ -6354,19 +6355,19 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       ),
       createQuest(
         "briarStalkers",
-        "Thorns on the Timber Road",
+        "Rootmaws on the Timber Road",
         "Edda Thorn",
-        "The Briarfall charcoal road is being hunted by thornbound raiders. Break enough of their ambushes and the woodcutters can reopen the lane.",
-        "Defeat thornbound raiders",
+        "The Briarfall charcoal road is being hunted by briarback rootmaws. Break enough of their packs and the woodcutters can reopen the lane.",
+        "Defeat Briarfall rootmaws",
         "Briarfall class kits, Pathcraft perk, boons, and XP",
         "hunt",
         6,
         {
           rewardXp: 70,
-          conversationTags: ["briar", "woods", "raiders", "gear", "roads"],
+          conversationTags: ["briar", "woods", "rootmaws", "gear", "roads"],
           dialogue: {
-            available: "Briarfall does not mind honest thorns. It is the raiders wearing them that trouble us. Clear six from the timber road and I will show you what our smiths make from rootwood and old iron.",
-            active: "They wait where the lane bends under low branches. Keep your shield close, your spell short, or your bowstring dry.",
+            available: "Briarfall does not mind honest thorns. It is the rootmaws with teeth that trouble us. Clear six from the timber road and I will show you what our smiths make from rootwood and old iron.",
+            active: "They crawl where the lane bends under low branches. Keep your shield close, your spell short, or your bowstring dry.",
             ready: "The road breathed easier this morning. Bring your hands here; I have kits that suit travelers who know how woods fight back.",
             readyStatus: "Timber road cleared",
             done: "Rootwood remembers pressure. So should you. Use the Briarfall kits when control matters more than swagger.",
@@ -7361,8 +7362,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     for (let i = 0; i < 12; i += 1) {
       const point = randomPointInBiome(random, "briar", 12);
       const world = explorationToWorld(point.x, point.z);
-      const raider = createBriarRaider(world.x, world.z, 1 + Math.floor(random() * 3));
-      seedExplorationEnemy(raider, world, random, 11 + random() * 6, 8.5);
+      const beast = createBriarBeast(world.x, world.z, 1 + Math.floor(random() * 3));
+      seedExplorationEnemy(beast, world, random, 11 + random() * 6, 8.5);
     }
     updateQuestMarkers();
     updateQuestLog();
@@ -8382,6 +8383,146 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     section.appendChild(list);
   }
 
+  const helpTuningLabels = {
+    slashRange: "Slash reach",
+    slashDamageMin: "Slash base damage",
+    slashDamageSpread: "Slash damage spread",
+    slashDamageBonus: "Slash damage bonus",
+    slashKnockback: "Slash knockback",
+    guardOnSlashHit: "Guard on slash hit",
+    bashGuardCost: "Shield bash guard cost",
+    bashDamageMin: "Shield bash base damage",
+    bashDamageSpread: "Shield bash damage spread",
+    bashKnockback: "Shield bash knockback",
+    bashVelocity: "Shield bash lunge",
+    lightningManaCost: "Lightning magica cost",
+    lightningDamageMin: "Lightning base damage",
+    lightningDamageSpread: "Lightning damage spread",
+    lightningDamageBonus: "Lightning damage bonus",
+    lightningTurnRate: "Lightning homing",
+    lightningLife: "Lightning duration",
+    remoteLightningRange: "Remote lightning range",
+    burstManaCost: "Arcane burst magica cost",
+    burstDamageMin: "Arcane burst base damage",
+    burstDamageSpread: "Arcane burst damage spread",
+    arrowFocusCost: "Arrow focus cost",
+    arrowDamageMin: "Arrow base damage",
+    arrowDamageSpread: "Arrow damage spread",
+    arrowDamageBonus: "Arrow damage bonus",
+    arrowSpeed: "Arrow speed",
+    arrowLife: "Arrow duration",
+    pierceFocusCost: "Piercing shot focus cost",
+    pierceDamageMin: "Piercing shot base damage",
+    pierceDamageSpread: "Piercing shot damage spread",
+    rollFocusCost: "Roll focus cost",
+    resolveCooldown: "Resolve cooldown",
+    resolveDuration: "Resolve duration",
+    resolveDamageTaken: "Resolve damage taken",
+    sweepGuardCost: "Sweeping Cut guard cost",
+    sweepCooldown: "Sweeping Cut cooldown",
+    sweepRange: "Sweeping Cut range",
+    sweepDamageMin: "Sweeping Cut base damage",
+    sweepDamageSpread: "Sweeping Cut damage spread",
+    sweepStun: "Sweeping Cut stun",
+    frostbindManaCost: "Frostbind magica cost",
+    frostbindCooldown: "Frostbind cooldown",
+    frostbindDamageMin: "Frostbind base damage",
+    frostbindDamageSpread: "Frostbind damage spread",
+    frostbindStun: "Frostbind bind time",
+    stormcrownManaCost: "Crown of Storms magica cost",
+    stormcrownCooldown: "Crown of Storms cooldown",
+    stormcrownRadius: "Crown of Storms radius",
+    stormcrownDamageMin: "Crown of Storms base damage",
+    stormcrownDamageSpread: "Crown of Storms damage spread",
+    partingFocusCost: "Parting Shot focus cost",
+    partingCooldown: "Parting Shot cooldown",
+    partingDamageMin: "Parting Shot base damage",
+    partingDamageSpread: "Parting Shot damage spread",
+    heartseekerFocusCost: "Heartseeker focus cost",
+    heartseekerCooldown: "Heartseeker cooldown",
+    heartseekerDamageMin: "Heartseeker base damage",
+    heartseekerDamageSpread: "Heartseeker damage spread",
+    kitHealthBonus: "Max health",
+    kitGuardBonus: "Max guard",
+    kitManaBonus: "Max magica/focus",
+    kitManaRegenMul: "Magica/focus regen",
+    kitMoveSpeedMul: "Move speed"
+  };
+
+  const helpSourceLabels = {
+    knight_arming_sword: "starting kit",
+    wizard_oak_staff: "starting kit",
+    ranger_ash_bow: "starting kit",
+    knight_roadwarden_blade: "Quiet the Road",
+    wizard_wayfinder_focus: "Quiet the Road",
+    knight_crownring_maul: "First Bell of the Crownring",
+    wizard_stormcall_rod: "First Bell of the Crownring",
+    ranger_crownring_recurve: "First Bell of the Crownring",
+    knight_briarfall_hookblade: "Rootmaws on the Timber Road",
+    wizard_briar_focus: "Rootmaws on the Timber Road",
+    ranger_briarstring_bow: "Rootmaws on the Timber Road",
+    crownford_drill: "The Beacon Writs",
+    briarfall_pathcraft: "Rootmaws on the Timber Road"
+  };
+
+  const helpPermanentRewardItems = [
+    { label: "Greenfire Remedies", text: "+12 max health, full heal, and XP." },
+    { label: "Quiet the Road", text: "Roadwarden Blade for knights, Wayfinder Focus for wizards, +8 max guard, +8 max magica/focus, and XP." },
+    { label: "Map the Hearths", text: "Full recovery potion, -4s wizard potion-drop cooldown, and XP." },
+    { label: "Silk in the Sand", text: "+6 max health, field potion, and XP." },
+    { label: "Smoke on the Peaks", text: "+10 max magica/focus, +6 max guard, and XP." },
+    { label: "Lights in the Mist", text: "+8 max magica/focus, +5 max health, and XP." },
+    { label: "Rootmaws on the Timber Road", text: "Briarfall kits for all classes, Briarfall Pathcraft perk, +4 max health, +5 max guard, +5 max magica/focus, field potion, and XP." },
+    { label: "Relics Under Reed", text: "Full recovery potion, full restore, and XP." },
+    { label: "Hooves for the Long Road", text: "Loyal horse mount and XP." },
+    { label: "Shoes for the Long Road", text: "Roadwarden Tack, faster mounted travel, and XP." },
+    { label: "The Beacon Writs", text: "Crownford Drill perk, +6 max guard, +6 max magica/focus, and XP." },
+    { label: "Sanctuary Lamps", text: "+8 max health, field potion, and XP." },
+    { label: "First Bell of the Crownring", text: "Crownring kits for all classes, +5 max health, +5 max guard, +5 max magica/focus, field potion, and XP." }
+  ];
+
+  function formatHelpNumber(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return String(value);
+    }
+    if (Math.abs(value - Math.round(value)) < 0.001) {
+      return String(Math.round(value));
+    }
+    return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function formatTuningValue(key, value) {
+    const amount = formatHelpNumber(value);
+    if (key.endsWith("Mul")) {
+      return "x" + amount;
+    }
+    if (key.endsWith("Cooldown") || key.endsWith("Duration") || key.endsWith("Stun") || key.endsWith("Life")) {
+      return amount + "s";
+    }
+    if (key.endsWith("Range") || key.endsWith("Radius")) {
+      return amount + "m";
+    }
+    return amount;
+  }
+
+  function formatTuningLine(key, value) {
+    const label = helpTuningLabels[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, char => char.toUpperCase());
+    const base = defaultCombatTuning[key];
+    const valueText = formatTuningValue(key, value);
+    if (base !== undefined && base !== value) {
+      return label + " " + valueText + " (base " + formatTuningValue(key, base) + ")";
+    }
+    return label + " " + valueText;
+  }
+
+  function formatTuningSummary(tuning) {
+    const entries = Object.entries(tuning || {});
+    if (!entries.length) {
+      return "standard tuning";
+    }
+    return entries.map(([key, value]) => formatTuningLine(key, value)).join("; ");
+  }
+
   function buildHelpContent() {
     helpBody.replaceChildren();
 
@@ -8419,6 +8560,15 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }));
     }
 
+    const leveling = helpSection("Leveling And Upgrades");
+    helpParagraph(leveling, "XP levels unlock abilities and raise base stats before quest boons, perks, and kit sidegrades are applied.");
+    helpList(leveling, [
+      { label: "XP thresholds", text: "level 2 at " + xpForLevel(2) + " XP, level 3 at " + xpForLevel(3) + " XP, level 5 at " + xpForLevel(5) + " XP, level 9 at " + xpForLevel(9) + " XP." },
+      { label: "Knight growth", text: "+6 max health and +7 max guard per level after level 1." },
+      { label: "Wizard growth", text: "+4 max health, +8 max magica, and +0.65 magica regen per level after level 1." },
+      { label: "Ranger growth", text: "+4 max health, +6 focus, and +0.5 focus regen per level after level 1." }
+    ]);
+
     const kits = helpSection("Weapon Kits");
     helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then press G to swap between unlocked kits. Swapping visibly changes your held weapon and nudges your stats - small health, guard, magica, regen, or speed trade-offs on top of the weapon tuning. Your equipped kit and its trade-offs show in the lower left; hover the panel for exact numbers.");
     for (const entry of helpClassGuide) {
@@ -8427,13 +8577,23 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         .map(([id, def]) => ({
           label: def.name,
           text: (def.summary ? def.summary + " - " : "")
-            + (defaultWeaponByCharacter[entry.character] === id ? "starting kit." : "earned in the world.")
+            + (helpSourceLabels[id] || (defaultWeaponByCharacter[entry.character] === id ? "starting kit" : "earned in the world"))
+            + "; " + formatTuningSummary(def.tuning)
         }));
       if (kitItems.length > 0) {
         helpParagraph(kits, characterDisplayName(entry.character) + " kits:");
         helpList(kits, kitItems);
       }
     }
+
+    const perks = helpSection("Perks And Permanent Buffs");
+    helpParagraph(perks, "Permanent boons stack across characters where the resource exists: health helps everyone, guard helps knights, and magica/focus helps wizards and rangers.");
+    helpList(perks, Object.entries(perkDefs).map(([id, def]) => ({
+      label: def.name,
+      text: (helpSourceLabels[id] || "earned in the world") + "; " + formatTuningSummary(def.tuning)
+    })));
+    helpParagraph(perks, "Quest rewards:");
+    helpList(perks, helpPermanentRewardItems);
 
     const world = helpSection("Dangers Of The Valley");
     helpParagraph(world, "Enemies grow tougher the farther you roam from the homestead. Near spawn they are prowlers; past the midlands they are veterans with amber health bars, and the far reaches hold dread beasts with red health bars - bigger, faster, harder-hitting, and worth far more XP.");
@@ -9121,17 +9281,22 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     sendOnlineMessage({ kind: "world", world: serializeWorldSnapshot() });
   }
 
+  function normalizeEnemyType(type) {
+    return type === "briarRaider" ? "briarBeast" : type;
+  }
+
   function createEnemyFromSnapshot(state) {
     const wave = Math.max(1, game.wave || 1);
+    const type = normalizeEnemyType(state.type);
     let enemy;
-    if (state.type === "dragon") {
+    if (type === "dragon") {
       enemy = createDragon(state.x, state.z, wave);
-    } else if (state.type === "spider") {
+    } else if (type === "spider") {
       enemy = createSpider(state.x, state.z, wave);
-    } else if (state.type === "wisp") {
+    } else if (type === "wisp") {
       enemy = createWisp(state.x, state.z, wave);
-    } else if (state.type === "briarRaider") {
-      enemy = createBriarRaider(state.x, state.z, wave);
+    } else if (type === "briarBeast") {
+      enemy = createBriarBeast(state.x, state.z, wave);
     } else {
       enemy = createBarbarian(state.x, state.z, wave);
     }
@@ -9149,7 +9314,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.networkTargetPosition.set(state.x || 0, 0, state.z || 0);
     enemy.networkTargetY = state.y || 0;
     enemy.networkTargetYaw = state.yaw || 0;
-    enemy.type = state.type || enemy.type;
+    enemy.type = normalizeEnemyType(state.type) || enemy.type;
     enemy.scale = state.scale || enemy.scale || 1;
     enemy.radius = state.radius || enemy.radius;
     enemy.health = state.health ?? enemy.health;
@@ -9358,6 +9523,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
           updateSpiderAnimation(enemy, dt);
         } else if (enemy.type === "wisp") {
           updateWispAnimation(enemy, dt);
+        } else if (enemy.type === "briarBeast") {
+          updateBriarBeastAnimation(enemy, dt);
         } else {
           enemy.walkTime += enemy.velocity.length() * dt;
           const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
@@ -9439,6 +9606,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       return;
     }
     removePotionById(potion.netId);
+    remote.health = potion.fullHeal ? remote.maxHealth : Math.min(remote.maxHealth, remote.health + (potion.healAmount || 0));
+    if (remote.nameTag) {
+      updateNameTag(remote.nameTag, remote.nameTag.text || "Player", remote.health, remote.maxHealth);
+    }
     sendOnlineMessage({
       kind: "potionPicked",
       targetId: message.id,
@@ -9509,7 +9680,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function explorationRewardForEnemy(enemy) {
-    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : enemy.type === "briarRaider" ? 13 : 12;
+    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : enemy.type === "briarBeast" ? 13 : 12;
     return Math.round(base * (enemy.xpMul || 1));
   }
 
@@ -9521,7 +9692,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       progress.push("dragons");
     } else if (enemy.type === "wisp") {
       progress.push("wisps");
-    } else if (enemy.type === "briarRaider") {
+    } else if (enemy.type === "briarBeast") {
       progress.push("briarStalkers");
     }
     return progress;
@@ -9972,36 +10143,63 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function createNameTag(text, color) {
     const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 64;
+    canvas.width = 320;
+    canvas.height = 112;
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
-    sprite.scale.set(2.8, 0.7, 1);
-    const tag = { canvas, texture, sprite, text: "", color };
-    updateNameTag(tag, text);
+    sprite.scale.set(3.15, 1.1, 1);
+    const tag = { canvas, texture, sprite, text: "", color, health: -1, maxHealth: -1 };
+    updateNameTag(tag, text, 1, 1);
     return tag;
   }
 
-  function updateNameTag(tag, text) {
+  function updateNameTag(tag, text, health = tag.health, maxHealth = tag.maxHealth) {
     const label = sanitizePlayerName(text);
-    if (tag.text === label) {
+    const safeMaxHealth = Math.max(1, numberOrZero(maxHealth) || 1);
+    const safeHealth = clamp(numberOrZero(health), 0, safeMaxHealth);
+    const roundedHealth = Math.round(safeHealth);
+    const roundedMaxHealth = Math.round(safeMaxHealth);
+    if (tag.text === label && tag.health === roundedHealth && tag.maxHealth === roundedMaxHealth) {
       return;
     }
     tag.text = label;
+    tag.health = roundedHealth;
+    tag.maxHealth = roundedMaxHealth;
+    const healthRatio = clamp(safeHealth / safeMaxHealth, 0, 1);
     const ctx = tag.canvas.getContext("2d");
     ctx.clearRect(0, 0, tag.canvas.width, tag.canvas.height);
-    ctx.fillStyle = "rgba(5, 9, 11, 0.68)";
+    ctx.fillStyle = "rgba(5, 9, 11, 0.72)";
     ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
     ctx.lineWidth = 3;
-    roundRect(ctx, 14, 10, 228, 42, 12);
+    roundRect(ctx, 28, 10, 264, 44, 13);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#" + tag.color.toString(16).padStart(6, "0");
     ctx.font = "900 23px system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(label, 128, 32, 206);
+    ctx.fillText(label, 160, 32, 236);
+
+    const barX = 46;
+    const barY = 68;
+    const barWidth = 228;
+    const barHeight = 16;
+    ctx.fillStyle = "rgba(7, 12, 12, 0.74)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.lineWidth = 2;
+    roundRect(ctx, barX, barY, barWidth, barHeight, 8);
+    ctx.fill();
+    ctx.stroke();
+    const fillWidth = Math.max(4, (barWidth - 6) * healthRatio);
+    ctx.fillStyle = healthRatio > 0.55 ? "#63f28f" : healthRatio > 0.28 ? "#ffd166" : "#ff6350";
+    roundRect(ctx, barX + 3, barY + 3, fillWidth, barHeight - 6, 5);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+    ctx.font = "800 10px system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(roundedHealth + "/" + roundedMaxHealth, barX + barWidth - 8, barY + barHeight / 2, 78);
     tag.texture.needsUpdate = true;
   }
 
@@ -10072,12 +10270,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }
       remote.walkTime = previousWalk;
     }
-    if (remote.nameTag) {
-      updateNameTag(remote.nameTag, state.name || "Player");
-    }
     remote.playing = state.playing === true;
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
+    if (remote.nameTag) {
+      updateNameTag(remote.nameTag, state.name || "Player", remote.health, remote.maxHealth);
+    }
     const claimedProfile = sanitizedCombatProfile(nextCharacter, state.weaponId, state.perks);
     remote.combatProfile = claimedProfile;
     remote.weaponId = remote.combatProfile.weaponId;
@@ -10493,6 +10691,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const remote = online.remotePlayers.get(target.id);
     if (remote) {
       remote.health = Math.max(0, remote.health - damage);
+      if (remote.nameTag) {
+        updateNameTag(remote.nameTag, remote.nameTag.text || "Player", remote.health, remote.maxHealth);
+      }
     }
     const impact = target.position.clone();
     spawnImpact(impact, 0xff6350, 12);
@@ -10784,29 +10985,121 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return enemy;
   }
 
-  function createBriarRaider(x, z, wave) {
-    const enemy = createBarbarian(x, z, wave);
-    enemy.type = "briarRaider";
-    enemy.health = Math.round(enemy.health * 0.86);
-    enemy.maxHealth = enemy.health;
-    enemy.speed *= 1.12;
-    enemy.radius *= 0.96;
-    if (enemy.hpFill && enemy.hpFill.material && enemy.hpFill.material.color) {
-      enemy.hpFill.material.color.setHex(0xb9d678);
+  function createBriarBeastModel(scale) {
+    const group = new THREE.Group();
+    group.scale.setScalar(scale);
+
+    const body = makeSphere(0.54, materials.rootwood, 0, 0.72, 0.1);
+    body.scale.set(1.18, 0.58, 1.52);
+    const chest = makeSphere(0.42, materials.rootwood, 0, 0.78, -0.58);
+    chest.scale.set(1.04, 0.68, 1.06);
+    const haunch = makeSphere(0.42, materials.rootwood, 0, 0.64, 0.82);
+    haunch.scale.set(0.98, 0.62, 1.04);
+    const mossBack = makeBox(0.86, 0.08, 1.56, materials.briarLeaf.clone(), 0, 1.08, 0.08);
+    mossBack.rotation.x = -0.04;
+    const tail = makeCylinder(0.035, 0.11, 0.86, 7, materials.rootwood, 0, 0.68, 1.34);
+    tail.rotation.x = Math.PI / 2 - 0.26;
+
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 0.92, -1.0);
+    const skull = makeSphere(0.34, materials.rootwood, 0, 0.0, -0.12);
+    skull.scale.set(1.02, 0.72, 1.02);
+    const snout = makeBox(0.48, 0.22, 0.48, materials.rootwood, 0, -0.03, -0.45);
+    const lowerJaw = makeBox(0.42, 0.09, 0.36, materials.briarThorn, 0, -0.18, -0.48);
+    const leftEye = makeSphere(0.045, materials.emberEye, -0.14, 0.11, -0.44);
+    const rightEye = makeSphere(0.045, materials.emberEye, 0.14, 0.11, -0.44);
+    const leftFang = makeCone(0.045, 0.18, 7, materials.bone, -0.12, -0.22, -0.62);
+    const rightFang = makeCone(0.045, 0.18, 7, materials.bone, 0.12, -0.22, -0.62);
+    leftFang.rotation.x = Math.PI;
+    rightFang.rotation.x = Math.PI;
+    const leftHorn = makeCone(0.065, 0.36, 7, materials.briarThorn, -0.21, 0.24, -0.12);
+    const rightHorn = makeCone(0.065, 0.36, 7, materials.briarThorn, 0.21, 0.24, -0.12);
+    leftHorn.rotation.set(-0.72, -0.24, -0.32);
+    rightHorn.rotation.set(-0.72, 0.24, 0.32);
+    headPivot.add(skull, snout, lowerJaw, leftEye, rightEye, leftFang, rightFang, leftHorn, rightHorn);
+
+    const legs = [];
+    function makeBriarLeg(x, z, front) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.58, z);
+      const upper = makeCylinder(0.08, 0.12, front ? 0.5 : 0.56, 7, materials.rootwood, 0, -0.22, 0);
+      upper.rotation.x = front ? -0.08 : 0.1;
+      const hoof = makeBox(0.2, 0.12, 0.24, materials.darkLeather, 0, -0.52, front ? -0.04 : 0.04);
+      const thornKnee = makeCone(0.045, 0.18, 6, materials.briarThorn, x > 0 ? 0.11 : -0.11, -0.22, 0.01);
+      thornKnee.rotation.z = x > 0 ? -Math.PI / 2 : Math.PI / 2;
+      leg.add(upper, hoof, thornKnee);
+      legs.push(leg);
+      return leg;
     }
-    const vineCollar = makeCylinder(0.56, 0.6, 0.12, 12, materials.briarLeaf.clone(), 0, 1.82, 0);
-    const shoulderRoot = makeCylinder(0.05, 0.08, 1.02, 7, materials.rootwood, -0.42, 1.7, -0.05);
-    shoulderRoot.rotation.z = Math.PI / 2.25;
-    const shoulderThorn = makeCone(0.07, 0.24, 7, materials.briarThorn, 0.48, 1.8, -0.03);
-    shoulderThorn.rotation.z = -Math.PI / 2.5;
-    const helmLeaf = makeBox(0.46, 0.08, 0.08, materials.briarLeaf.clone(), 0, 2.44, -0.04);
-    helmLeaf.rotation.z = 0.16;
-    const axeHook = makeCone(0.09, 0.34, 7, materials.briarThorn, 0.18, 0.03, -1.38);
-    axeHook.rotation.x = Math.PI / 2;
-    enemy.group.add(vineCollar, shoulderRoot, shoulderThorn, helmLeaf);
-    if (enemy.weaponPivot) {
-      enemy.weaponPivot.add(axeHook);
+    const frontLeft = makeBriarLeg(-0.34, -0.54, true);
+    const frontRight = makeBriarLeg(0.34, -0.54, true);
+    const rearLeft = makeBriarLeg(-0.34, 0.58, false);
+    const rearRight = makeBriarLeg(0.34, 0.58, false);
+
+    const spine = new THREE.Group();
+    for (let i = 0; i < 7; i += 1) {
+      const z = -0.72 + i * 0.28;
+      const height = 0.22 + Math.sin(i * 0.8) * 0.04;
+      const spike = makeCone(0.06, height, 7, materials.briarThorn, 0, 1.22, z);
+      spike.rotation.x = z < -0.2 ? -0.18 : 0.16;
+      spine.add(spike);
     }
+
+    const healthRoot = new THREE.Group();
+    healthRoot.position.set(0, 1.72, -0.05);
+    const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.08), new THREE.MeshBasicMaterial({ color: 0x13200f, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
+    const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.045), new THREE.MeshBasicMaterial({ color: 0xb9d678, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+    hpFill.position.z = 0.003;
+    healthRoot.add(hpBack, hpFill);
+
+    const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.7, 0.88, 32), materials.danger.clone());
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.y = 0.025;
+    telegraph.visible = false;
+
+    group.add(body, chest, haunch, mossBack, tail, headPivot, frontLeft, frontRight, rearLeft, rearRight, spine, healthRoot, telegraph);
+    return {
+      group,
+      weaponPivot: headPivot,
+      headPivot,
+      body,
+      chest,
+      healthRoot,
+      hpFill,
+      telegraph,
+      leftLeg: frontLeft,
+      rightLeg: frontRight,
+      quadrupedLegs: legs
+    };
+  }
+
+  function createBriarBeast(x, z, wave) {
+    const scale = modelScale.briarBeastBase + Math.random() * 0.12 + Math.min(wave * 0.008, 0.08);
+    const model = createBriarBeastModel(scale);
+    const enemy = {
+      ...model,
+      type: "briarBeast",
+      position: new THREE.Vector3(x, 0, z),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      scale,
+      health: 66 + wave * 10,
+      maxHealth: 66 + wave * 10,
+      speed: 2.32 + Math.random() * 0.34 + Math.min(wave * 0.03, 0.32),
+      radius: 0.82 * scale,
+      cooldown: 0.75 + Math.random() * 1.1,
+      state: "chase",
+      attackType: null,
+      attackTimer: 0,
+      attackDuration: 0,
+      attackHitDone: false,
+      stunned: 0,
+      dead: false,
+      walkTime: Math.random() * 10
+    };
+    assignEnemyId(enemy);
+    enemy.group.position.copy(enemy.position);
+    scene.add(enemy.group);
     return enemy;
   }
 
@@ -10999,7 +11292,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.yaw = yawFromDirection(direction);
     enemy.velocity.x = lerp(enemy.velocity.x, direction.x * speed, 1 - Math.pow(0.01, dt));
     enemy.velocity.z = lerp(enemy.velocity.z, direction.z * speed, 1 - Math.pow(0.01, dt));
-    if (enemy.type === "barbarian" || enemy.type === "briarRaider") {
+    if (enemy.type === "barbarian") {
       enemy.walkTime += dt * speed;
     }
   }
@@ -12347,8 +12640,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     enemy.health -= damage;
     enemy.stunned = Math.max(enemy.stunned, stun);
     enemy.velocity.addScaledVector(direction, 4.3);
-    const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.position;
-    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : enemy.type === "briarRaider" ? 0xb9d678 : 0xffd19b;
+    const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.type === "briarBeast" ? tmpVec.set(enemy.position.x, 0.85, enemy.position.z) : enemy.position;
+    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : enemy.type === "briarBeast" ? 0xb9d678 : 0xffd19b;
     spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
     playSfx("enemyHit", enemy.type === "dragon" ? 1.2 : 0.9);
     broadcastOnlineEffect({
@@ -12498,6 +12791,29 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       leg.rotation.z = side * (Math.PI / (i % 2 ? 2.75 : 2.35)) + phase * side;
     }
     enemy.body.rotation.x = enemy.stunned > 0 ? -0.18 : Math.sin(enemy.walkTime * 2.8) * 0.035;
+  }
+
+  function updateBriarBeastAnimation(enemy, dt) {
+    const speed = Math.min(1, enemy.velocity.length() / Math.max(0.001, enemy.speed || 1));
+    enemy.walkTime += dt * (enemy.speed || 2.3) * (0.75 + speed * 1.25);
+    const legs = enemy.quadrupedLegs || [];
+    for (let i = 0; i < legs.length; i += 1) {
+      const leg = legs[i];
+      const phase = Math.sin(enemy.walkTime * 5.9 + i * Math.PI * 0.92) * 0.34 * speed;
+      leg.rotation.x = phase;
+    }
+    if (enemy.body) {
+      enemy.body.rotation.x = enemy.stunned > 0 ? -0.12 : Math.sin(enemy.walkTime * 2.6) * 0.035 * speed;
+    }
+    if (enemy.chest) {
+      enemy.chest.rotation.x = enemy.stunned > 0 ? -0.18 : Math.sin(enemy.walkTime * 3.0) * 0.04 * speed;
+    }
+    if (enemy.headPivot && enemy.state !== "attack") {
+      const settle = 1 - Math.pow(0.0002, dt);
+      enemy.headPivot.rotation.x = lerp(enemy.headPivot.rotation.x, Math.sin(enemy.walkTime * 2.4) * 0.05, settle);
+      enemy.headPivot.rotation.y = lerp(enemy.headPivot.rotation.y, 0, settle);
+      enemy.headPivot.rotation.z = lerp(enemy.headPivot.rotation.z, 0, settle);
+    }
   }
 
   function updateExplorationSpiderEnemy(enemy, dt, playerDistance, playerDirection) {
@@ -12775,7 +13091,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
             const desired = playerDirection.multiplyScalar(enemy.speed * 0.86);
             enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.015, dt));
             enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.015, dt));
-            enemy.walkTime += dt * enemy.speed;
+            if (enemy.type !== "briarBeast") {
+              enemy.walkTime += dt * enemy.speed;
+            }
           }
         } else {
           enemy.state = "patrol";
@@ -12789,7 +13107,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
           const desired = toPatrol.multiplyScalar(enemy.speed * 0.42);
           enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.02, dt));
           enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.02, dt));
-          enemy.walkTime += dt * enemy.speed * 0.45;
+          if (enemy.type !== "briarBeast") {
+            enemy.walkTime += dt * enemy.speed * 0.45;
+          }
           enemy.telegraph.visible = false;
         }
       }
@@ -12817,10 +13137,14 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       constrainExplorationEnemy(enemy);
       enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
       enemy.group.rotation.y = enemy.yaw;
-      const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
-      enemy.leftLeg.rotation.x = legSwing;
-      enemy.rightLeg.rotation.x = -legSwing;
-      enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+      if (enemy.type === "briarBeast") {
+        updateBriarBeastAnimation(enemy, dt);
+      } else {
+        const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
+        enemy.leftLeg.rotation.x = legSwing;
+        enemy.rightLeg.rotation.x = -legSwing;
+        enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+      }
       updateEnemyMovementAudio(enemy, dt);
     }
 
@@ -12866,7 +13190,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
             const desired = direction.multiplyScalar(enemy.speed);
             enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.01, dt));
             enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.01, dt));
-            enemy.walkTime += dt * enemy.speed;
+            if (enemy.type !== "briarBeast") {
+              enemy.walkTime += dt * enemy.speed;
+            }
           }
         } else {
           updateEnemyAttack(enemy, dt, distance, direction);
@@ -12904,6 +13230,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.group.rotation.y = enemy.yaw;
       if (enemy.type === "dragon") {
         updateDragonAnimation(enemy, dt);
+      } else if (enemy.type === "briarBeast") {
+        updateBriarBeastAnimation(enemy, dt);
       } else {
         const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
         enemy.leftLeg.rotation.x = legSwing;
@@ -13086,7 +13414,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       enemy.attackType = null;
       enemy.cooldown = heavy ? 1.2 + Math.random() * 0.7 : 0.72 + Math.random() * 0.55;
       enemy.telegraph.visible = false;
-      enemy.weaponPivot.rotation.set(-0.12, -0.3, -0.7);
+      if (enemy.type === "briarBeast") {
+        enemy.weaponPivot.rotation.set(0, 0, 0);
+      } else {
+        enemy.weaponPivot.rotation.set(-0.12, -0.3, -0.7);
+      }
     }
 
     if (distance > 3.0) {

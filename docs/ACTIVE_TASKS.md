@@ -253,7 +253,7 @@ Done evidence:
 - Briarfall Woods now generates as a fourth exploration biome with mossy terrain texture, low basin/ridge shaping, flat village pads, a winding woodland lane, minimap biome color, and collision-enabled oaks/brambles/charcoal/standing-stone props in `src/main.js`.
 - A Briarfall timber village spawns with timber/moss house architecture, Briarfall-styled NPCs, and the quest giver Edda Thorn.
 - The new quest `briarStalkers` gives map hints, quest tracker progress, XP, boons, a field potion, Briarfall class kits, and the Briarfall Pathcraft perk.
-- Thornbound raiders (`briarRaider`) are a distinct enemy type with Briarfall visuals, XP/reward mapping, quest progress, host snapshot creation, shared damage/death path, and tier scaling compatibility.
+- Briarback rootmaws (`briarBeast`) are a distinct non-humanoid monster type with Briarfall visuals, quadruped animation, XP/reward mapping, quest progress, host snapshot creation, shared damage/death path, and tier scaling compatibility.
 - Gear expansion shipped in `src/content/rpg.js`: `knight_briarfall_hookblade`, `wizard_briar_focus`, `ranger_briarstring_bow`, `briarfall_pathcraft`, Crownring Recurve unlock, and ranger-relevant Crownford Drill tuning.
 - Multiplayer polish: remote player combat profiles now refresh on weapon/perk changes, not only character changes.
 - Verification: `/usr/local/bin/node --check src/main.js`, `/usr/local/bin/node --check src/content/rpg.js`, `/usr/local/bin/node --check src/content/dialogue.js`, `git diff --check`, and in-browser local Exploration resume smoke passed. Browser smoke confirmed active Exploration HUD and no new console errors after fixes.
@@ -263,7 +263,7 @@ Coordination note:
 
 Remaining work:
 - Playtest travel to Briarfall, complete `briarStalkers`, and verify the reward loop with each class.
-- Two-client smoke test for host-owned thornbound raiders and kit display after gear switching.
+- Two-client smoke test for host-owned briarbacks and kit display after gear switching.
 
 ## Phase 1: Remove Arena As A Top-Level Mode
 
@@ -647,6 +647,8 @@ Shipped slice: wizard/ranger health nerf + minimap allies + Help audit (owner: C
 - Balance: wizard base health cut from 62 +5/level to 48 +4/level, ranger from 68 +5/level to 54 +4/level in `progressionStatsFor` (`src/main.js`). Knight unchanged at 78 +6/level. Kit `kitHealthBonus` and exploration health boons still stack on top, so Crownring Maul / Briar Focus remain meaningful picks. Rationale: both ranged classes were too durable for their damage output after the earlier DPS nerfs.
 - Minimap: the dynamic blit pass in `updateQuestMap` now draws one palette-tinted dot (the remote's `remotePalette(id).glow` color, dark outline) per connected remote player, skipping non-playing remotes and clamping far-away allies to the map rim. Cheap per-frame cost: a couple of arcs every 0.16s tick.
 - Help panel audit vs tonight's shipped state: added a minimap paragraph (terrain/quests/compass/ally dots), "lightly built/armored" warnings to the wizard and ranger taglines, an expanded Weapon Kits paragraph covering visible weapon swaps + stat sidegrades + the hover tooltip, and a new "Dangers Of The Valley" section explaining the enemy tier system (white prowler / amber veteran 1.6x XP / red dread 2.4x XP, tougher farther from the homestead). Class ability lists and kit summaries were already data-driven and correct.
+- Help panel progression audit (Codex, user-requested): Help now includes a "Leveling And Upgrades" section with XP thresholds and per-class stat growth, expands every weapon kit row with exact tuning/stat overrides from `equipmentDefs`, and adds "Perks And Permanent Buffs" with every shipped perk plus all permanent quest boons, horse/tack rewards, field/full potion rewards, and Crownring/Briarfall/Roadwarden kit sources. Keep future progression rewards reflected in this section when adding new quest reward hooks.
+- Multiplayer readability slice (Codex, user-requested): remote player name tags now render a compact health bar and current/max HP in the same hovering billboard. The bar updates from synced player state, host-side predicted enemy/player damage, and host-approved shared potion pickups.
 
 Shipped slice: Beacon Writs world bug fixes (owner: Cursor agent)
 - North waystone unblocked: the wayfinder map table in `addWayfinderBeacon` moved from (x, z-5.9) to the east flank (x+5.8, z-3.8) and its collider shrank 2.8 -> 1.35, so the path to the north `cityWrits` pickup at (x, z-7.6) is clear. Verified in-browser: walked straight from the plaza edge to the north waystone.

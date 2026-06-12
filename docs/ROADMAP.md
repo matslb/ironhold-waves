@@ -58,7 +58,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 ### Content Expansion
 
 - Add Crownford, a civic city hub with the Crownring arena district, Marshal Rowan Vale, an infirmary, and non-arena city hooks.
-- Briarfall Woods is now a shipped biome slice: mossy old-growth terrain, a timber village, thornbound raiders, Briarfall gear kits, Pathcraft perk, ambient barks, and a road-clearing quest.
+- Briarfall Woods is now a shipped biome slice: mossy old-growth terrain, a timber village, briarback rootmaw monsters, Briarfall gear kits, Pathcraft perk, ambient barks, and a road-clearing quest.
 - Expand roads and world decor so settlements feel lived-in: gently winding roads/trails, carts, buckets, brooms, lanterns, market clutter, training props, and biome-specific clutter.
 - Add one main quest beat per major biome.
 - Add three side quests per village: combat, discovery/delivery, and lore.
