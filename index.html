@@ -72,6 +72,11 @@
       <h2 id="questDialogTitle">Villager</h2>
       <p id="questDialogBody"></p>
       <p id="questDialogStatus"></p>
+      <div class="quest-ask" id="questAsk">
+        <div class="ask-topics" id="dialogueTopics"></div>
+        <input id="dialogueInput" class="ask-input" type="text" maxlength="160" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Ask the villager" placeholder="Press T to ask something" />
+        <p class="ask-hint" id="dialogueHint">1-4 ask a topic &middot; T type a question &middot; Enter send &middot; Esc back</p>
+      </div>
       <div class="quest-actions">
         <button id="questAcceptButton" class="secondary" type="button">Accept</button>
         <button id="questClaimButton" type="button">Claim Reward</button>
