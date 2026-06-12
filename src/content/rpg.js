@@ -102,7 +102,7 @@ export const equipmentDefs = {
   ranger_crownring_recurve: {
     character: "ranger",
     name: "Crownring Recurve",
-    summary: "+dmg +focus / costlier -speed",
+    summary: "+flame dmg +focus / costlier -speed",
     // Sidegrade vs Ash Bow: harder-hitting, costlier arrows.
     tuning: {
       arrowDamageBonus: 5,
@@ -115,7 +115,7 @@ export const equipmentDefs = {
   ranger_briarstring_bow: {
     character: "ranger",
     name: "Briarstring Bow",
-    summary: "+range +regen / cheap rolls",
+    summary: "+range +regen / cheap rolls +flame",
     tuning: {
       arrowDamageBonus: 2,
       arrowLife: 1.75,
@@ -267,12 +267,12 @@ export const abilityUnlockLevels = {
 export const abilityDisplayNames = {
   slash: "Sword slash",
   lightning: "Lightning ball",
-  arrow: "Arrow shot",
+  arrow: "Quick Shot",
   block: "Shield block",
   roll: "Tumble roll",
   bash: "Shield bash",
   burst: "Arcane burst",
-  pierce: "Piercing shot",
+  pierce: "Flaming Arrow",
   potion: "Healing Draught",
   resolve: "Warden's Resolve",
   sweep: "Sweeping Cut",

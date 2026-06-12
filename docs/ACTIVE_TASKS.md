@@ -808,18 +808,19 @@ Status: `[x] Done` (playtest/balance follow-up below)
 Class identity (approved direction):
 - Knight: melee tank. Top health plus guard, shield block/bash, holds the line in coop.
 - Wizard: AoE caster and support. Homing lightning, arcane burst, drops potions the whole room shares.
-- Ranger: precision skirmisher. Fast straight-flying arrows (skill shots, cheaper and quicker than lightning but no homing), a Tumble Roll instead of a block, and a level-3 Piercing Shot that punches through a line of enemies. Mid health, fast-regenerating small Focus pool, no heals, no block: strongest at range and mobility, weakest when swarmed in melee.
+- Ranger: precision skirmisher. Fast straight-flying Quick Shots (skill shots, cheaper and quicker than lightning but no homing), a Tumble Roll instead of a block, and a level-3 Flaming Arrow that punches through a line of enemies. Mid health, fast-regenerating small Focus pool, no heals, no block: strongest at range and mobility, weakest when swarmed in melee.
 
 Balance numbers as shipped (tuning knobs in `src/content/rpg.js`):
 - Health 68 +5/level (knight 78 +6, wizard 62 +5). Focus 64 +6/level, regen ~18/s (reuses the mana fields/meter; HUD label says "Focus").
-- Arrow: 14 focus, 26+1d6 damage, straight, fast (LMB/Space). Lightning stays the heavier homing option at 42 mana.
-- Piercing Shot (level 3, J/MMB): 34 focus, 38+1d8 to everything along a narrow corridor; the projectile pierces (per-enemy hit set, no consume).
-- Tumble Roll (RMB/K): 22 focus, 0.95s cooldown, impulse toward movement input (falls back to facing).
+- Quick Shot: focus-powered straight arrow (LMB/Space). Lightning stays the heavier homing option.
+- Flaming Arrow (level 3, J/MMB; internal id `pierce`): focus-powered ember arrow that damages everything along a narrow corridor; the projectile pierces (per-enemy hit set, no consume).
+- Tumble Roll (RMB/K): 22 focus, 0.95s cooldown, stronger impulse toward movement input (falls back to facing).
 
 Done evidence (shipped by Cursor agent):
 - `src/content/rpg.js`: ranger weapon defs (Ash Bow default, Crownring Recurve sidegrade), combat tuning, focus costs, ability unlocks (arrow/roll at 1, pierce at 3), display names.
 - `index.html`: Ranger character card. `styles/app.css`: ranger HUD tint (green).
-- `src/main.js`: `characterKey()` helper replaces all binary knight/wizard idioms; progression defaults + save normalization cover ranger; `progressionStatsFor` ranger branch; `createRanger` local model (hood, mantle, cloak, quiver with arrows, recurve bow with string) and `createRemoteRangerDetails` palette variant; arrow/pierce projectiles share the player-projectile pipeline (no homing, pierce uses hit-set); roll/pierce host-side remote handling in `applyRemoteAction*`; HUD icons/labels/ready-states, roster + resume labels; `arrow`/`pierce`/`roll` procedural SFX; touch buttons mapped (block slot = roll, potion slot = pierce).
+- `src/main.js`: `characterKey()` helper replaces all binary knight/wizard idioms; progression defaults + save normalization cover ranger; `progressionStatsFor` ranger branch; `createRanger` local model (hood, mantle, cloak, quiver with arrows, recurve bow with string) and `createRemoteRangerDetails` palette variant; Quick Shot/Flaming Arrow projectiles share the player-projectile pipeline (no homing, Flaming Arrow keeps the internal `pierce` id and uses a hit-set); roll/Flaming Arrow host-side remote handling in `applyRemoteAction*`; HUD icons/labels/ready-states, roster + resume labels; `arrow`/`flamingArrow`/`roll` procedural SFX; touch buttons mapped (block slot = roll, potion slot = Flaming Arrow).
+- Ranger readability tuning (Codex, user request): Tumble Roll impulse increased from 13.5 to 16.5 with a 0.38s active window, while cost/cooldown stay unchanged. The level-3 `pierce` ability is now presented as Flaming Arrow across labels, help, touch aria text, and HUD iconography; local/remote projectiles get a warm fire head, ember impact, and lightweight launch/impact audio without changing the online action id.
 - Model polish pass (user request): new `leather` and `metal` procedural texture styles in `createMaterialDetailTexture`; texture maps added to steel/iron/blue/wizardRobe/wizardHat/leather/darkLeather plus ranger cloak/hood/jerkin materials; knight gained tassets, wizard a sash pouch. Local and remote models share the same material upgrades. Follows `docs/ASSET_POLICY.md` (procedural CanvasTexture only).
 
 Remaining follow-up:

@@ -155,6 +155,7 @@ import {
   const chatLog = document.getElementById("chatLog");
   const chatForm = document.getElementById("chatForm");
   const chatInput = document.getElementById("chatInput");
+  const attackTouchButton = document.querySelector("[data-touch-action='attack']");
   const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
   const potionTouchButton = document.querySelector("[data-touch-action='potion']");
 
@@ -1069,6 +1070,15 @@ import {
     } else if (name === "arrow") {
       playNoise(0.08, { frequency: 2400, gain: 0.03 * amount, q: 0.5 });
       playTone(320, 0.1, { type: "triangle", endFrequency: 130, gain: 0.03 * amount, delay: 0.015 });
+    } else if (name === "flamingArrow") {
+      playNoise(0.08, { frequency: 2400, gain: 0.026 * amount, q: 0.55 });
+      playTone(320, 0.1, { type: "triangle", endFrequency: 130, gain: 0.026 * amount, delay: 0.012 });
+      playNoise(0.17, { frequency: 1080, gain: 0.024 * amount, q: 0.9, delay: 0.02 });
+      playTone(480, 0.08, { type: "triangle", endFrequency: 760, gain: 0.012 * amount, delay: 0.035 });
+    } else if (name === "flamingArrowImpact") {
+      playNoise(0.1, { filterType: "lowpass", frequency: 640, gain: 0.032 * amount, q: 0.7 });
+      playNoise(0.055, { frequency: 2800, gain: 0.018 * amount, q: 1.1, delay: 0.015 });
+      playTone(150, 0.075, { type: "triangle", endFrequency: 90, gain: 0.018 * amount });
     } else if (name === "pierce") {
       playNoise(0.12, { frequency: 1900, gain: 0.04 * amount, q: 0.6 });
       playTone(210, 0.18, { type: "sawtooth", endFrequency: 95, gain: 0.04 * amount, delay: 0.02 });
@@ -2642,7 +2652,7 @@ import {
     if (character === "ranger") {
       return sortUnlocks([
         ...pouchSlots,
-        { level: 3, name: "Piercing shot" },
+        { level: 3, name: "Flaming Arrow" },
         { level: 5, name: "Parting Shot (F)" },
         { level: 7, name: "Heartseeker (C)" }
       ]);
@@ -10839,16 +10849,19 @@ import {
     potionIcon.innerHTML = abilityMarkup(wizard
       ? '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg>'
       : ranger
-      ? '<svg viewBox="0 0 32 32"><path d="M4 16h20M24 16l-5-4M24 16l-5 4"/><path d="M8 10l4 6-4 6M14 10l4 6-4 6"/></svg>'
+      ? '<svg viewBox="0 0 32 32"><path d="M5 18h19M24 18l-5-4M24 18l-5 4"/><path d="M9 11c2.7 2.1 0.5 4.5 3 6 1.2-2.4 4.6-3.1 5.7-0.2 1.4 3.6-2 6.2-5.2 6.2-3.1 0-5.4-2-5.4-4.8 0-2.1 1-3.6 1.9-7.2z"/><path d="M10 18h7"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M15 3l9 4v7c0 6-3.5 10.5-9 13-5.5-2.5-9-7-9-13V7z"/><path d="M15 8v14M9.5 15h11M24 12l5 4-5 4"/></svg>',
       wizard ? "MMB / L" : "J / MMB");
     potionIcon.hidden = false;
+    if (attackTouchButton) {
+      attackTouchButton.setAttribute("aria-label", wizard ? "Lightning ball" : ranger ? "Quick Shot" : "Attack");
+    }
     if (secondaryTouchButton) {
       secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : "Block");
     }
     if (potionTouchButton) {
       potionTouchButton.hidden = false;
-      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Piercing shot" : "Shield bash");
+      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Flaming Arrow" : "Shield bash");
     }
     characterCards.forEach(card => {
       const selected = card.dataset.character === player.character;
@@ -10992,10 +11005,12 @@ import {
       helpParagraph(classes, characterDisplayName(entry.character) + " - " + entry.tagline);
       helpList(classes, entry.abilities.map(ability => {
         const unlockLevel = abilityUnlockLevels[ability.id] || 1;
+        const unlockText = unlockLevel > 1 ? "Unlocks at level " + unlockLevel : "Available from the start";
+        const note = ability.note ? ability.note + " " : "";
         return {
           keys: ability.keys,
           label: abilityDisplayNames[ability.id] || ability.id,
-          text: unlockLevel > 1 ? "unlocks at level " + unlockLevel + "." : "available from the start."
+          text: note + unlockText + "."
         };
       }));
     }
@@ -13374,7 +13389,7 @@ import {
   function applyRemoteAction(action, state, options = {}) {
     const source = new THREE.Vector3(state.x || 0, 0, state.z || 0);
     const forward = forwardFromYaw(state.yaw || 0, new THREE.Vector3());
-    const actionColor = action === "bash" ? 0xffd889 : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
+    const actionColor = action === "bash" ? 0xffd889 : action === "pierce" ? 0xff7b2e : game.mode === "exploration" ? 0x7ae8ff : 0xff705c;
     spawnImpact(source, actionColor, action === "burst" ? 18 : action === "bash" ? 14 : 10);
     if (action === "lightning" || action === "frostbind") {
       playPositionalSfx("lightning", source, 0.82, 42);
@@ -13383,7 +13398,7 @@ import {
     } else if (action === "bash") {
       playPositionalSfx("bash", source, 0.82, 32);
     } else if (action === "arrow" || action === "pierce" || action === "heartseeker" || action === "parting") {
-      playPositionalSfx(action === "heartseeker" ? "pierce" : "arrow", source, 0.8, 36);
+      playPositionalSfx(action === "pierce" ? "flamingArrow" : action === "heartseeker" ? "pierce" : "arrow", source, 0.8, 36);
     } else if (action === "roll") {
       playPositionalSfx("roll", source, 0.7, 24);
     } else if (action === "resolve") {
@@ -13394,7 +13409,7 @@ import {
     if (action === "lightning" || action === "frostbind") {
       spawnRemoteLightningVisual(source, state.yaw || 0);
     } else if (action === "arrow" || action === "pierce" || action === "heartseeker") {
-      spawnRemoteArrowVisual(source, state.yaw || 0, action !== "arrow");
+      spawnRemoteArrowVisual(source, state.yaw || 0, action === "pierce" ? "flaming" : action === "heartseeker" ? "heartseeker" : "arrow");
     }
     if (options.broadcast) {
       broadcastOnlineEffect({ type: "action", ownerId: state.id || "", action, state });
@@ -13483,12 +13498,14 @@ import {
     }
 
     if (action === "pierce") {
-      // Pierce damages every enemy in a narrow forward corridor.
+      // Flaming Arrow keeps the legacy `pierce` action id for compatibility.
       for (const enemy of game.enemies) {
         if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
           continue;
         }
         damageEnemy(enemy, tuning.pierceDamageMin, forward, 0.4, sourceId);
+        spawnImpact(enemy.group ? enemy.group.position : enemy.position, 0xff7b2e, 8);
+        playPositionalSfx("flamingArrowImpact", enemy.group ? enemy.group.position : enemy.position, 0.55, 34);
       }
       return;
     }
@@ -15662,7 +15679,7 @@ import {
       return false;
     }
     player.mana -= cost;
-    player.rollTimer = 0.34;
+    player.rollTimer = 0.38;
     player.secondaryCooldown = 0.95;
     // Roll toward current input direction, falling back to facing.
     const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -15677,7 +15694,7 @@ import {
     } else {
       forwardFromYaw(player.yaw, tmpVec);
     }
-    player.velocity.addScaledVector(tmpVec, 13.5);
+    player.velocity.addScaledVector(tmpVec, 16.5);
     player.yaw = yawFromDirection(tmpVec);
     playSfx("roll", 1);
     sendOnlineAction("roll");
@@ -15704,7 +15721,7 @@ import {
     player.attackDuration = 0.52;
     player.attackCooldown = 1.1;
     player.attackHitDone = false;
-    playSfx("pierce", 1.05);
+    playSfx("flamingArrow", 1.05);
     sendOnlineAction("pierce");
     return true;
   }
@@ -16044,6 +16061,7 @@ import {
   function createArrowProjectile(source, velocity, options = {}) {
     const group = new THREE.Group();
     group.position.copy(source);
+    const flaming = !!options.flaming;
     const shaft = makeCylinder(0.022, 0.022, 0.78, 6, materials.wood, 0, 0, 0);
     shaft.rotation.x = Math.PI / 2;
     // Apex toward -Z (direction of travel): cylinder +Y maps to -Z with Rx(-90deg).
@@ -16051,6 +16069,24 @@ import {
     head.rotation.x = -Math.PI / 2;
     const fletch = makeBox(0.012, 0.09, 0.14, materials.cloth, 0, 0, 0.34);
     group.add(shaft, head, fletch);
+    const flameParts = [];
+    if (flaming) {
+      const flameMaterial = materials.fire.clone();
+      flameMaterial.transparent = true;
+      flameMaterial.opacity = 0.82;
+      flameMaterial.depthWrite = false;
+      const coreMaterial = materials.fireCore.clone();
+      coreMaterial.transparent = true;
+      coreMaterial.opacity = 0.92;
+      coreMaterial.depthWrite = false;
+      const flame = makeCylinder(0.0, 0.075, 0.28, 8, flameMaterial, 0, 0, -0.55);
+      flame.rotation.x = -Math.PI / 2;
+      const core = makeCylinder(0.0, 0.032, 0.18, 8, coreMaterial, 0, 0, -0.59);
+      core.rotation.x = -Math.PI / 2;
+      const ember = makeSphere(0.035, coreMaterial.clone(), 0, 0, -0.22);
+      group.add(flame, core, ember);
+      flameParts.push(flame, core, ember);
+    }
     group.rotation.y = Math.atan2(-velocity.x, -velocity.z);
     scene.add(group);
     return {
@@ -16070,6 +16106,12 @@ import {
       radius: 0.42,
       pierce: !!options.pierce,
       hitIds: options.pierce ? new Set() : null,
+      flaming,
+      flameParts,
+      impactColor: options.impactColor || (flaming ? 0xff7b2e : null),
+      impactCount: options.impactCount ?? (flaming ? 14 : 16),
+      expireImpactCount: options.expireImpactCount ?? (flaming ? 6 : null),
+      impactSfx: options.impactSfx || (flaming ? "flamingArrowImpact" : ""),
       visualOnly: !!options.visualOnly
     };
   }
@@ -16090,6 +16132,11 @@ import {
     game.playerProjectiles.push(tagActiveCombatActor(createArrowProjectile(source, velocity, {
       damage,
       pierce,
+      flaming: pierce,
+      impactColor: pierce ? 0xff7b2e : undefined,
+      impactCount: pierce ? 14 : 16,
+      expireImpactCount: pierce ? 6 : undefined,
+      impactSfx: pierce ? "flamingArrowImpact" : "",
       stun: heartseeker ? 0.8 : pierce ? 0.4 : 0.22,
       life: heartseeker ? 1.9 : pierce ? 1.7 : tuning.arrowLife
     })));
@@ -16121,14 +16168,19 @@ import {
     }));
   }
 
-  function spawnRemoteArrowVisual(source, yaw, pierce = false) {
+  function spawnRemoteArrowVisual(source, yaw, variant = "arrow") {
     const start = source.clone();
     const direction = forwardFromYaw(yaw, new THREE.Vector3());
+    const flaming = variant === "flaming";
+    const heavy = flaming || variant === "heartseeker";
     start.y = (game.mode === "exploration" ? explorationGroundWorldY(start.x, start.z) : 0) + 1.5;
     start.addScaledVector(direction, 0.62);
-    game.playerProjectiles.push(createArrowProjectile(start, direction.multiplyScalar(26 * (pierce ? 1.15 : 1)), {
+    game.playerProjectiles.push(createArrowProjectile(start, direction.multiplyScalar(26 * (heavy ? 1.15 : 1)), {
       visualOnly: true,
-      life: pierce ? 1.0 : 0.85,
+      flaming,
+      impactColor: flaming ? 0xff7b2e : undefined,
+      impactSfx: flaming ? "flamingArrowImpact" : "",
+      life: heavy ? 1.0 : 0.85,
       damage: 0,
       stun: 0
     }));
@@ -16308,7 +16360,17 @@ import {
         projectile.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 28 + i) * 0.18);
         projectile.shell.scale.setScalar(pulse);
       }
-      const impactColor = projectile.type === "arrow" ? 0xd6c08a : 0x7ae8ff;
+      if (projectile.flaming && projectile.flameParts) {
+        const flicker = 1 + Math.sin(clock.elapsedTime * 34 + i * 1.7) * 0.18;
+        projectile.flameParts.forEach((part, index) => {
+          const base = index === 1 ? 0.82 : index === 2 ? 0.68 : 1.0;
+          part.scale.setScalar(base * flicker);
+          if (part.material && part.material.opacity != null) {
+            part.material.opacity = index === 2 ? 0.55 + (flicker - 1) * 0.8 : 0.78 + (flicker - 1) * 0.7;
+          }
+        });
+      }
+      const impactColor = projectile.impactColor || (projectile.type === "arrow" ? 0xd6c08a : 0x7ae8ff);
 
       let consumed = false;
       if (!projectile.visualOnly && canSimulateSharedWorld()) {
@@ -16330,7 +16392,10 @@ import {
             hitDirection.copy(forwardFromYaw(player.yaw, hitDirection));
           }
           damageEnemy(enemy, projectile.damage, hitDirection, projectile.stun);
-          spawnImpact(projectile.group.position, impactColor, 16);
+          spawnImpact(projectile.group.position, impactColor, projectile.impactCount ?? 16);
+          if (projectile.impactSfx) {
+            playPositionalSfx(projectile.impactSfx, projectile.group.position, 0.62, 34);
+          }
           if (projectile.pierce) {
             projectile.hitIds.add(enemy);
             continue;
@@ -16351,7 +16416,10 @@ import {
         : Math.hypot(projectile.group.position.x, projectile.group.position.z);
       const maxProjectileDistance = game.mode === "exploration" ? game.exploration.radius + 28 : arenaRadius + 14;
       if (projectile.life <= 0 || dist > maxProjectileDistance) {
-        spawnImpact(projectile.group.position, impactColor, projectile.type === "arrow" ? 6 : 10);
+        spawnImpact(projectile.group.position, impactColor, projectile.expireImpactCount ?? (projectile.type === "arrow" ? 6 : 10));
+        if (projectile.impactSfx && projectile.flaming) {
+          playPositionalSfx(projectile.impactSfx, projectile.group.position, 0.4, 30);
+        }
         scene.remove(projectile.group);
         game.playerProjectiles.splice(i, 1);
       }
