@@ -951,7 +951,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       playPositionalSfx("spiderLunge", position, 0.95, 38);
     } else if (enemy.type === "wisp" && previousState !== "pulse" && enemy.state === "pulse") {
       playPositionalSfx("wispPulse", position, 0.9, 42);
-    } else if ((enemy.type === "barbarian" || enemy.type === "briarBeast") && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
+    } else if (enemy.type === "wisp" && previousState !== "hex" && enemy.state === "hex") {
+      playPositionalSfx("wispPulse", position, 0.8, 44);
+    } else if (enemy.type === "banditArcher" && previousState !== "draw" && enemy.state === "draw") {
+      playPositionalSfx("arrow", position, 0.6, 42);
+    } else if (enemy.type === "sandViper" && previousState !== "spit" && enemy.state === "spit") {
+      playPositionalSfx("spiderLunge", position, 0.7, 40);
+    } else if ((enemy.type === "barbarian" || enemy.type === "briarBeast" || enemy.type === "bonewarden" || enemy.type === "bogLurker") && enemy.state === "attack" && (previousState !== "attack" || previousAttackType !== enemy.attackType)) {
       playPositionalSfx(enemy.attackType === "heavy" ? "barbarianHeavy" : "barbarianAttack", position, 0.9, 36);
     }
   }
@@ -1455,7 +1461,29 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     wizardPotionLiquid: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.9 }),
     fullPotionLiquid: new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.94 }),
     slash: new THREE.MeshBasicMaterial({ color: 0xbfefff, transparent: true, opacity: 0.0, depthWrite: false }),
-    hit: new THREE.MeshBasicMaterial({ color: 0xffe1a6, transparent: true, opacity: 0.0, depthWrite: false })
+    hit: new THREE.MeshBasicMaterial({ color: 0xffe1a6, transparent: true, opacity: 0.0, depthWrite: false }),
+    // Meadow Bandit Archer: drab road-raider greens/browns with leather and a bow.
+    banditTunic: new THREE.MeshStandardMaterial({ color: 0x55613a, map: createMaterialDetailTexture("bandit-tunic", "cloth", 1.2, 1.3), roughness: 0.84 }),
+    banditHood: new THREE.MeshStandardMaterial({ color: 0x39432a, map: createMaterialDetailTexture("bandit-hood", "cloth", 1.1, 1.1), roughness: 0.86 }),
+    banditMask: new THREE.MeshStandardMaterial({ color: 0x2a2f22, roughness: 0.82 }),
+    bowWood: new THREE.MeshStandardMaterial({ color: 0x6e4a27, map: createMaterialDetailTexture("bandit-bow", "wood", 1, 1.7), roughness: 0.82 }),
+    // Desert Sand Viper: sandy scaled serpent with a darker dorsal hood and venom sacs.
+    viperScale: new THREE.MeshStandardMaterial({ color: 0xc2a25a, map: createMaterialDetailTexture("viper-scale", "scales", 1.5, 1.5), roughness: 0.7, metalness: 0.05 }),
+    viperBelly: new THREE.MeshStandardMaterial({ color: 0xe7d8af, map: createMaterialDetailTexture("viper-belly", "leather", 1.1, 1.1), roughness: 0.82 }),
+    viperHood: new THREE.MeshStandardMaterial({ color: 0x8a6a32, map: createMaterialDetailTexture("viper-hood", "scales", 1.2, 1.2), roughness: 0.74 }),
+    venomGlow: new THREE.MeshBasicMaterial({ color: 0x9be04a, transparent: true, opacity: 0.85 }),
+    // Mountain Bonewarden: bleached bone, pitted dark iron plates, necrotic rune-light.
+    boneArmor: new THREE.MeshStandardMaterial({ color: 0xc9bd99, roughness: 0.66 }),
+    necroticGlow: new THREE.MeshBasicMaterial({ color: 0x8fe6ad }),
+    // Swamp Bog Lurker: wet dark-green hide, moss mantle, sodden muck.
+    bogHide: new THREE.MeshStandardMaterial({ color: 0x3a4f38, map: createMaterialDetailTexture("bog-hide", "hide", 1.3, 1.3), roughness: 0.92 }),
+    bogMoss: new THREE.MeshStandardMaterial({ color: 0x49682f, roughness: 0.94 }),
+    bogMuck: new THREE.MeshStandardMaterial({ color: 0x283626, roughness: 0.96 }),
+    // Enemy projectile variants reuse the fire-orb pipeline (host-authoritative + replicated).
+    venomOrb: new THREE.MeshBasicMaterial({ color: 0x7ec23f }),
+    venomOrbCore: new THREE.MeshBasicMaterial({ color: 0xe9ffb0 }),
+    hexOrb: new THREE.MeshBasicMaterial({ color: 0x46c7b0, transparent: true, opacity: 0.92 }),
+    hexOrbCore: new THREE.MeshBasicMaterial({ color: 0xd8fff1 })
   };
 
   const modelScale = {
@@ -1463,7 +1491,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     barbarianBase: 1.08,
     dragonBase: 1.06,
     spiderBase: 1.32,
-    briarBeastBase: 1.18
+    briarBeastBase: 1.18,
+    banditBase: 1.02,
+    viperBase: 1.05,
+    bonewardenBase: 1.06,
+    bogLurkerBase: 1.12
   };
 
   // Shared grassland/meadow cottage materials. Gated to the default house
@@ -7847,7 +7879,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     addExplorationFlowers(group, random, 160);
 
-    for (let i = 0; i < 34; i += 1) {
+    // Meadow: the roaming brawler stays the staple; some spawns are converted
+    // to ranged Bandit Archers so the region has a close + distance pairing.
+    for (let i = 0; i < 22; i += 1) {
       const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow");
       const world = explorationToWorld(point.x, point.z);
       const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
@@ -7855,13 +7889,29 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       mob.maxHealth = mob.health;
       seedExplorationEnemy(mob, world, random, 14 + random() * 8, 9.5);
     }
-    for (let i = 0; i < 13; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
+      const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow");
+      const world = explorationToWorld(point.x, point.z);
+      const archer = createBanditArcher(world.x, world.z, 1 + Math.floor(random() * 3));
+      seedExplorationEnemy(archer, world, random, 16 + random() * 8, 11);
+    }
+    // Desert: the close-range spider stays; some spawns become Sand Vipers that
+    // spit venom orbs from a distance.
+    for (let i = 0; i < 8; i += 1) {
       const point = randomPointInBiome(random, "desert", 13);
       const world = explorationToWorld(point.x, point.z);
       const spider = createSpider(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(spider, world, random, 13 + random() * 6, 7.5);
     }
     for (let i = 0; i < 5; i += 1) {
+      const point = randomPointInBiome(random, "desert", 13);
+      const world = explorationToWorld(point.x, point.z);
+      const viper = createSandViper(world.x, world.z, 1 + Math.floor(random() * 2));
+      seedExplorationEnemy(viper, world, random, 14 + random() * 6, 9);
+    }
+    // Mountain: the distance drake stays; reanimated Bonewardens give the peaks
+    // a close-range melee threat.
+    for (let i = 0; i < 3; i += 1) {
       const point = randomPointInBiome(random, "mountain", 16);
       const world = explorationToWorld(point.x, point.z);
       const dragon = createDragon(world.x, world.z, 1 + Math.floor(random() * 2));
@@ -7871,11 +7921,25 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       dragon.desiredRange = 9.2 + random() * 2.0;
       seedExplorationEnemy(dragon, world, random, 21 + random() * 8, 18);
     }
-    for (let i = 0; i < 11; i += 1) {
+    for (let i = 0; i < 4; i += 1) {
+      const point = randomPointInBiome(random, "mountain", 16);
+      const world = explorationToWorld(point.x, point.z);
+      const warden = createBonewarden(world.x, world.z, 1 + Math.floor(random() * 3));
+      seedExplorationEnemy(warden, world, random, 13 + random() * 7, 10);
+    }
+    // Swamp: the wisp gains a hex-orb distance attack; the Bog Lurker adds a
+    // second, close-range mire threat.
+    for (let i = 0; i < 6; i += 1) {
       const point = randomPointInBiome(random, "swamp", 12);
       const world = explorationToWorld(point.x, point.z);
       const wisp = createWisp(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(wisp, world, random, 15 + random() * 6, 9.5);
+    }
+    for (let i = 0; i < 5; i += 1) {
+      const point = randomPointInBiome(random, "swamp", 12);
+      const world = explorationToWorld(point.x, point.z);
+      const lurker = createBogLurker(world.x, world.z, 1 + Math.floor(random() * 3));
+      seedExplorationEnemy(lurker, world, random, 13 + random() * 6, 9);
     }
     for (let i = 0; i < 12; i += 1) {
       const point = randomPointInBiome(random, "briar", 12);
@@ -10026,6 +10090,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function serializeFireballState(fireball) {
     return {
       fireballId: fireball.netId,
+      variant: fireball.variant || "fire",
       x: fireball.group.position.x,
       y: fireball.group.position.y,
       z: fireball.group.position.z,
@@ -10095,6 +10160,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       enemy = createWisp(state.x, state.z, wave);
     } else if (type === "briarBeast") {
       enemy = createBriarBeast(state.x, state.z, wave);
+    } else if (type === "banditArcher") {
+      enemy = createBanditArcher(state.x, state.z, wave);
+    } else if (type === "sandViper") {
+      enemy = createSandViper(state.x, state.z, wave);
+    } else if (type === "bonewarden") {
+      enemy = createBonewarden(state.x, state.z, wave);
+    } else if (type === "bogLurker") {
+      enemy = createBogLurker(state.x, state.z, wave);
     } else {
       enemy = createBarbarian(state.x, state.z, wave);
     }
@@ -10162,19 +10235,56 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return enemy;
   }
 
+  // Visual/impact palette per enemy-projectile variant. All variants ride the
+  // same replicated fireball pipeline; only the look and impact cue differ.
+  function fireballVariantStyle(variant) {
+    if (variant === "venom") {
+      return { shellMat: materials.venomOrb, coreMat: materials.venomOrbCore, glow: 0x8fd94a, impact: 0x9be04a, impactSfx: "spiderLunge" };
+    }
+    if (variant === "hex") {
+      return { shellMat: materials.hexOrb, coreMat: materials.hexOrbCore, glow: 0x6ff0cf, impact: 0x8affd2, impactSfx: "wispPulse" };
+    }
+    return { shellMat: materials.fire, coreMat: materials.fireCore, glow: 0xff7b2e, impact: 0xff7b2e, impactSfx: "fireballImpact" };
+  }
+
   function createFireballVisual(state) {
+    const variant = state.variant || "fire";
     const group = new THREE.Group();
     group.position.set(state.x || 0, state.y || 0.9, state.z || 0);
-    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), materials.fire.clone());
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.08, 14, 10), materials.fireCore.clone());
-    const glow = new THREE.PointLight(0xff7b2e, 2.6, 9, 1.7);
-    shell.castShadow = true;
-    group.add(shell, core, glow);
+    let shell = null;
+    let core = null;
+    let style;
+    if (variant === "arrow") {
+      // Reuses the fireball pipeline but reads as a loosed arrow: a straight,
+      // non-glowing shaft that the joiner sees replicated like any projectile.
+      const shaft = makeCylinder(0.024, 0.024, 0.82, 6, materials.bowWood, 0, 0, 0);
+      shaft.rotation.x = Math.PI / 2;
+      const head = makeCylinder(0.0, 0.05, 0.16, 6, materials.steel.clone(), 0, 0, -0.47);
+      head.rotation.x = -Math.PI / 2;
+      const fletch = makeBox(0.014, 0.1, 0.16, materials.banditTunic, 0, 0, 0.34);
+      group.add(shaft, head, fletch);
+      style = { impact: 0xe7d4a6, impactSfx: "fireballImpact" };
+    } else {
+      style = fireballVariantStyle(variant);
+      shell = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), style.shellMat.clone());
+      core = new THREE.Mesh(new THREE.SphereGeometry(0.08, 14, 10), style.coreMat.clone());
+      const glow = new THREE.PointLight(style.glow, variant === "hex" ? 2.2 : 2.6, 9, 1.7);
+      shell.castShadow = true;
+      group.add(shell, core, glow);
+      if (variant === "hex") {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.02, 8, 22), style.coreMat.clone());
+        ring.rotation.x = Math.PI / 2;
+        group.add(ring);
+      }
+    }
     scene.add(group);
     return assignFireballId({
       group,
       shell,
       core,
+      variant,
+      impactColor: style.impact,
+      impactSfx: style.impactSfx,
       velocity: new THREE.Vector3(state.vx || 0, state.vy || 0, state.vz || 0),
       speed: state.speed || 5.1,
       turnRate: state.turnRate || 0.82,
@@ -10308,7 +10418,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
       }
       if (enemy.telegraph) {
-        enemy.telegraph.visible = enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse";
+        enemy.telegraph.visible = enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse"
+          || enemy.state === "draw" || enemy.state === "spit" || enemy.state === "hex";
       }
       if (enemy.type === "dragon") {
         const targetY = enemy.networkTargetY || enemy.hoverHeight || 2.2;
@@ -10323,12 +10434,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
           updateWispAnimation(enemy, dt);
         } else if (enemy.type === "briarBeast") {
           updateBriarBeastAnimation(enemy, dt);
-        } else {
+        } else if (enemy.type === "sandViper") {
+          updateViperAnimation(enemy, dt);
+        } else if (enemy.leftLeg && enemy.rightLeg) {
           enemy.walkTime += enemy.velocity.length() * dt;
           const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.38, enemy.velocity.length() * 0.08);
           enemy.leftLeg.rotation.x = legSwing;
           enemy.rightLeg.rotation.x = -legSwing;
-          enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+          if (enemy.chest) {
+            enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
+          }
         }
       }
       enemy.group.rotation.y = enemy.yaw;
@@ -10341,11 +10456,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
       const target = fireball.networkTargetPosition || fireball.group.position;
       fireball.group.position.lerp(target, 1 - Math.pow(0.00005, dt));
-      fireball.shell.rotation.y += dt * 7.5;
-      fireball.shell.rotation.x += dt * 5.8;
-      const pulse = 1 + Math.sin(clock.elapsedTime * 18) * 0.14;
-      fireball.shell.scale.setScalar(pulse);
-      fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24) * 0.2);
+      if (fireball.shell) {
+        fireball.shell.rotation.y += dt * 7.5;
+        fireball.shell.rotation.x += dt * 5.8;
+        const pulse = 1 + Math.sin(clock.elapsedTime * 18) * 0.14;
+        fireball.shell.scale.setScalar(pulse);
+        fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24) * 0.2);
+      } else {
+        fireball.group.rotation.y = Math.atan2(-fireball.velocity.x, -fireball.velocity.z);
+        fireball.group.rotation.x = Math.atan2(fireball.velocity.y, Math.hypot(fireball.velocity.x, fireball.velocity.z));
+      }
     }
   }
 
@@ -10478,7 +10598,15 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function explorationRewardForEnemy(enemy) {
-    const base = enemy.type === "dragon" ? 28 : enemy.type === "wisp" ? 14 : enemy.type === "spider" ? 10 : enemy.type === "briarBeast" ? 13 : 12;
+    const base = enemy.type === "dragon" ? 28
+      : enemy.type === "wisp" ? 14
+      : enemy.type === "spider" ? 10
+      : enemy.type === "briarBeast" ? 13
+      : enemy.type === "banditArcher" ? 14
+      : enemy.type === "sandViper" ? 13
+      : enemy.type === "bonewarden" ? 16
+      : enemy.type === "bogLurker" ? 15
+      : 12;
     return Math.round(base * (enemy.xpMul || 1));
   }
 
@@ -11755,6 +11883,443 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     group.add(floatRoot, healthRoot, telegraph);
     return { group, floatRoot, shell, core, ringA, ringB, sparks, healthRoot, hpFill, telegraph };
+  }
+
+  function makeCreatureHealthBar(yOffset, fillColor, backColor = 0x1c150a, width = 0.86) {
+    const healthRoot = new THREE.Group();
+    healthRoot.position.set(0, yOffset, 0);
+    const hpBack = new THREE.Mesh(new THREE.PlaneGeometry(width, 0.08), new THREE.MeshBasicMaterial({ color: backColor, transparent: true, opacity: 0.82, side: THREE.DoubleSide }));
+    const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.045), new THREE.MeshBasicMaterial({ color: fillColor, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+    hpFill.position.z = 0.003;
+    healthRoot.add(hpBack, hpFill);
+    return { healthRoot, hpFill };
+  }
+
+  // Meadow Bandit Archer: a lean hooded road-raider that looses arrows from a
+  // distance. Quality target is the horse model: jointed limbs, layered cloth,
+  // and shared procedural textures.
+  function createBanditArcherModel(scale) {
+    const group = new THREE.Group();
+    group.scale.setScalar(scale);
+
+    const hips = makeCylinder(0.28, 0.34, 0.46, 12, materials.leather, 0, 0.84, 0);
+    const chest = makeCylinder(0.38, 0.3, 0.78, 12, materials.banditTunic, 0, 1.42, 0);
+    const jerkin = makeCylinder(0.4, 0.32, 0.5, 12, materials.leather.clone(), 0, 1.3, 0);
+    jerkin.scale.set(1.02, 1, 0.86);
+    const belt = makeCylinder(0.34, 0.36, 0.12, 12, materials.darkLeather, 0, 1.02, 0);
+    const buckle = makeBox(0.12, 0.1, 0.05, materials.gold, 0, 1.02, -0.34);
+    const cloak = makeBox(0.66, 0.86, 0.12, materials.banditHood.clone(), 0, 1.42, 0.26);
+    cloak.rotation.x = 0.08;
+
+    const neck = makeCylinder(0.1, 0.12, 0.16, 8, materials.skin, 0, 1.86, 0);
+    const head = makeSphere(0.2, materials.skin, 0, 2.0, -0.02);
+    const hood = makeSphere(0.27, materials.banditHood, 0, 2.04, 0);
+    hood.scale.set(1.05, 1.1, 1.12);
+    const hoodPeak = makeCone(0.16, 0.34, 7, materials.banditHood.clone(), 0, 2.12, 0.18);
+    hoodPeak.rotation.x = 0.95;
+    const mask = makeBox(0.28, 0.14, 0.1, materials.banditMask, 0, 1.92, -0.2);
+    const leftEye = makeSphere(0.028, materials.emberEye, -0.07, 2.0, -0.22);
+    const rightEye = makeSphere(0.028, materials.emberEye, 0.07, 2.0, -0.22);
+
+    const quiver = makeCylinder(0.08, 0.1, 0.5, 8, materials.darkLeather, 0.16, 1.5, 0.3);
+    quiver.rotation.set(0.3, 0, -0.4);
+    const arrowsInQuiver = new THREE.Group();
+    for (let i = 0; i < 3; i += 1) {
+      const a = makeCylinder(0.012, 0.012, 0.36, 5, materials.bowWood, 0.13 + i * 0.045, 1.78, 0.34);
+      a.rotation.set(0.3, 0, -0.4);
+      const f = makeBox(0.01, 0.07, 0.07, materials.banditTunic, 0.13 + i * 0.045, 1.92, 0.4);
+      arrowsInQuiver.add(a, f);
+    }
+
+    function makeLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.84, 0);
+      const thigh = makeCylinder(0.1, 0.12, 0.46, 8, materials.banditTunic.clone(), 0, -0.22, 0);
+      const shin = makeCylinder(0.07, 0.09, 0.42, 8, materials.darkLeather, 0, -0.6, 0.015);
+      const boot = makeBox(0.18, 0.14, 0.3, materials.darkLeather, 0, -0.84, -0.05);
+      leg.add(thigh, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeLeg(-0.16);
+    const rightLeg = makeLeg(0.16);
+
+    const bowArmL = new THREE.Group();
+    bowArmL.position.set(-0.4, 1.62, 0);
+    bowArmL.add(
+      makeCylinder(0.07, 0.08, 0.4, 8, materials.banditTunic.clone(), 0, -0.18, 0),
+      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0)
+    );
+    bowArmL.rotation.x = -0.9;
+
+    const bowArmR = new THREE.Group();
+    bowArmR.position.set(0.4, 1.62, 0);
+    bowArmR.add(
+      makeCylinder(0.07, 0.08, 0.4, 8, materials.banditTunic.clone(), 0, -0.18, 0),
+      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0)
+    );
+    bowArmR.rotation.x = -0.55;
+
+    const bowPivot = new THREE.Group();
+    bowPivot.position.set(0, -0.66, 0);
+    const grip = makeCylinder(0.035, 0.035, 0.22, 7, materials.darkLeather, 0, 0, 0);
+    const upperLimb = makeCylinder(0.016, 0.03, 0.5, 6, materials.bowWood, 0, 0.32, 0.06);
+    upperLimb.rotation.x = -0.4;
+    const lowerLimb = makeCylinder(0.03, 0.016, 0.5, 6, materials.bowWood.clone(), 0, -0.32, 0.06);
+    lowerLimb.rotation.x = 0.4;
+    const string = makeCylinder(0.005, 0.005, 0.92, 4, materials.bone, 0, 0, -0.14);
+    bowPivot.add(grip, upperLimb, lowerLimb, string);
+    bowArmL.add(bowPivot);
+
+    const bars = makeCreatureHealthBar(2.42, 0xe0c06a);
+    const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.74, 32), materials.danger.clone());
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.y = 0.025;
+    telegraph.visible = false;
+
+    group.add(
+      hips, chest, jerkin, belt, buckle, cloak, neck, head, hood, hoodPeak, mask, leftEye, rightEye,
+      quiver, arrowsInQuiver, leftLeg, rightLeg, bowArmL, bowArmR, bars.healthRoot, telegraph
+    );
+    return { group, leftLeg, rightLeg, chest, bowArmL, bowArmR, weaponPivot: bowArmR, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
+  }
+
+  // Desert Sand Viper: a low serpentine creature that rears up and spits a
+  // venom orb from range. The body slithers via segment undulation.
+  function createSandViperModel(scale) {
+    const group = new THREE.Group();
+    group.scale.setScalar(scale);
+
+    const segments = [];
+    const segData = [
+      [1.5, 0.1, 0.13],
+      [1.12, 0.12, 0.16],
+      [0.74, 0.13, 0.19],
+      [0.36, 0.14, 0.2],
+      [-0.02, 0.14, 0.2],
+      [-0.32, 0.13, 0.18]
+    ];
+    for (const [z, y, r] of segData) {
+      const seg = makeSphere(r, materials.viperScale.clone(), 0, y, z);
+      seg.scale.set(1.0, 0.78, 1.12);
+      const belly = makeBox(r * 1.1, 0.04, r * 1.6, materials.viperBelly, 0, -r * 0.7, 0);
+      seg.add(belly);
+      segments.push(seg);
+      group.add(seg);
+    }
+    const tailTip = makeCone(0.08, 0.5, 7, materials.viperScale.clone(), 0, 0.1, 1.9);
+    tailTip.rotation.x = Math.PI / 2;
+
+    const neckPivot = new THREE.Group();
+    neckPivot.position.set(0, 0.16, -0.5);
+    const neck = makeCylinder(0.12, 0.16, 0.6, 10, materials.viperScale.clone(), 0, 0.26, -0.04);
+    neck.rotation.x = -0.5;
+    const hoodL = makeBox(0.04, 0.34, 0.3, materials.viperHood, -0.16, 0.5, -0.16);
+    hoodL.rotation.z = 0.5;
+    const hoodR = makeBox(0.04, 0.34, 0.3, materials.viperHood.clone(), 0.16, 0.5, -0.16);
+    hoodR.rotation.z = -0.5;
+    const head = makeSphere(0.18, materials.viperScale.clone(), 0, 0.62, -0.3);
+    head.scale.set(1.1, 0.8, 1.3);
+    const snout = makeBox(0.16, 0.1, 0.2, materials.viperScale.clone(), 0, 0.58, -0.46);
+    const leftEye = makeSphere(0.035, materials.emberEye, -0.09, 0.66, -0.4);
+    const rightEye = makeSphere(0.035, materials.emberEye, 0.09, 0.66, -0.4);
+    const leftFang = makeCone(0.02, 0.1, 5, materials.bone, -0.05, 0.5, -0.5);
+    const rightFang = makeCone(0.02, 0.1, 5, materials.bone, 0.05, 0.5, -0.5);
+    leftFang.rotation.x = Math.PI;
+    rightFang.rotation.x = Math.PI;
+    const tongue = makeBox(0.02, 0.02, 0.18, materials.cloth, 0, 0.55, -0.6);
+    tongue.visible = false;
+    const mouthGlow = makeSphere(0.08, materials.venomGlow.clone(), 0, 0.55, -0.48);
+    mouthGlow.visible = false;
+    neckPivot.add(neck, hoodL, hoodR, head, snout, leftEye, rightEye, leftFang, rightFang, tongue, mouthGlow);
+    neckPivot.rotation.x = -0.2;
+
+    const bars = makeCreatureHealthBar(1.2, 0xc9b06a, 0x2a2410);
+    bars.healthRoot.position.z = -0.3;
+    const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 30), materials.danger.clone());
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.y = 0.02;
+    telegraph.visible = false;
+
+    group.add(tailTip, neckPivot, bars.healthRoot, telegraph);
+    return { group, segments, neckPivot, mouthGlow, tongue, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
+  }
+
+  // Mountain Bonewarden: a reanimated bone soldier with a notched falchion. It
+  // reuses the humanoid melee state machine (weaponPivot + leg swing).
+  function createBonewardenModel(scale) {
+    const group = new THREE.Group();
+    group.scale.setScalar(scale);
+
+    const pelvis = makeBox(0.34, 0.18, 0.22, materials.bone, 0, 0.92, 0);
+    const spine = makeCylinder(0.05, 0.05, 0.52, 6, materials.bone, 0, 1.28, -0.02);
+    const ribCage = makeCylinder(0.26, 0.2, 0.5, 10, materials.boneArmor, 0, 1.34, 0);
+    ribCage.scale.set(1.0, 1, 0.72);
+    const ribs = new THREE.Group();
+    for (let i = 0; i < 3; i += 1) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(0.2 - i * 0.022, 0.018, 6, 16, Math.PI), materials.bone.clone());
+      rib.position.set(0, 1.2 + i * 0.16, -0.04);
+      rib.rotation.x = Math.PI / 2;
+      ribs.add(rib);
+    }
+    const breastplate = makeBox(0.42, 0.46, 0.18, materials.darkStone, 0, 1.34, -0.16);
+    breastplate.scale.set(1, 1, 0.7);
+    const plateRune = makeBox(0.14, 0.2, 0.02, materials.necroticGlow, 0, 1.36, -0.27);
+
+    const skull = makeSphere(0.17, materials.bone.clone(), 0, 1.92, -0.02);
+    skull.scale.set(1, 1.1, 1.05);
+    const jaw = makeBox(0.18, 0.1, 0.16, materials.bone.clone(), 0, 1.8, -0.06);
+    const helm = makeCylinder(0.19, 0.2, 0.16, 10, materials.iron, 0, 2.05, 0);
+    const nasal = makeBox(0.05, 0.18, 0.05, materials.iron.clone(), 0, 1.92, -0.18);
+    const leftEye = makeSphere(0.035, materials.necroticGlow, -0.07, 1.93, -0.16);
+    const rightEye = makeSphere(0.035, materials.necroticGlow, 0.07, 1.93, -0.16);
+
+    const leftShoulder = makeCylinder(0.14, 0.2, 0.18, 10, materials.darkStone.clone(), -0.4, 1.66, 0);
+    const rightShoulder = makeCylinder(0.14, 0.2, 0.18, 10, materials.darkStone.clone(), 0.4, 1.66, 0);
+    leftShoulder.rotation.z = Math.PI / 2;
+    rightShoulder.rotation.z = Math.PI / 2;
+
+    const leftArm = makeBox(0.1, 0.62, 0.1, materials.bone.clone(), -0.44, 1.32, 0);
+
+    const weaponPivot = new THREE.Group();
+    weaponPivot.position.set(0.46, 1.5, -0.02);
+    const armBone = makeCylinder(0.05, 0.06, 0.5, 7, materials.bone.clone(), 0, -0.18, 0);
+    const grip = makeCylinder(0.04, 0.04, 0.5, 7, materials.darkLeather, 0, 0, -0.4);
+    grip.rotation.x = Math.PI / 2;
+    const guard = makeBox(0.34, 0.06, 0.1, materials.iron.clone(), 0, 0.02, -0.62);
+    const blade = makeBox(0.12, 0.05, 1.0, materials.steel.clone(), 0, 0.04, -1.16);
+    const bladeTip = makeCone(0.085, 0.26, 4, materials.steel.clone(), 0, 0.04, -1.78);
+    bladeTip.rotation.set(-Math.PI / 2, Math.PI / 4, 0);
+    const notch = makeBox(0.06, 0.06, 0.18, materials.iron.clone(), 0.05, 0.04, -1.4);
+    weaponPivot.add(armBone, grip, guard, blade, bladeTip, notch);
+    weaponPivot.rotation.set(-0.12, -0.3, -0.7);
+
+    function makeLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.9, 0);
+      const femur = makeCylinder(0.06, 0.07, 0.46, 7, materials.bone.clone(), 0, -0.24, 0);
+      const tibia = makeCylinder(0.045, 0.055, 0.44, 7, materials.bone.clone(), 0, -0.62, 0.01);
+      const foot = makeBox(0.16, 0.1, 0.3, materials.darkStone.clone(), 0, -0.86, -0.05);
+      leg.add(femur, tibia, foot);
+      return leg;
+    }
+    const leftLeg = makeLeg(-0.16);
+    const rightLeg = makeLeg(0.16);
+
+    const bars = makeCreatureHealthBar(2.5, 0xbfeccd, 0x12211a);
+    const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.65, 0.8, 32), materials.danger.clone());
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.y = 0.025;
+    telegraph.visible = false;
+
+    group.add(
+      pelvis, spine, ribCage, ribs, breastplate, plateRune, skull, jaw, helm, nasal, leftEye, rightEye,
+      leftShoulder, rightShoulder, leftArm, weaponPivot, leftLeg, rightLeg, bars.healthRoot, telegraph
+    );
+    return { group, weaponPivot, leftLeg, rightLeg, chest: ribCage, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
+  }
+
+  // Swamp Bog Lurker: a hunched mire beast that fights at close range with
+  // grasping clawed arms. Reuses the humanoid melee state machine.
+  function createBogLurkerModel(scale) {
+    const group = new THREE.Group();
+    group.scale.setScalar(scale);
+
+    function makeLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.62, 0.08);
+      const thigh = makeCylinder(0.14, 0.16, 0.34, 8, materials.bogHide.clone(), 0, -0.16, 0);
+      const shin = makeCylinder(0.1, 0.13, 0.3, 8, materials.bogHide.clone(), 0, -0.42, -0.06);
+      const foot = makeBox(0.28, 0.1, 0.36, materials.bogMuck, 0, -0.58, -0.16);
+      leg.add(thigh, shin, foot);
+      return leg;
+    }
+    const leftLeg = makeLeg(-0.26);
+    const rightLeg = makeLeg(0.26);
+
+    const back = makeSphere(0.6, materials.bogHide, 0, 1.18, 0.16);
+    back.scale.set(1.2, 0.9, 1.3);
+    const chest = makeSphere(0.46, materials.bogHide.clone(), 0, 0.98, -0.34);
+    chest.scale.set(1.15, 0.95, 1.0);
+    const belly = makeBox(0.6, 0.4, 0.5, materials.bogMuck.clone(), 0, 0.78, -0.3);
+    const mossMantle = makeBox(0.96, 0.12, 1.0, materials.bogMoss, 0, 1.5, 0.18);
+    mossMantle.rotation.x = -0.1;
+    const reeds = new THREE.Group();
+    for (let i = 0; i < 5; i += 1) {
+      const reed = makeCylinder(0.012, 0.02, 0.5 + Math.random() * 0.2, 5, materials.reed, (Math.random() - 0.5) * 0.7, 1.7, 0.1 + (Math.random() - 0.5) * 0.5);
+      reed.rotation.set((Math.random() - 0.5) * 0.4, 0, (Math.random() - 0.5) * 0.4);
+      reeds.add(reed);
+    }
+
+    const head = makeSphere(0.32, materials.bogHide.clone(), 0, 1.04, -0.86);
+    head.scale.set(1.3, 0.78, 1.0);
+    const jaw = makeBox(0.5, 0.16, 0.4, materials.bogMuck.clone(), 0, 0.86, -0.92);
+    const leftEye = makeSphere(0.05, materials.emberEye, -0.16, 1.12, -1.0);
+    const rightEye = makeSphere(0.05, materials.emberEye, 0.16, 1.12, -1.0);
+    const tuskL = makeCone(0.04, 0.2, 6, materials.bone, -0.14, 0.92, -1.12);
+    tuskL.rotation.x = -0.3;
+    const tuskR = makeCone(0.04, 0.2, 6, materials.bone, 0.14, 0.92, -1.12);
+    tuskR.rotation.x = -0.3;
+
+    const leftArm = new THREE.Group();
+    leftArm.position.set(-0.5, 1.2, -0.2);
+    leftArm.add(
+      makeCylinder(0.12, 0.14, 0.5, 8, materials.bogHide.clone(), 0, -0.24, 0),
+      makeCylinder(0.09, 0.11, 0.5, 8, materials.bogHide.clone(), 0, -0.66, 0.04),
+      makeBox(0.22, 0.12, 0.3, materials.bogMuck.clone(), 0, -0.94, -0.02)
+    );
+    leftArm.rotation.x = 0.2;
+
+    const weaponPivot = new THREE.Group();
+    weaponPivot.position.set(0.5, 1.2, -0.2);
+    weaponPivot.add(
+      makeCylinder(0.13, 0.15, 0.52, 8, materials.bogHide.clone(), 0, -0.24, 0),
+      makeCylinder(0.1, 0.12, 0.52, 8, materials.bogHide.clone(), 0, -0.68, 0.04),
+      makeSphere(0.16, materials.bogMuck.clone(), 0, -0.96, -0.02)
+    );
+    for (const cx of [-0.1, 0, 0.1]) {
+      const claw = makeCone(0.03, 0.22, 6, materials.bone.clone(), cx, -1.04, -0.14);
+      claw.rotation.x = -0.5;
+      weaponPivot.add(claw);
+    }
+    weaponPivot.rotation.set(-0.12, -0.3, -0.7);
+
+    const bars = makeCreatureHealthBar(2.0, 0x8fcf6a, 0x132011);
+    const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.75, 0.92, 32), materials.danger.clone());
+    telegraph.rotation.x = -Math.PI / 2;
+    telegraph.position.y = 0.025;
+    telegraph.visible = false;
+
+    group.add(
+      leftLeg, rightLeg, back, chest, belly, mossMantle, reeds, head, jaw, leftEye, rightEye, tuskL, tuskR,
+      leftArm, weaponPivot, bars.healthRoot, telegraph
+    );
+    return { group, weaponPivot, leftLeg, rightLeg, chest, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
+  }
+
+  function createBanditArcher(x, z, wave) {
+    const scale = modelScale.banditBase + Math.random() * 0.1 + Math.min(wave * 0.008, 0.07);
+    const model = createBanditArcherModel(scale);
+    const enemy = {
+      ...model,
+      type: "banditArcher",
+      position: new THREE.Vector3(x, 0, z),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      scale,
+      desiredRange: 9.5 + Math.random() * 1.8,
+      health: 50 + wave * 8,
+      maxHealth: 50 + wave * 8,
+      speed: 2.55 + Math.random() * 0.35 + Math.min(wave * 0.04, 0.4),
+      damageMul: 1 + Math.min(wave * 0.04, 0.55),
+      radius: 0.55 * scale,
+      cooldown: 1.0 + Math.random() * 1.4,
+      state: "patrol",
+      attackType: null,
+      attackTimer: 0,
+      attackDuration: 0,
+      attackHitDone: false,
+      stunned: 0,
+      dead: false,
+      walkTime: Math.random() * 10
+    };
+    assignEnemyId(enemy);
+    enemy.group.position.copy(enemy.position);
+    scene.add(enemy.group);
+    return enemy;
+  }
+
+  function createSandViper(x, z, wave) {
+    const scale = modelScale.viperBase + Math.random() * 0.12;
+    const model = createSandViperModel(scale);
+    const enemy = {
+      ...model,
+      type: "sandViper",
+      position: new THREE.Vector3(x, 0, z),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      scale,
+      desiredRange: 8.0 + Math.random() * 1.6,
+      health: 44 + wave * 7,
+      maxHealth: 44 + wave * 7,
+      speed: 2.95 + Math.random() * 0.4,
+      damageMul: 1 + Math.min(wave * 0.04, 0.5),
+      radius: 0.6 * scale,
+      cooldown: 0.9 + Math.random() * 1.2,
+      state: "patrol",
+      attackType: null,
+      attackTimer: 0,
+      attackDuration: 0,
+      attackHitDone: false,
+      stunned: 0,
+      dead: false,
+      walkTime: Math.random() * 10
+    };
+    assignEnemyId(enemy);
+    enemy.group.position.copy(enemy.position);
+    scene.add(enemy.group);
+    return enemy;
+  }
+
+  function createBonewarden(x, z, wave) {
+    const scale = modelScale.bonewardenBase + Math.random() * 0.12 + Math.min(wave * 0.008, 0.08);
+    const model = createBonewardenModel(scale);
+    const enemy = {
+      ...model,
+      type: "bonewarden",
+      position: new THREE.Vector3(x, 0, z),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      scale,
+      health: 72 + wave * 12,
+      maxHealth: 72 + wave * 12,
+      speed: 2.0 + Math.random() * 0.32 + Math.min(wave * 0.04, 0.4),
+      damageMul: 1.05 + Math.min(wave * 0.045, 0.6),
+      radius: 0.62 * scale,
+      cooldown: 0.7 + Math.random() * 1.1,
+      state: "patrol",
+      attackType: null,
+      attackTimer: 0,
+      attackDuration: 0,
+      attackHitDone: false,
+      stunned: 0,
+      dead: false,
+      walkTime: Math.random() * 10
+    };
+    assignEnemyId(enemy);
+    enemy.group.position.copy(enemy.position);
+    scene.add(enemy.group);
+    return enemy;
+  }
+
+  function createBogLurker(x, z, wave) {
+    const scale = modelScale.bogLurkerBase + Math.random() * 0.12 + Math.min(wave * 0.008, 0.08);
+    const model = createBogLurkerModel(scale);
+    const enemy = {
+      ...model,
+      type: "bogLurker",
+      position: new THREE.Vector3(x, 0, z),
+      velocity: new THREE.Vector3(),
+      yaw: 0,
+      scale,
+      health: 78 + wave * 12,
+      maxHealth: 78 + wave * 12,
+      speed: 1.95 + Math.random() * 0.3 + Math.min(wave * 0.035, 0.36),
+      damageMul: 1.1 + Math.min(wave * 0.045, 0.6),
+      radius: 0.78 * scale,
+      cooldown: 0.8 + Math.random() * 1.1,
+      state: "patrol",
+      attackType: null,
+      attackTimer: 0,
+      attackDuration: 0,
+      attackHitDone: false,
+      stunned: 0,
+      dead: false,
+      walkTime: Math.random() * 10
+    };
+    assignEnemyId(enemy);
+    enemy.group.position.copy(enemy.position);
+    scene.add(enemy.group);
+    return enemy;
   }
 
   function createBarbarian(x, z, wave) {
@@ -13334,6 +13899,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (enemy.type === "wisp") {
       return out.set(enemy.position.x, 1.05, enemy.position.z);
     }
+    if (enemy.type === "sandViper") {
+      return out.set(enemy.position.x, 0.65, enemy.position.z);
+    }
     return out.set(enemy.position.x, 1.08, enemy.position.z);
   }
 
@@ -13448,8 +14016,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.health -= damage;
     enemy.stunned = Math.max(enemy.stunned, stun);
     enemy.velocity.addScaledVector(direction, 4.3);
-    const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.type === "briarBeast" ? tmpVec.set(enemy.position.x, 0.85, enemy.position.z) : enemy.position;
-    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : enemy.type === "briarBeast" ? 0xb9d678 : 0xffd19b;
+    const impactPosition = enemy.type === "dragon" ? enemy.group.position : enemy.type === "wisp" ? tmpVec.set(enemy.position.x, 1.05, enemy.position.z) : enemy.type === "briarBeast" ? tmpVec.set(enemy.position.x, 0.85, enemy.position.z) : enemy.type === "sandViper" ? tmpVec.set(enemy.position.x, 0.6, enemy.position.z) : enemy.position;
+    const impactColor = enemy.type === "dragon" ? 0xffb15d : enemy.type === "spider" ? 0xd9a648 : enemy.type === "wisp" ? 0x8affd2 : enemy.type === "briarBeast" ? 0xb9d678 : enemy.type === "banditArcher" ? 0xd9c08a : enemy.type === "sandViper" ? 0xc9b06a : enemy.type === "bonewarden" ? 0xe6e0c8 : enemy.type === "bogLurker" ? 0x86b06a : 0xffd19b;
     spawnImpact(impactPosition, impactColor, enemy.type === "dragon" ? 14 : 10);
     playSfx("enemyHit", enemy.type === "dragon" ? 1.2 : 0.9);
     broadcastOnlineEffect({
@@ -13727,13 +14295,18 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     } else if (enemy.state === "pulse") {
       enemy.yaw = yawFromDirection(playerDirection);
       updateWispAttack(enemy, dt, playerDistance, playerDirection);
+    } else if (enemy.state === "hex") {
+      enemy.yaw = yawFromDirection(playerDirection);
+      updateWispHexAttack(enemy, dt);
     } else {
-      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 2.0);
+      const shouldChase = playerDistance < enemy.awareness || ((enemy.state === "chase" || enemy.state === "hex") && playerDistance < enemy.awareness * 2.0);
       if (shouldChase) {
         enemy.state = "chase";
         enemy.yaw = yawFromDirection(playerDirection);
         if (playerDistance < 2.7 && enemy.cooldown <= 0) {
           beginWispAttack(enemy);
+        } else if (playerDistance >= 4.2 && playerDistance < 16 && enemy.cooldown <= 0) {
+          beginWispHexAttack(enemy);
         } else {
           const desired = tmpVec2.set(0, 0, 0);
           if (playerDistance > 4.8) {
@@ -13770,6 +14343,269 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.group.rotation.y = enemy.yaw;
     updateWispAnimation(enemy, dt);
     updateEnemyMovementAudio(enemy, dt);
+  }
+
+  // Shared patrol wander used by the ground/serpent ranged attackers.
+  function explorationPatrolStep(enemy, dt, speedMul, settle = 0.02) {
+    if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.7) {
+      chooseExplorationPatrolTarget(enemy);
+    }
+    const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
+    const distance = Math.max(0.001, Math.hypot(toPatrol.x, toPatrol.z));
+    toPatrol.multiplyScalar(1 / distance);
+    enemy.yaw = yawFromDirection(toPatrol);
+    const desired = toPatrol.multiplyScalar(enemy.speed * speedMul);
+    enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(settle, dt));
+    enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(settle, dt));
+  }
+
+  // Kiting movement: hold a preferred firing range, back off when crowded, and
+  // strafe when in the pocket. Mirrors the drake's range-keeping logic.
+  function rangedKiterMove(enemy, dt, distance, direction, strafeMul = 0.4) {
+    const range = enemy.desiredRange || 9;
+    const desired = tmpVec2.set(0, 0, 0);
+    if (distance > range + 1.6) {
+      desired.copy(direction).multiplyScalar(enemy.speed);
+    } else if (distance < range - 1.8) {
+      desired.copy(direction).multiplyScalar(-enemy.speed * 0.82);
+    } else {
+      desired.set(-direction.z, 0, direction.x).multiplyScalar(enemy.speed * strafeMul);
+    }
+    enemy.velocity.x = lerp(enemy.velocity.x, desired.x, 1 - Math.pow(0.016, dt));
+    enemy.velocity.z = lerp(enemy.velocity.z, desired.z, 1 - Math.pow(0.016, dt));
+  }
+
+  function beginBanditAttack(enemy) {
+    enemy.state = "draw";
+    enemy.attackTimer = 0;
+    enemy.attackHitDone = false;
+    enemy.attackDuration = 0.92;
+    enemy.velocity.multiplyScalar(0.3);
+    enemy.telegraph.visible = true;
+    enemy.telegraph.material.opacity = 0.34;
+    enemy.telegraph.scale.setScalar(0.9);
+  }
+
+  function updateBanditAttack(enemy, dt) {
+    enemy.attackTimer += dt;
+    const t = enemy.attackTimer / enemy.attackDuration;
+    enemy.telegraph.visible = true;
+    enemy.telegraph.material.opacity = 0.34 * (1 - smoothstep(0.6, 1, t));
+    const draw = clamp(t / 0.62, 0, 1);
+    if (enemy.bowArmR) {
+      enemy.bowArmR.rotation.x = -0.55 - draw * 0.55;
+    }
+    if (enemy.bowArmL) {
+      enemy.bowArmL.rotation.x = -0.9 - draw * 0.06;
+    }
+    if (!enemy.attackHitDone && t > 0.62) {
+      enemy.attackHitDone = true;
+      launchEnemyOrb(enemy, {
+        variant: "arrow",
+        speed: 20,
+        turnRate: 0,
+        life: 1.7,
+        damage: 16,
+        guardDamage: 22,
+        aimHeight: 1.0,
+        sourceLocal: new THREE.Vector3(-0.5, 1.55, -0.5),
+        launchSfx: "arrow",
+        launchVolume: 0.7,
+        launchDistance: 46
+      });
+    }
+    if (enemy.attackTimer >= enemy.attackDuration) {
+      enemy.state = "chase";
+      enemy.cooldown = 1.6 + Math.random() * 0.9;
+      enemy.telegraph.visible = false;
+      if (enemy.bowArmR) {
+        enemy.bowArmR.rotation.x = -0.55;
+      }
+      if (enemy.bowArmL) {
+        enemy.bowArmL.rotation.x = -0.9;
+      }
+    }
+  }
+
+  function updateExplorationBanditEnemy(enemy, dt, playerDistance, playerDirection) {
+    if (enemy.stunned > 0) {
+      enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+      enemy.telegraph.visible = false;
+    } else if (enemy.state === "draw") {
+      enemy.yaw = yawFromDirection(playerDirection);
+      updateBanditAttack(enemy, dt);
+    } else {
+      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 2.0);
+      if (shouldChase) {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(playerDirection);
+        if (playerDistance < 16 && playerDistance > 3.2 && enemy.cooldown <= 0) {
+          beginBanditAttack(enemy);
+        } else {
+          rangedKiterMove(enemy, dt, playerDistance, playerDirection, 0.36);
+          enemy.walkTime += dt * enemy.speed * (enemy.velocity.length() > 0.3 ? 1 : 0.4);
+          enemy.telegraph.visible = false;
+        }
+      } else {
+        enemy.state = "patrol";
+        explorationPatrolStep(enemy, dt, 0.42);
+        enemy.walkTime += dt * enemy.speed * 0.45;
+        enemy.telegraph.visible = false;
+      }
+    }
+
+    enemy.position.addScaledVector(enemy.velocity, dt);
+    enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
+    constrainExplorationEnemy(enemy);
+    enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
+    enemy.group.rotation.y = enemy.yaw;
+    const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.4, enemy.velocity.length() * 0.09);
+    enemy.leftLeg.rotation.x = legSwing;
+    enemy.rightLeg.rotation.x = -legSwing;
+    updateEnemyMovementAudio(enemy, dt);
+  }
+
+  function updateViperAnimation(enemy, dt) {
+    const speed = Math.min(1, enemy.velocity.length() / Math.max(0.001, enemy.speed));
+    enemy.walkTime += dt * (1.6 + speed * 4);
+    const segments = enemy.segments || [];
+    for (let i = 0; i < segments.length; i += 1) {
+      segments[i].position.x = Math.sin(enemy.walkTime - i * 0.6) * (0.16 + i * 0.02) * (0.4 + speed);
+    }
+    if (enemy.tongue) {
+      enemy.tongue.visible = enemy.state !== "spit" && Math.sin(enemy.walkTime * 3) > 0.7;
+    }
+    if (enemy.neckPivot && enemy.state !== "spit") {
+      enemy.neckPivot.rotation.x = lerp(enemy.neckPivot.rotation.x, -0.2 + Math.sin(enemy.walkTime * 0.8) * 0.05, 1 - Math.pow(0.002, dt));
+    }
+  }
+
+  function beginViperAttack(enemy) {
+    enemy.state = "spit";
+    enemy.attackTimer = 0;
+    enemy.attackHitDone = false;
+    enemy.attackDuration = 0.86;
+    enemy.velocity.multiplyScalar(0.25);
+    enemy.telegraph.visible = true;
+    enemy.telegraph.material.opacity = 0.4;
+    enemy.telegraph.scale.setScalar(0.85);
+    playPositionalSfx("spiderLunge", enemy.position, 0.7, 40);
+  }
+
+  function updateViperAttack(enemy, dt) {
+    enemy.attackTimer += dt;
+    const t = enemy.attackTimer / enemy.attackDuration;
+    enemy.telegraph.visible = true;
+    enemy.telegraph.material.opacity = 0.4 * (1 - smoothstep(0.5, 1, t));
+    const rear = Math.sin(clamp(t, 0, 1) * Math.PI);
+    if (enemy.neckPivot) {
+      enemy.neckPivot.rotation.x = -0.2 - rear * 0.55;
+    }
+    if (enemy.mouthGlow) {
+      enemy.mouthGlow.visible = t > 0.3 && t < 0.85;
+      enemy.mouthGlow.scale.setScalar(0.7 + rear * 1.4);
+    }
+    if (!enemy.attackHitDone && t > 0.55) {
+      enemy.attackHitDone = true;
+      launchEnemyOrb(enemy, {
+        variant: "venom",
+        speed: 11,
+        turnRate: 0.5,
+        life: 2.8,
+        damage: 18,
+        guardDamage: 24,
+        aimHeight: 0.9,
+        sourceLocal: new THREE.Vector3(0, 0.75, -0.85),
+        launchSfx: "wispPulse",
+        launchVolume: 0.7,
+        launchDistance: 44
+      });
+    }
+    if (enemy.attackTimer >= enemy.attackDuration) {
+      enemy.state = "chase";
+      enemy.cooldown = 1.3 + Math.random() * 0.8;
+      enemy.telegraph.visible = false;
+      if (enemy.mouthGlow) {
+        enemy.mouthGlow.visible = false;
+      }
+    }
+  }
+
+  function updateExplorationViperEnemy(enemy, dt, playerDistance, playerDirection) {
+    if (enemy.stunned > 0) {
+      enemy.velocity.multiplyScalar(Math.pow(0.07, dt));
+      enemy.telegraph.visible = false;
+    } else if (enemy.state === "spit") {
+      enemy.yaw = yawFromDirection(playerDirection);
+      updateViperAttack(enemy, dt);
+    } else {
+      const shouldChase = playerDistance < enemy.awareness || (enemy.state === "chase" && playerDistance < enemy.awareness * 1.9);
+      if (shouldChase) {
+        enemy.state = "chase";
+        enemy.yaw = yawFromDirection(playerDirection);
+        if (playerDistance < 14 && playerDistance > 2.6 && enemy.cooldown <= 0) {
+          beginViperAttack(enemy);
+        } else {
+          rangedKiterMove(enemy, dt, playerDistance, playerDirection, 0.46);
+          enemy.telegraph.visible = false;
+        }
+      } else {
+        enemy.state = "patrol";
+        explorationPatrolStep(enemy, dt, 0.4);
+        enemy.telegraph.visible = false;
+      }
+    }
+
+    enemy.position.addScaledVector(enemy.velocity, dt);
+    enemy.velocity.multiplyScalar(Math.pow(0.22, dt));
+    constrainExplorationEnemy(enemy);
+    enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
+    enemy.group.rotation.y = enemy.yaw;
+    updateViperAnimation(enemy, dt);
+    updateEnemyMovementAudio(enemy, dt);
+  }
+
+  function beginWispHexAttack(enemy) {
+    enemy.state = "hex";
+    enemy.attackTimer = 0;
+    enemy.attackHitDone = false;
+    enemy.attackDuration = 0.82;
+    enemy.velocity.multiplyScalar(0.3);
+    enemy.telegraph.visible = true;
+    enemy.telegraph.material.opacity = 0.42;
+    enemy.telegraph.scale.setScalar(0.95);
+    playPositionalSfx("wispPulse", enemy.position, 0.8, 44);
+  }
+
+  function updateWispHexAttack(enemy, dt) {
+    enemy.attackTimer += dt;
+    const t = enemy.attackTimer / enemy.attackDuration;
+    enemy.telegraph.visible = true;
+    enemy.telegraph.scale.setScalar(0.95 + smoothstep(0, 0.7, t) * 0.6);
+    enemy.telegraph.material.opacity = 0.42 * (1 - smoothstep(0.5, 1, t));
+    enemy.floatRoot.scale.setScalar(1 + Math.sin(clamp(t, 0, 1) * Math.PI) * 0.2);
+    if (!enemy.attackHitDone && t > 0.5) {
+      enemy.attackHitDone = true;
+      launchEnemyOrb(enemy, {
+        variant: "hex",
+        speed: 8.5,
+        turnRate: 1.1,
+        life: 3.4,
+        damage: 16,
+        guardDamage: 24,
+        aimHeight: 0.95,
+        sourceLocal: new THREE.Vector3(0, 1.0, 0),
+        launchSfx: "wispPulse",
+        launchVolume: 0.85,
+        launchDistance: 46
+      });
+    }
+    if (enemy.attackTimer >= enemy.attackDuration) {
+      enemy.state = "chase";
+      enemy.cooldown = 1.5 + Math.random() * 0.9;
+      enemy.telegraph.visible = false;
+      enemy.floatRoot.scale.setScalar(1);
+    }
   }
 
   function updateExplorationNpcs(dt) {
@@ -13879,6 +14715,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
       if (enemy.type === "wisp") {
         updateExplorationWispEnemy(enemy, dt, playerDistance, playerDirection);
+        continue;
+      }
+      if (enemy.type === "banditArcher") {
+        updateExplorationBanditEnemy(enemy, dt, playerDistance, playerDirection);
+        continue;
+      }
+      if (enemy.type === "sandViper") {
+        updateExplorationViperEnemy(enemy, dt, playerDistance, playerDirection);
         continue;
       }
 
@@ -14177,6 +15021,45 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     playPositionalSfx("dragonFire", source, 1.0, 70);
   }
 
+  // Shared launcher for ground/serpent/wisp distance attackers. Reuses the same
+  // host-authoritative, replicated fireball pipeline as the drake's fire orb so
+  // arrows, venom orbs, and hex orbs all sync in MQTT co-op.
+  function launchEnemyOrb(enemy, config) {
+    const sourceLocal = config.sourceLocal || new THREE.Vector3(0, 1.1, -0.6);
+    const source = enemy.group.localToWorld(sourceLocal.clone());
+    const targetInfo = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
+    const target = tmpVec.copy(targetInfo.position);
+    target.y = config.aimHeight ?? 0.95;
+    const speed = config.speed || 9;
+    const velocity = target.sub(source).normalize().multiplyScalar(speed);
+    const mul = enemy.damageMul || 1;
+    const projectile = createFireballVisual({
+      variant: config.variant || "fire",
+      x: source.x,
+      y: source.y,
+      z: source.z,
+      vx: velocity.x,
+      vy: velocity.y,
+      vz: velocity.z,
+      speed,
+      turnRate: config.turnRate ?? 0,
+      life: config.life || 3.0,
+      damage: Math.round((config.damage || 20) * mul),
+      guardDamage: Math.round((config.guardDamage || 26) * mul),
+      targetId: targetInfo.id
+    });
+    if (enemy.activityType === "arena") {
+      projectile.activityType = "arena";
+      projectile.activityId = enemy.activityId || game.exploration.arenaActivity.activityId;
+    }
+    projectile.remoteControlled = false;
+    game.fireballs.push(projectile);
+    if (config.launchSfx) {
+      playPositionalSfx(config.launchSfx, source, config.launchVolume || 0.9, config.launchDistance || 48);
+    }
+    return projectile;
+  }
+
   function beginEnemyAttack(enemy, type) {
     enemy.state = "attack";
     enemy.attackType = type;
@@ -14325,11 +15208,18 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         fireball.velocity.copy(currentDirection).multiplyScalar(fireball.speed);
       }
       fireball.group.position.addScaledVector(fireball.velocity, dt);
-      fireball.shell.rotation.y += dt * 7.5;
-      fireball.shell.rotation.x += dt * 5.8;
-      const pulse = 1 + Math.sin(clock.elapsedTime * 18 + i) * 0.14;
-      fireball.shell.scale.setScalar(pulse);
-      fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24 + i) * 0.2);
+      if (fireball.shell) {
+        fireball.shell.rotation.y += dt * 7.5;
+        fireball.shell.rotation.x += dt * 5.8;
+        const pulse = 1 + Math.sin(clock.elapsedTime * 18 + i) * 0.14;
+        fireball.shell.scale.setScalar(pulse);
+        fireball.core.scale.setScalar(1.08 + Math.sin(clock.elapsedTime * 24 + i) * 0.2);
+      } else {
+        fireball.group.rotation.y = Math.atan2(-fireball.velocity.x, -fireball.velocity.z);
+        fireball.group.rotation.x = Math.atan2(fireball.velocity.y, Math.hypot(fireball.velocity.x, fireball.velocity.z));
+      }
+      const impactColor = fireball.impactColor || 0xff7b2e;
+      const impactSfx = fireball.impactSfx || "fireballImpact";
 
       const target = tmpVec.copy(targetInfo.position);
       target.y = 0.92;
@@ -14342,18 +15232,18 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
           hitDirection.copy(forwardFromYaw(player.yaw, hitDirection)).multiplyScalar(-1);
         }
         applyCombatTargetDamage(targetInfo, fireball.damage, fireball.guardDamage, hitDirection, 0.16);
-        spawnImpact(fireball.group.position, 0xff7b2e, 18);
-        playPositionalSfx("fireballImpact", fireball.group.position, 1.0, 70);
-        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff7b2e, count: 18, sfx: "fireballImpact", sfxIntensity: 1.0, sfxDistance: 70 });
+        spawnImpact(fireball.group.position, impactColor, 18);
+        playPositionalSfx(impactSfx, fireball.group.position, 1.0, 70);
+        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: impactColor, count: 18, sfx: impactSfx, sfxIntensity: 1.0, sfxDistance: 70 });
         scene.remove(fireball.group);
         game.fireballs.splice(i, 1);
         continue;
       }
 
       if (fireball.life <= 0 || fireball.group.position.y < 0.16) {
-        spawnImpact(fireball.group.position, 0xff9f42, 10);
-        playPositionalSfx("fireballImpact", fireball.group.position, 0.7, 58);
-        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: 0xff9f42, count: 10, sfx: "fireballImpact", sfxIntensity: 0.7, sfxDistance: 58 });
+        spawnImpact(fireball.group.position, impactColor, 10);
+        playPositionalSfx(impactSfx, fireball.group.position, 0.7, 58);
+        broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: impactColor, count: 10, sfx: impactSfx, sfxIntensity: 0.7, sfxDistance: 58 });
         scene.remove(fireball.group);
         game.fireballs.splice(i, 1);
       }
