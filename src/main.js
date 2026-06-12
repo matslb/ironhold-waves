@@ -20,7 +20,6 @@ import {
   BELLWATER_DUNGEON_NAME,
   DUNGEON_RADIUS,
   ENEMY_SPEED_MULTIPLIER,
-  EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ,
   EXPLORATION_ENEMY_SEPARATION_DISTANCE,
   EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ,
   EXPLORATION_NPC_UPDATE_DISTANCE_SQ,
@@ -12364,14 +12363,8 @@ import {
       const target = enemy.networkTargetPosition || enemy.position;
       enemy.position.lerp(target, 1 - Math.pow(0.0001, dt));
       enemy.velocity.copy(enemy.position).sub(previous).multiplyScalar(1 / Math.max(0.001, dt));
-      enemy.yaw = lerp(enemy.yaw || 0, enemy.networkTargetYaw || 0, 1 - Math.pow(0.0001, dt));
-      if (enemy.healthRoot) {
-        enemy.healthRoot.lookAt(camera.position);
-      }
-      if (enemy.hpFill) {
-        enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
-        enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
-      }
+      enemy.yaw = lerpAngle(enemy.yaw || 0, enemy.networkTargetYaw || 0, 1 - Math.pow(0.0001, dt));
+      updateEnemyHealthBillboard(enemy);
       if (enemy.telegraph) {
         enemy.telegraph.visible = enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse"
           || enemy.state === "draw" || enemy.state === "spit" || enemy.state === "hex";
@@ -12401,7 +12394,7 @@ import {
           }
         }
       }
-      enemy.group.rotation.y = enemy.yaw;
+      applyEnemyVisualYaw(enemy, dt);
       updateEnemyMovementAudio(enemy, dt);
     }
 
@@ -13347,7 +13340,7 @@ import {
       const before = remote.group.position.clone();
       remote.group.position.lerp(remote.targetPosition, 1 - Math.pow(0.0002, dt));
       remote.group.position.y = explorationGroundWorldY(remote.group.position.x, remote.group.position.z);
-      remote.group.rotation.y = lerp(remote.group.rotation.y, remote.targetYaw || 0, 1 - Math.pow(0.00005, dt));
+      remote.group.rotation.y = lerpAngle(remote.group.rotation.y, remote.targetYaw || 0, 1 - Math.pow(0.00005, dt));
       const moved = remote.group.position.distanceTo(before);
       const remoteSpeed = moved / Math.max(0.001, dt);
       updateRemoteMovementAudio(remote, id, remoteSpeed, dt);
@@ -13381,7 +13374,7 @@ import {
             remote.horse.group.position.z,
             updateHorseModelLocalAnimation(remote.horse, horseSpeed, dt)
           );
-          remote.horse.group.rotation.y = lerp(remote.horse.group.rotation.y, remote.horseTargetYaw || 0, 1 - Math.pow(0.00005, dt));
+          remote.horse.group.rotation.y = lerpAngle(remote.horse.group.rotation.y, remote.horseTargetYaw || 0, 1 - Math.pow(0.00005, dt));
         }
       }
       remote.marker.rotation.z += dt * 0.9;
@@ -15247,6 +15240,60 @@ import {
     return Math.atan2(-direction.x, -direction.z);
   }
 
+  function horizontalDistanceSq(a, b) {
+    const dx = a.x - b.x;
+    const dz = a.z - b.z;
+    return dx * dx + dz * dz;
+  }
+
+  function patrolTargetReached(enemy, radius) {
+    return !enemy.patrolTarget || horizontalDistanceSq(enemy.position, enemy.patrolTarget) < radius * radius;
+  }
+
+  function actorYawEase(dt, settle = 0.0002) {
+    return 1 - Math.pow(settle, dt);
+  }
+
+  function applyActorVisualYaw(group, targetYaw, dt, { snap = false, settle = 0.0002 } = {}) {
+    if (!group) {
+      return;
+    }
+    group.rotation.y = snap ? targetYaw : lerpAngle(group.rotation.y || 0, targetYaw || 0, actorYawEase(dt, settle));
+  }
+
+  function enemyVisualYawShouldSnap(enemy) {
+    return enemy.entering
+      || enemy.state === "attack"
+      || enemy.state === "lunge"
+      || enemy.state === "pulse"
+      || enemy.state === "fire"
+      || enemy.state === "draw"
+      || enemy.state === "spit"
+      || enemy.state === "hex";
+  }
+
+  function applyEnemyVisualYaw(enemy, dt) {
+    applyActorVisualYaw(enemy.group, enemy.yaw || 0, dt, { snap: enemyVisualYawShouldSnap(enemy) });
+  }
+
+  function updateEnemyHealthBillboard(enemy) {
+    if (enemy.healthRoot) {
+      enemy.healthRoot.lookAt(camera.position);
+    }
+    if (enemy.hpFill) {
+      enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
+      enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
+    }
+  }
+
+  function updateEnemyHealthBillboards() {
+    for (const enemy of game.enemies) {
+      if (!enemy.dead) {
+        updateEnemyHealthBillboard(enemy);
+      }
+    }
+  }
+
   function resolveExplorationPosition(position, velocity, radius) {
     if (!game.exploration.colliders.length) {
       return;
@@ -16715,7 +16762,7 @@ import {
         explorationGroundWorldY(enemy.position.x, enemy.position.z, enemy.hoverHeight),
         enemy.position.z
       );
-      enemy.group.rotation.y = enemy.yaw;
+      applyEnemyVisualYaw(enemy, dt);
       updateDragonAnimation(enemy, dt);
       updateEnemyMovementAudio(enemy, dt);
       return;
@@ -16729,7 +16776,7 @@ import {
       updateDragonEnemy(enemy, dt, playerDistance, playerDirection);
     } else {
       enemy.state = "patrol";
-      if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 1.2) {
+      if (patrolTargetReached(enemy, 1.2)) {
         chooseExplorationPatrolTarget(enemy);
       }
       const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
@@ -16746,7 +16793,7 @@ import {
     constrainExplorationEnemy(enemy);
     const hover = enemy.hoverHeight + Math.sin(clock.elapsedTime * 3.4 + enemy.bobSeed) * 0.28;
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z, hover), enemy.position.z);
-    enemy.group.rotation.y = enemy.yaw;
+    applyEnemyVisualYaw(enemy, dt);
     updateDragonAnimation(enemy, dt);
     updateEnemyMovementAudio(enemy, dt);
   }
@@ -16841,7 +16888,7 @@ import {
         }
       } else {
         enemy.state = "patrol";
-        if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.65) {
+        if (patrolTargetReached(enemy, 0.65)) {
           chooseExplorationPatrolTarget(enemy);
         }
         const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
@@ -16859,7 +16906,7 @@ import {
     enemy.velocity.multiplyScalar(Math.pow(0.22, dt));
     constrainExplorationEnemy(enemy);
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
-    enemy.group.rotation.y = enemy.yaw;
+    applyEnemyVisualYaw(enemy, dt);
     updateSpiderAnimation(enemy, dt);
     updateEnemyMovementAudio(enemy, dt);
   }
@@ -16983,7 +17030,7 @@ import {
         }
       } else {
         enemy.state = "patrol";
-        if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.75) {
+        if (patrolTargetReached(enemy, 0.75)) {
           chooseExplorationPatrolTarget(enemy);
         }
         const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
@@ -17001,14 +17048,14 @@ import {
     enemy.velocity.multiplyScalar(Math.pow(0.25, dt));
     constrainExplorationEnemy(enemy);
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
-    enemy.group.rotation.y = enemy.yaw;
+    applyEnemyVisualYaw(enemy, dt);
     updateWispAnimation(enemy, dt);
     updateEnemyMovementAudio(enemy, dt);
   }
 
   // Shared patrol wander used by the ground/serpent ranged attackers.
   function explorationPatrolStep(enemy, dt, speedMul, settle = 0.02) {
-    if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.7) {
+    if (patrolTargetReached(enemy, 0.7)) {
       chooseExplorationPatrolTarget(enemy);
     }
     const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
@@ -17119,7 +17166,7 @@ import {
     enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
     constrainExplorationEnemy(enemy);
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
-    enemy.group.rotation.y = enemy.yaw;
+    applyEnemyVisualYaw(enemy, dt);
     const legSwing = Math.sin(enemy.walkTime * 6.5) * Math.min(0.4, enemy.velocity.length() * 0.09);
     enemy.leftLeg.rotation.x = legSwing;
     enemy.rightLeg.rotation.x = -legSwing;
@@ -17221,7 +17268,7 @@ import {
     enemy.velocity.multiplyScalar(Math.pow(0.22, dt));
     constrainExplorationEnemy(enemy);
     enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
-    enemy.group.rotation.y = enemy.yaw;
+    applyEnemyVisualYaw(enemy, dt);
     updateViperAnimation(enemy, dt);
     updateEnemyMovementAudio(enemy, dt);
   }
@@ -17269,6 +17316,14 @@ import {
     }
   }
 
+  function settleFriendlyNpcPose(npc, dt) {
+    const ease = 1 - Math.pow(0.0004, dt);
+    npc.leftLeg.rotation.x = lerp(npc.leftLeg.rotation.x, 0, ease);
+    npc.rightLeg.rotation.x = lerp(npc.rightLeg.rotation.x, 0, ease);
+    npc.leftArm.rotation.z = lerp(npc.leftArm.rotation.z, 0, ease);
+    npc.rightArm.rotation.z = lerp(npc.rightArm.rotation.z, 0, ease);
+  }
+
   function updateExplorationNpcs(dt) {
     for (const npc of game.npcs) {
       const dx = player.position.x - npc.group.position.x;
@@ -17277,6 +17332,7 @@ import {
       npc.group.visible = playerDistanceSq < EXPLORATION_NPC_VISIBLE_DISTANCE_SQ;
       npc.healCooldown = Math.max(0, npc.healCooldown - dt);
       if (playerDistanceSq > EXPLORATION_NPC_UPDATE_DISTANCE_SQ) {
+        settleFriendlyNpcPose(npc, dt);
         continue;
       }
       npc.retarget -= dt;
@@ -17296,12 +17352,16 @@ import {
         toTarget.multiplyScalar(1 / Math.max(0.001, distance));
         npc.group.position.addScaledVector(toTarget, dt * 1.05);
         npc.group.position.y = explorationGroundWorldY(npc.group.position.x, npc.group.position.z);
-        npc.group.rotation.y = yawFromDirection(toTarget);
+        applyActorVisualYaw(npc.group, yawFromDirection(toTarget), dt, { settle: 0.0003 });
         npc.walkTime += dt * 2.8;
       }
-      const swing = Math.sin(npc.walkTime * 5.8) * 0.18;
-      npc.leftLeg.rotation.x = swing;
-      npc.rightLeg.rotation.x = -swing;
+      if (distance > 0.08) {
+        const swing = Math.sin(npc.walkTime * 5.8) * 0.18;
+        npc.leftLeg.rotation.x = swing;
+        npc.rightLeg.rotation.x = -swing;
+      } else {
+        settleFriendlyNpcPose(npc, dt);
+      }
       if (playerDistanceSq < 3.0 * 3.0 && npc.healCooldown <= 0 && player.health < player.maxHealth) {
         player.health = Math.min(player.maxHealth, player.health + 10);
         npc.healCooldown = 16;
@@ -17370,13 +17430,6 @@ import {
       toPlayer.y = 0;
       const playerDistance = Math.max(0.001, toPlayer.length());
       const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
-      const detailed = playerDistance * playerDistance < EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ || enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse" || enemy.state === "fire" || enemy.stunned > 0;
-      if (detailed) {
-        enemy.healthRoot.lookAt(camera.position);
-        enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
-        enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
-      }
-
       if (enemy.type === "dragon") {
         updateExplorationDragonEnemy(enemy, dt, playerDistance, playerDirection);
         continue;
@@ -17423,7 +17476,7 @@ import {
           }
         } else {
           enemy.state = "patrol";
-          if (!enemy.patrolTarget || enemy.position.distanceTo(enemy.patrolTarget) < 0.65) {
+          if (patrolTargetReached(enemy, 0.65)) {
             chooseExplorationPatrolTarget(enemy);
           }
           const toPatrol = tmpVec2.copy(enemy.patrolTarget).sub(enemy.position);
@@ -17462,7 +17515,7 @@ import {
       enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
       constrainExplorationEnemy(enemy);
       enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
-      enemy.group.rotation.y = enemy.yaw;
+      applyEnemyVisualYaw(enemy, dt);
       if (enemy.type === "briarBeast") {
         updateBriarBeastAnimation(enemy, dt);
       } else {
@@ -17495,9 +17548,6 @@ import {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.stunned = Math.max(0, enemy.stunned - dt);
-      enemy.healthRoot.lookAt(camera.position);
-      enemy.hpFill.scale.x = clamp(enemy.health / enemy.maxHealth, 0, 1);
-      enemy.hpFill.position.x = (enemy.type === "dragon" ? -0.505 : -0.41) * (1 - enemy.hpFill.scale.x);
 
       const target = nearestCombatTarget(enemy);
       enemy.targetId = target.id;
@@ -17560,7 +17610,7 @@ import {
       } else {
         enemy.group.position.copy(enemy.position);
       }
-      enemy.group.rotation.y = enemy.yaw;
+      applyEnemyVisualYaw(enemy, dt);
       if (enemy.type === "dragon") {
         updateDragonAnimation(enemy, dt);
       } else if (enemy.type === "briarBeast") {
@@ -18264,6 +18314,7 @@ import {
       updateOnline(dt);
       updateAudio(dt);
       updateCamera(dt);
+      updateEnemyHealthBillboards();
       updateHud();
       if (game.bannerTime > 0) {
         game.bannerTime -= dt;
