@@ -50,6 +50,14 @@
 
     <div class="reticle"></div>
 
+    <section class="chat-panel" id="chatPanel" hidden aria-label="Room chat" aria-live="polite">
+      <div class="chat-log" id="chatLog"></div>
+      <form class="chat-input-row" id="chatForm" hidden autocomplete="off">
+        <span class="chat-input-glyph" aria-hidden="true">&gt;</span>
+        <input class="chat-input" id="chatInput" type="text" maxlength="140" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" aria-label="Chat message" placeholder="Message your party - Enter to send, Esc to cancel">
+      </form>
+    </section>
+
     <div class="minimap-panel" id="minimapPanel" hidden aria-label="World map">
       <canvas class="minimap-canvas" id="questMap" width="352" height="352" aria-label="World minimap with compass"></canvas>
     </div>
