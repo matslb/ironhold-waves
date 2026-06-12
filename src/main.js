@@ -84,7 +84,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   const questServiceButton = document.getElementById("questServiceButton");
   const questCloseButton = document.getElementById("questCloseButton");
   const dialogueTopics = document.getElementById("dialogueTopics");
-  const dialogueInput = document.getElementById("dialogueInput");
   const dialogueHint = document.getElementById("dialogueHint");
   const questLog = document.getElementById("questLog");
   const questLogItems = document.getElementById("questLogItems");
@@ -116,7 +115,25 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
   // Global tuning knob applied to every enemy's base speed at spawn. Bumping this
   // scales chase, patrol, and kiting movement together. 1.0 = original speeds.
-  const ENEMY_SPEED_MULTIPLIER = 1.15;
+  const ENEMY_SPEED_MULTIPLIER = 1.25;
+  // --- Wilds repopulation (Phase 1) ---
+  // Host-only "Wilds Director": every exploration seed point registers at world
+  // build; killed enemies schedule a timed refill at their seed point, applied
+  // by a budgeted round-robin tick that only spawns far from every player.
+  const WILDS_RESPAWN_DELAY = 300;        // s before an emptied seed point refills (5 min)
+  const WILDS_RESPAWN_JITTER = 90;        // + random 0..90s so refills never feel scheduled
+  const WILDS_TIER_DELAY_MUL = [1.5, 1.0, 0.8]; // tier 1/2/3 bands: calm near home, lively at the rim
+  const WILDS_CLEARED_ZONE_RADIUS = 42;   // m: each kill pushes back empty neighbors' timers
+  const WILDS_CLEARED_ZONE_BONUS = 90;    // s added per nearby kill...
+  const WILDS_CLEARED_ZONE_MAX_BONUS = 240; // ...capped, so a battlefield stays clear ~5-9 min total
+  const WILDS_MIN_PLAYER_DISTANCE = 80;   // m: never respawn within this range of ANY player
+                                          //    (max awareness is ~29; HP-bar detail radius is 85)
+  const WILDS_ENEMY_CAP = 96;             // total live exploration enemies (post-bump build is ~86)
+  const WILDS_AREA_CAP = 10;              // live enemies within WILDS_AREA_RADIUS of a candidate
+  const WILDS_AREA_RADIUS = 48;
+  const WILDS_DIRECTOR_INTERVAL = 1.25;   // s between director ticks
+  const WILDS_CHECKS_PER_TICK = 12;       // seed records examined per tick (~90 records -> full sweep ~10s)
+  const WILDS_SPAWNS_PER_TICK = 1;        // hard stagger: one factory call per tick, no hitches
   const QUEST_MAP_UPDATE_INTERVAL = 0.16;
   const MINIMAP_LOGICAL_SIZE = 176;
   const MINIMAP_DPR = 2;
@@ -1444,7 +1461,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     sand: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("arena-sand", "sand", 1.6, 1.6), roughness: 0.99 }),
     water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
     pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
+    pineDeep: new THREE.MeshStandardMaterial({ color: 0x17402a, roughness: 0.92 }),
+    pineSnow: new THREE.MeshStandardMaterial({ color: 0xdfe7ec, roughness: 0.82 }),
     broadleaf: new THREE.MeshStandardMaterial({ color: 0x4d7d3d, roughness: 0.86 }),
+    broadleafLight: new THREE.MeshStandardMaterial({ color: 0x6a9a4a, roughness: 0.84 }),
+    broadleafDeep: new THREE.MeshStandardMaterial({ color: 0x355e2c, roughness: 0.88 }),
+    rubble: new THREE.MeshStandardMaterial({ color: 0x52564f, map: createMaterialDetailTexture("rubble-stone", "stone", 1.1, 1.1), roughness: 0.95 }),
+    sandstone: new THREE.MeshStandardMaterial({ color: 0xa6824c, map: createMaterialDetailTexture("sandstone", "stone", 1.2, 1.2), roughness: 0.96 }),
     roof: new THREE.MeshStandardMaterial({ color: 0x6f2f2b, map: createMaterialDetailTexture("village-roof", "roof", 1.4, 1.4), roughness: 0.88 }),
     plaster: new THREE.MeshStandardMaterial({ color: 0xd0bc91, map: createMaterialDetailTexture("village-plaster", "plaster", 1.2, 1.2), roughness: 0.9 }),
     npcCloth: new THREE.MeshStandardMaterial({ color: 0x7d6cb0, roughness: 0.82 }),
@@ -1609,7 +1632,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     dialogVoiceKey: "",
     dialogActionIndex: 0,
     dialogTopics: [],
-    dialogAskActive: false,
     questMapTimer: 0,
     exploration: {
       origin: new THREE.Vector3(180, 0, 0),
@@ -1631,6 +1653,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       discovered: new Set(),
       completed: false,
       arenaActivity: defaultArenaActivity(),
+      // Wilds Director state: one record per original enemy seed point
+      // (the world's "ecology map"), a tick countdown, and a round-robin
+      // cursor into the records. Host-only; never persisted.
+      wilds: { seedPoints: [], timer: 0, cursor: 0 },
       spawn: new THREE.Vector3(180, 0, 1.6)
     }
   };
@@ -2488,10 +2514,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function characterLevelUnlocks(character) {
     if (character === "wizard") {
       return [
-        { level: 3, name: "Arcane burst" },
-        { level: 5, name: "Potion drop" },
-        { level: 6, name: "Frostbind Bolt (F)" },
-        { level: 9, name: "Crown of Storms (C)" }
+        { level: 1, name: "Healing Draught" },
+        { level: 3, name: "Healing Draught II" },
+        { level: 4, name: "Arcane burst" },
+        { level: 5, name: "Frostbind Bolt (F)" },
+        { level: 7, name: "Healing Draught III" },
+        { level: 8, name: "Crown of Storms (C)" }
       ];
     }
     if (character === "ranger") {
@@ -2519,6 +2547,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return unlocked.length ? unlocked.join(" and ") + " unlocked" : "Stats increased";
   }
 
+  function wizardPotionTier(level = getCharacterLevel("wizard"), tuning = combatTuningFor("wizard")) {
+    if (level >= tuning.wizardPotionTier3Level) {
+      return { tier: 3, heal: tuning.wizardPotionHealT3, cooldown: tuning.wizardPotionCooldownT3, radius: tuning.wizardPotionRadiusT3, splash: tuning.wizardPotionSplashHeal };
+    }
+    if (level >= tuning.wizardPotionTier2Level) {
+      return { tier: 2, heal: tuning.wizardPotionHealT2, cooldown: tuning.wizardPotionCooldownT2, radius: tuning.wizardPotionRadiusT2, splash: 0 };
+    }
+    return { tier: 1, heal: tuning.wizardPotionHealT1, cooldown: tuning.wizardPotionCooldownT1, radius: tuning.wizardPotionRadiusT1, splash: 0 };
+  }
+
   function progressionStatsFor(character = player.character) {
     const level = getCharacterLevel(character);
     const steps = Math.max(0, level - 1);
@@ -2526,12 +2564,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const kit = combatTuningFor(character);
     let stats;
     if (character === "wizard") {
+      const potion = wizardPotionTier(level, kit);
       stats = {
         maxHealth: 48 + steps * 4 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 72 + steps * 8 + (boons.mana || 0),
         manaRegen: 14 + steps * 0.55,
-        potionCooldownMax: Math.max(10, 18 - (progression.exploration.potionCooldownBonus || 0))
+        potionCooldownMax: Math.max(kit.wizardPotionCooldownFloor, potion.cooldown - (progression.exploration.potionCooldownBonus || 0))
       };
     } else if (character === "ranger") {
       // Focus reuses the mana fields: small pool, fast regen.
@@ -3205,6 +3244,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.exploration.arenaCity = null;
     game.exploration.discovered = new Set();
     game.exploration.completed = false;
+    game.exploration.wilds.seedPoints.length = 0;
+    game.exploration.wilds.timer = 0;
+    game.exploration.wilds.cursor = 0;
     resetArenaActivityState();
     game.exploration.xp = getCharacterProgress().xp;
     closeQuestDialog();
@@ -3232,6 +3274,29 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     saveProgress();
     updateHud();
+  }
+
+  // Death penalty: dying costs one level. XP falls back to the previous
+  // level's threshold (xpForLevel), so the level must be re-earned; at level 1
+  // only progress into the level is lost. Stats, ability locks, and the wizard
+  // potion tier all derive from level, so applyProgressionStats/updateHud
+  // re-clamp vitals and HUD to the lower caps. Returns null when nothing was
+  // lost (level 1 with 0 XP, or outside exploration progression).
+  function applyDeathLevelPenalty() {
+    if (game.mode !== "exploration") {
+      return null;
+    }
+    const characterProgress = getCharacterProgress();
+    const beforeLevel = levelFromXp(characterProgress.xp);
+    const targetXp = xpForLevel(Math.max(1, beforeLevel - 1));
+    if (characterProgress.xp <= targetXp) {
+      return null;
+    }
+    characterProgress.xp = targetXp;
+    game.exploration.xp = characterProgress.xp;
+    applyProgressionStats(false);
+    updateHud();
+    return { lostLevel: beforeLevel > 1, level: levelFromXp(characterProgress.xp) };
   }
 
   function makeCone(radius, height, segments, material, x, y, z) {
@@ -3266,6 +3331,194 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(x || 0, y || 0, z || 0);
     return addShadow(mesh);
+  }
+
+  // Rounds a value to a small step so procedurally varied geometry still reuses
+  // a bounded set of cached buffers. Used by trees/rocks so per-instance size
+  // variety does not explode the primitive geometry cache or draw-call budget.
+  function quantizeStep(value, step) {
+    return Math.max(step, Math.round(value / step) * step);
+  }
+
+  // A row of merlons (crenellations) running along local +X, centered on the
+  // parent origin (offset by options.x). The caller positions/rotates the
+  // parent group. Reuses cached box geometry, so a whole battlement is cheap.
+  function addMerlonRow(parent, length, options = {}) {
+    const merlonW = options.merlonW || 0.52;
+    const gap = options.gap || 0.46;
+    const height = options.height || 0.5;
+    const depth = options.depth || 0.34;
+    const material = options.material || materials.cityWall;
+    const baseY = options.y || 0;
+    const z = options.z || 0;
+    const x0 = options.x || 0;
+    const unit = merlonW + gap;
+    const count = Math.max(1, Math.floor((length + gap) / unit));
+    const span = count * unit - gap;
+    const start = x0 - span / 2 + merlonW / 2;
+    for (let i = 0; i < count; i += 1) {
+      parent.add(makeBox(merlonW, height, depth, material, start + i * unit, baseY + height / 2, z));
+    }
+  }
+
+  // A ring of merlons around the top of a round tower.
+  function addCrenelRing(parent, radius, options = {}) {
+    const count = options.count || 10;
+    const merlonW = options.merlonW || 0.36;
+    const height = options.height || 0.44;
+    const depth = options.depth || 0.28;
+    const material = options.material || materials.cityWall;
+    const baseY = options.y || 0;
+    for (let i = 0; i < count; i += 1) {
+      const angle = (i / count) * TAU;
+      const merlon = makeBox(merlonW, height, depth, material, Math.cos(angle) * radius, baseY + height / 2, Math.sin(angle) * radius);
+      merlon.rotation.y = angle;
+      parent.add(merlon);
+    }
+  }
+
+  // Curtain wall segment centered on (cx,cz) local. The longer of width/depth is
+  // the run; a slightly battered base, a wall-walk body, and crenellated parapets
+  // on both faces are added. Ground-conformed and registers line colliders so the
+  // existing collision footprint is preserved.
+  function addCurtainWall(group, cx, cz, width, depth, options = {}) {
+    const material = options.material || materials.cityWall;
+    const height = options.height || 3.1;
+    const horizontal = width >= depth;
+    const length = horizontal ? width : depth;
+    const thickness = horizontal ? depth : width;
+    const seg = new THREE.Group();
+    setExplorationLocalGroundPosition(seg, cx, cz);
+    if (!horizontal) {
+      seg.rotation.y = Math.PI / 2;
+    }
+    const base = makeBox(length, height * 0.32, thickness + 0.3, material, 0, height * 0.16, 0);
+    const body = makeBox(length, height, thickness, material, 0, height / 2, 0);
+    seg.add(base, body);
+    // Single centered crenellated parapet keeps the silhouette readable while
+    // halving the merlon draw calls vs a double-faced parapet.
+    addMerlonRow(seg, length, {
+      material,
+      y: height,
+      z: 0,
+      height: 0.54,
+      depth: Math.min(thickness + 0.12, 0.62),
+      merlonW: 0.62,
+      gap: 0.54
+    });
+    group.add(seg);
+    addExplorationLineColliders(cx, cz, width, depth, "structure");
+    return seg;
+  }
+
+  // Round wall tower with a corbelled, crenellated head and optional conical roof.
+  function addWallTower(group, cx, cz, options = {}) {
+    const radius = options.radius || 1.1;
+    const height = options.height || 4.4;
+    const material = options.material || materials.cityWall;
+    const roofMaterial = options.roofMaterial || materials.cityRoof;
+    const tower = new THREE.Group();
+    setExplorationLocalGroundPosition(tower, cx, cz);
+    const shaft = makeCylinder(radius, radius * 1.18, height, 14, material, 0, height / 2, 0);
+    const corbel = makeCylinder(radius + 0.18, radius + 0.04, 0.3, 14, material, 0, height + 0.15, 0);
+    tower.add(shaft, corbel);
+    addCrenelRing(tower, radius + 0.06, {
+      material,
+      y: height + 0.3,
+      count: options.merlons || 9,
+      merlonW: Math.max(0.26, radius * 0.42),
+      height: 0.46,
+      depth: 0.26
+    });
+    if (options.cone !== false) {
+      const coneHeight = options.coneHeight || 1.7;
+      tower.add(makeCone(radius + 0.22, coneHeight, 14, roofMaterial, 0, height + 0.3 + coneHeight / 2, 0));
+      if (options.finial) {
+        tower.add(makeSphere(0.12, materials.gold, 0, height + 0.3 + coneHeight + 0.12, 0));
+      }
+    }
+    if (options.banner) {
+      const banner = makeBox(0.08, 1.1, 0.62, options.banner, radius + 0.12, height * 0.62, 0);
+      tower.add(banner);
+    }
+    group.add(tower);
+    addExplorationCollider(cx, cz, radius + (options.colliderPad || 0.45), "structure");
+    return tower;
+  }
+
+  // Twin-towered gatehouse with an arched opening, portcullis hint and timber
+  // doors. Sits in a wall gap; the flanking towers carry the colliders so the
+  // gateway itself stays walkable.
+  function addGatehouse(group, cx, cz, options = {}) {
+    const material = options.material || materials.cityWall;
+    const span = options.span || 6.2;
+    const height = options.height || 3.4;
+    const rotation = options.rotation || 0;
+    const gate = new THREE.Group();
+    setExplorationLocalGroundPosition(gate, cx, cz);
+    gate.rotation.y = rotation;
+    const towerW = 1.8;
+    const towerH = height + 1.1;
+    const depth = towerW + 0.6;
+    for (const side of [-1, 1]) {
+      const px = side * (span / 2 + towerW / 2 - 0.15);
+      gate.add(makeBox(towerW, towerH, depth, material, px, towerH / 2, 0));
+      addMerlonRow(gate, towerW, {
+        material, x: px, y: towerH, z: depth / 2 - 0.12, height: 0.46, depth: 0.16, merlonW: 0.4, gap: 0.32
+      });
+      addMerlonRow(gate, towerW, {
+        material, x: px, y: towerH, z: -depth / 2 + 0.12, height: 0.46, depth: 0.16, merlonW: 0.4, gap: 0.32
+      });
+      addExplorationCollider(cx + Math.cos(rotation) * px, cz - Math.sin(rotation) * px, towerW * 0.72, "structure");
+    }
+    const lintelY = height - 0.2;
+    gate.add(makeBox(span + 0.5, height - lintelY + 0.9, depth - 0.2, material, 0, lintelY + (height - lintelY + 0.9) / 2, 0));
+    addMerlonRow(gate, span + 0.2, {
+      material, y: towerH, z: depth / 2 - 0.16, height: 0.46, depth: 0.16, merlonW: 0.44, gap: 0.34
+    });
+    // arched opening hint: a dark recessed reveal + stepped arch shoulders
+    const reveal = makeBox(span - 0.3, lintelY, 0.12, materials.darkStone, 0, lintelY / 2, depth / 2 - 0.05);
+    gate.add(reveal);
+    for (const side of [-1, 1]) {
+      const shoulder = makeBox(0.5, 0.5, 0.16, material, side * (span / 2 - 0.5), lintelY - 0.18, depth / 2 - 0.02);
+      shoulder.rotation.z = side * 0.6;
+      gate.add(shoulder);
+    }
+    // portcullis hint: iron bars across the opening
+    for (let i = 0; i < 4; i += 1) {
+      const bx = -span / 2 + 0.55 + i * ((span - 1.1) / 3);
+      gate.add(makeBox(0.08, lintelY - 0.3, 0.06, materials.iron, bx, (lintelY - 0.3) / 2 + 0.05, depth / 2 - 0.02));
+    }
+    gate.add(makeBox(span - 0.4, 0.08, 0.06, materials.iron, 0, lintelY - 0.5, depth / 2 - 0.02));
+    // timber leaves recessed behind the portcullis
+    gate.add(makeBox(span * 0.46, lintelY - 0.2, 0.08, materials.wood, -span * 0.24, (lintelY - 0.2) / 2, 0.04));
+    gate.add(makeBox(span * 0.46, lintelY - 0.2, 0.08, materials.wood, span * 0.24, (lintelY - 0.2) / 2, 0.04));
+    if (options.banner) {
+      gate.add(makeBox(0.08, 1.3, 0.78, options.banner, 0, height * 0.58, depth / 2 - 0.02));
+    }
+    group.add(gate);
+    return gate;
+  }
+
+  // Clustered low-poly tree canopy: a handful of overlapping leaf blobs with
+  // quantized radii (cache friendly) and slight per-blob squash for a layered,
+  // hand-built look instead of a single sphere.
+  function addCanopyCluster(parent, material, cx, cy, cz, baseRadius, random, options = {}) {
+    const blobs = options.blobs || 4;
+    const spread = options.spread || baseRadius * 0.72;
+    const accent = options.accent || null;
+    for (let i = 0; i < blobs; i += 1) {
+      const radius = quantizeStep(baseRadius * (i === 0 ? 1 : 0.6 + random() * 0.42), 0.1);
+      const angle = random() * TAU;
+      const dist = i === 0 ? 0 : spread * (0.45 + random() * 0.7);
+      const mat = accent && random() > 0.62 ? accent : material;
+      const blob = makeSphere(radius, mat,
+        cx + Math.cos(angle) * dist,
+        cy + (i === 0 ? 0 : (random() - 0.35) * spread * 0.7),
+        cz + Math.sin(angle) * dist);
+      blob.scale.set(1.05, 0.78 + random() * 0.22, 1.05);
+      parent.add(blob);
+    }
   }
 
   function biomeTerrainInfluence(biome, localX, localZ) {
@@ -3323,18 +3576,27 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const westKnoll = terrainPeakInfluence(localX, localZ, -112, 12, 76, 1.2);
     const crownVale = terrainPeakInfluence(localX, localZ, 28, 92, 94, 1.05);
     const southVale = terrainPeakInfluence(localX, localZ, -22, -108, 96, 1.08);
-    const rollingSwell = Math.sin(localX * 0.031 - localZ * 0.019 + seedPhase * 0.5) * 0.48
-      + Math.cos(localX * 0.018 + localZ * 0.027 - seedPhase * 0.35) * 0.36;
+    // Rolling hills: stacked swell octaves (two mid-frequency, one broad, plus
+    // a very-low-frequency ground swell) carve real valleys and viewpoints
+    // into the wilderness while each individual slope stays walkable.
+    const rollingSwell = Math.sin(localX * 0.031 - localZ * 0.019 + seedPhase * 0.5) * 0.92
+      + Math.cos(localX * 0.018 + localZ * 0.027 - seedPhase * 0.35) * 0.72
+      + Math.sin((localX + localZ) * 0.012 + seedPhase * 0.25) * 0.6
+      + Math.sin(localX * 0.0082 - localZ * 0.0064 + seedPhase * 0.18) * 1.15;
+    // Cliff step stacked on the broad escarpment rise so the north line reads
+    // as a real terrace edge rather than a gentle bank.
+    const escarpmentCliff = smoothstep(0.3, 0.78, northEscarpment);
     height += wildernessMask * rollingSwell;
-    height += wildernessMask * meadowRidgeA * (0.9 + Math.sin(localZ * 0.05 + seedPhase) * 0.18);
-    height += wildernessMask * meadowRidgeB * (0.72 + Math.cos(localX * 0.047 - seedPhase) * 0.16);
-    height += wildernessMask * northEscarpment * (0.78 + Math.sin(localX * 0.038 + seedPhase) * 0.16);
-    height += wildernessMask * westShoulder * (0.58 + Math.cos(localZ * 0.04 - seedPhase) * 0.13);
-    height += wildernessMask * eastKnoll * 1.05;
-    height += wildernessMask * westKnoll * 0.85;
-    height -= wildernessMask * crownVale * 0.44;
-    height -= wildernessMask * southVale * 0.62;
-    height -= wildernessMask * southernHollow * (0.54 + Math.sin((localX - localZ) * 0.028) * 0.12);
+    height += wildernessMask * meadowRidgeA * (1.85 + Math.sin(localZ * 0.05 + seedPhase) * 0.34);
+    height += wildernessMask * meadowRidgeB * (1.5 + Math.cos(localX * 0.047 - seedPhase) * 0.28);
+    height += wildernessMask * northEscarpment * (1.55 + Math.sin(localX * 0.038 + seedPhase) * 0.3);
+    height += wildernessMask * escarpmentCliff * 1.7;
+    height += wildernessMask * westShoulder * (1.2 + Math.cos(localZ * 0.04 - seedPhase) * 0.24);
+    height += wildernessMask * eastKnoll * 2.35;
+    height += wildernessMask * westKnoll * 1.95;
+    height -= wildernessMask * crownVale * 0.92;
+    height -= wildernessMask * southVale * 1.3;
+    height -= wildernessMask * southernHollow * (1.15 + Math.sin((localX - localZ) * 0.028) * 0.26);
 
     const mountain = game.exploration.biomes.find(biome => biome.id === "mountain");
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
@@ -3345,26 +3607,41 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const ridge = Math.sin(localX * 0.052 + localZ * 0.018 + seedPhase) * 0.48
         + Math.cos(localZ * 0.064 - seedPhase) * 0.32;
       const crest = Math.pow(Math.max(0, Math.sin((localX - localZ) * 0.038 + seedPhase * 0.55)), 1.45);
-      const pass = terrainLineInfluence(localX, localZ, mountain.x - 34, mountain.z - 48, mountain.x + 58, mountain.z + 16, 20);
-      height += mountainInfluence * (0.82 + ridge * 1.08) + Math.pow(mountainInfluence, 1.75) * 4.35;
-      height += Math.pow(mountainInfluence, 1.35) * crest * 1.65;
-      height -= pass * mountainInfluence * 1.12;
+      // Sharp parallel ridgelines via a folded (absolute-value) sine, so the
+      // Dragonspine reads as serrated peaks rather than one smooth dome. The
+      // higher fold exponent narrows each crest into a knife edge.
+      const ridgeLine = Math.pow(1 - Math.abs(Math.sin((localX + localZ) * 0.03 + seedPhase * 0.6)), 1.9);
+      const pass = terrainLineInfluence(localX, localZ, mountain.x - 34, mountain.z - 48, mountain.x + 58, mountain.z + 16, 22);
+      const sidePass = terrainLineInfluence(localX, localZ, mountain.x - 64, mountain.z + 30, mountain.x + 20, mountain.z + 74, 18);
+      height += mountainInfluence * (1.2 + ridge * 1.9) + Math.pow(mountainInfluence, 1.75) * 9.8;
+      height += Math.pow(mountainInfluence, 1.35) * crest * 3.1;
+      height += Math.pow(mountainInfluence, 1.5) * ridgeLine * 3.6;
+      // Deep saddles between the serrated crests so the skyline notches hard.
+      height -= Math.pow(mountainInfluence, 1.45) * (1 - ridgeLine) * 1.35;
+      // Carved passes keep a traversable route through the higher massif;
+      // carved deeper to match the taller massing so road grades stay sane.
+      height -= pass * mountainInfluence * 3.4;
+      height -= sidePass * mountainInfluence * 2.6;
     }
     const desertInfluence = biomeTerrainInfluence(desert, localX, localZ);
     if (desertInfluence > 0) {
       const dune = Math.sin(localX * 0.076 + localZ * 0.024 + seedPhase) * 0.24
         + Math.cos(localZ * 0.088 - seedPhase) * 0.16;
       const duneBand = Math.sin(localX * 0.04 - localZ * 0.018 + seedPhase * 0.7) * 0.28;
+      // Long crescent dune crests rolling across the sands for a wind-shaped
+      // look; the higher exponent pinches each crest steeper and narrower.
+      const crescent = Math.pow(Math.max(0, Math.sin(localX * 0.03 + localZ * 0.05 + seedPhase * 0.4)), 2.6);
       const mesa = terrainPeakInfluence(localX, localZ, desert.x - 26, desert.z + 34, 72, 1.4);
-      height += desertInfluence * (dune * 1.95 + duneBand * 1.35);
-      height += desertInfluence * mesa * 1.15;
+      height += desertInfluence * (dune * 3.3 + duneBand * 2.5);
+      height += desertInfluence * crescent * 2.2;
+      height += desertInfluence * mesa * 2.6;
     }
     const swampInfluence = biomeTerrainInfluence(swamp, localX, localZ);
     if (swampInfluence > 0) {
       const bogBasin = terrainPeakInfluence(localX, localZ, swamp.x - 12, swamp.z + 18, 82, 1.1);
-      height -= swampInfluence * 0.42;
-      height -= Math.pow(swampInfluence, 1.5) * 0.34;
-      height -= swampInfluence * bogBasin * 0.48;
+      height -= swampInfluence * 0.62;
+      height -= Math.pow(swampInfluence, 1.5) * 0.6;
+      height -= swampInfluence * bogBasin * 0.9;
       height += Math.sin(localX * 0.09 + localZ * 0.04) * swampInfluence * 0.11;
     }
     const briarInfluence = biomeTerrainInfluence(briar, localX, localZ);
@@ -3372,9 +3649,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const hollow = terrainPeakInfluence(localX, localZ, briar.x + 8, briar.z - 6, 74, 1.2);
       const rootRidge = Math.sin(localX * 0.07 - localZ * 0.041 + seedPhase) * 0.24
         + Math.cos(localZ * 0.058 + seedPhase * 0.4) * 0.18;
-      height -= Math.pow(briarInfluence, 1.2) * hollow * 0.42;
-      height += briarInfluence * rootRidge * 0.9;
-      height += Math.pow(briarInfluence, 1.65) * 0.48;
+      height -= Math.pow(briarInfluence, 1.2) * hollow * 0.72;
+      height += briarInfluence * rootRidge * 1.25;
+      height += Math.pow(briarInfluence, 1.65) * 0.7;
     }
 
     if (distance > edgeRise) {
@@ -3555,10 +3832,15 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const t = i / segments;
       const cx = startX + (endX - startX) * t;
       const cz = startZ + (endZ - startZ) * t;
-      const y = explorationTerrainHeight(cx, cz) + 0.06;
+      // Sample the ground under each edge separately so the strip banks with
+      // cross-sloped terrain instead of burying one edge and floating the other.
+      const lx = cx + nx * width * 0.5;
+      const lz = cz + nz * width * 0.5;
+      const rx = cx - nx * width * 0.5;
+      const rz = cz - nz * width * 0.5;
       positions.push(
-        cx + nx * width * 0.5, y, cz + nz * width * 0.5,
-        cx - nx * width * 0.5, y, cz - nz * width * 0.5
+        lx, explorationTerrainHeight(lx, lz) + 0.06, lz,
+        rx, explorationTerrainHeight(rx, rz) + 0.06, rz
       );
       uvs.push(0, t * totalLength / 5, 1, t * totalLength / 5);
       if (i < segments) {
@@ -3574,7 +3856,26 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return geometry;
   }
 
-  function createRoadRibbonGeometry(points, width) {
+  // Subdivide road waypoints so ribbon cross-sections track the terrain at
+  // least every maxSpacing units; with the more dramatic relief, waypoint-only
+  // sampling would let long spans sink into or float over the ground.
+  function densifyRoadPoints(points, maxSpacing = 7) {
+    const result = [points[0]];
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1];
+      const b = points[i];
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      const steps = Math.max(1, Math.ceil(length / maxSpacing));
+      for (let step = 1; step <= steps; step += 1) {
+        const t = step / steps;
+        result.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+      }
+    }
+    return result;
+  }
+
+  function createRoadRibbonGeometry(waypoints, width) {
+    const points = densifyRoadPoints(waypoints, 7);
     const positions = [];
     const uvs = [];
     const indices = [];
@@ -3623,10 +3924,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
 
       const edge = width * 0.5 * miterScale;
-      const y = explorationTerrainHeight(point.x, point.z) + 0.074;
+      // Per-edge ground samples keep the ribbon hugging cross-sloped terrain.
+      const lx = point.x + normalX * edge;
+      const lz = point.z + normalZ * edge;
+      const rx = point.x - normalX * edge;
+      const rz = point.z - normalZ * edge;
       positions.push(
-        point.x + normalX * edge, y, point.z + normalZ * edge,
-        point.x - normalX * edge, y, point.z - normalZ * edge
+        lx, explorationTerrainHeight(lx, lz) + 0.074, lz,
+        rx, explorationTerrainHeight(rx, rz) + 0.074, rz
       );
       uvs.push(0, distance / 5, 1, distance / 5);
       if (i < points.length - 1) {
@@ -4624,9 +4929,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, 2.28, 2.18));
     parts.push(makeBox(0.16, 0.16, 4.62, timber, -2.5, 0.45, 0));
     parts.push(makeBox(0.16, 0.16, 4.62, timber, 2.5, 0.45, 0));
-    parts.push(makeBox(0.2, 0.18, 4.7, timber, -2.5, 2.28, 0));
-    parts.push(makeBox(0.2, 0.18, 4.7, timber, 2.5, 2.28, 0));
-    for (const cx of [-2.5, 2.5]) {
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, -2.52, 2.28, 0));
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, 2.52, 2.28, 0));
+    for (const cx of [-2.52, 2.52]) {
       for (const cz of [-2.18, 2.18]) {
         parts.push(makeBox(0.2, 2.3, 0.2, timber, cx, 1.2, cz));
       }
@@ -4760,20 +5065,43 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function addExplorationTree(group, x, z, random) {
     const tree = new THREE.Group();
     setExplorationLocalGroundPosition(tree, x, z);
-    const height = 2.3 + random() * 2.0;
-    const trunk = makeCylinder(0.16, 0.22, height, 8, materials.wood, 0, height / 2, 0);
-    tree.add(trunk);
-    if (random() > 0.42) {
-      const leafA = makeCone(1.05 + random() * 0.35, 1.85, 12, materials.pine, 0, height + 0.3, 0);
-      const leafB = makeCone(0.8 + random() * 0.28, 1.55, 12, materials.pine, 0, height + 1.08, 0);
-      tree.add(leafA, leafB);
+    const conifer = random() > 0.52;
+    if (conifer) {
+      // Slim meadow fir: tapered trunk under three stacked, two-tone tiers.
+      const height = 2.6 + random() * 2.0;
+      tree.add(makeCylinder(0.13, 0.24, height, 7, materials.wood, 0, height / 2, 0));
+      const tiers = 3;
+      for (let i = 0; i < tiers; i += 1) {
+        const t = i / tiers;
+        const r = quantizeStep(1.12 - t * 0.46 + random() * 0.14, 0.1);
+        const ch = quantizeStep(1.7 - t * 0.32, 0.1);
+        const mat = i === tiers - 1 ? materials.broadleafLight : (i % 2 ? materials.pineDeep : materials.pine);
+        tree.add(makeCone(r, ch, 9, mat, 0, height - 0.1 + i * ch * 0.6, 0));
+      }
     } else {
-      const crown = makeSphere(1.0 + random() * 0.34, materials.broadleaf, 0, height + 0.42, 0);
-      crown.scale.set(1.08, 0.9, 1.05);
-      const crownB = makeSphere(0.72, materials.broadleaf, -0.42, height + 0.34, 0.2);
-      tree.add(crown, crownB);
+      // Broadleaf oak: flared trunk, a couple of branch forks, layered canopy.
+      const height = 2.0 + random() * 1.6;
+      const trunk = makeCylinder(0.16, 0.3, height, 8, materials.wood, 0, height / 2, 0);
+      trunk.rotation.z = (random() - 0.5) * 0.08;
+      tree.add(trunk, makeCylinder(0.32, 0.5, 0.3, 8, materials.wood, 0, 0.15, 0));
+      const forks = 1 + Math.floor(random() * 2);
+      for (let i = 0; i < forks; i += 1) {
+        const len = quantizeStep(0.8 + random() * 0.5, 0.1);
+        const branch = makeCylinder(0.05, 0.1, len, 5, materials.wood, 0, len / 2, 0);
+        const pivot = new THREE.Group();
+        pivot.position.set(0, height * (0.58 + random() * 0.2), 0);
+        pivot.rotation.y = random() * TAU;
+        pivot.rotation.z = 0.55 + random() * 0.3;
+        pivot.add(branch);
+        tree.add(pivot);
+      }
+      addCanopyCluster(tree, materials.broadleaf, 0, height + 0.5, 0, 1.0 + random() * 0.3, random, {
+        blobs: 4,
+        accent: random() > 0.5 ? materials.broadleafLight : materials.broadleafDeep
+      });
     }
     tree.rotation.y = random() * TAU;
+    tree.scale.setScalar(1.2 + random() * 0.32);
     if (Math.hypot(x, z) > 92) {
       tree.traverse(child => {
         if (child.isMesh) {
@@ -4782,19 +5110,33 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       });
     }
     group.add(tree);
-    addExplorationCollider(x, z, 0.62, "tree");
+    addExplorationCollider(x, z, 0.82, "tree");
   }
 
   function addMountainPine(group, x, z, random) {
+    // Tall alpine conifer: four narrowing tiers of deep-green boughs, a slight
+    // windward lean, and an occasional snow-dusted crown for the high peaks.
     const tree = new THREE.Group();
     setExplorationLocalGroundPosition(tree, x, z);
-    const height = 2.9 + random() * 2.4;
-    const trunk = makeCylinder(0.14, 0.22, height, 8, materials.wood, 0, height / 2, 0);
-    const leafA = makeCone(1.08 + random() * 0.25, 1.95, 12, materials.pine, 0, height + 0.1, 0);
-    const leafB = makeCone(0.86 + random() * 0.2, 1.7, 12, materials.pine, 0, height + 0.88, 0);
-    const leafC = makeCone(0.62 + random() * 0.18, 1.35, 12, materials.pine, 0, height + 1.55, 0);
-    tree.add(trunk, leafA, leafB, leafC);
+    const height = 3.0 + random() * 2.6;
+    const lean = (random() - 0.5) * 0.1;
+    const trunk = makeCylinder(0.13, 0.26, height, 7, materials.wood, 0, height / 2, 0);
+    trunk.rotation.z = lean;
+    tree.add(trunk);
+    const tiers = 4;
+    const snow = random() > 0.5;
+    for (let i = 0; i < tiers; i += 1) {
+      const t = i / (tiers - 1);
+      const r = quantizeStep(1.18 - t * 0.74 + random() * 0.12, 0.1);
+      const ch = quantizeStep(1.85 - t * 0.4, 0.1);
+      const top = i === tiers - 1;
+      const mat = snow && top ? materials.pineSnow : (i % 2 ? materials.pineDeep : materials.pine);
+      const cone = makeCone(r, ch, 9, mat, 0, height * 0.16 + i * height * 0.22, 0);
+      cone.rotation.z = lean;
+      tree.add(cone);
+    }
     tree.rotation.y = random() * TAU;
+    tree.scale.setScalar(1.25 + random() * 0.3);
     if (Math.hypot(x, z) > 92) {
       tree.traverse(child => {
         if (child.isMesh) {
@@ -4803,22 +5145,49 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       });
     }
     group.add(tree);
-    addExplorationCollider(x, z, 0.66, "tree");
+    addExplorationCollider(x, z, 0.9, "tree");
   }
 
   function addDesertCactus(group, x, z, random) {
     const cactus = new THREE.Group();
     setExplorationLocalGroundPosition(cactus, x, z);
-    const height = 1.35 + random() * 1.35;
-    const trunk = makeCylinder(0.16, 0.2, height, 9, materials.cactus, 0, height / 2, 0);
-    cactus.add(trunk);
-    if (random() > 0.28) {
-      const armY = height * (0.48 + random() * 0.22);
-      const side = random() > 0.5 ? 1 : -1;
-      const arm = makeCylinder(0.07, 0.09, 0.72 + random() * 0.36, 8, materials.cactus, side * 0.3, armY, 0);
+    if (random() > 0.78) {
+      // Squat barrel cactus clump with a crown bloom.
+      const count = 1 + Math.floor(random() * 3);
+      for (let i = 0; i < count; i += 1) {
+        const r = quantizeStep(0.26 + random() * 0.18, 0.05);
+        const h = quantizeStep(0.5 + random() * 0.5, 0.1);
+        const bx = (random() - 0.5) * 0.5;
+        const bz = (random() - 0.5) * 0.5;
+        const barrel = makeCylinder(r * 0.86, r, h, 10, materials.cactus, bx, h / 2, bz);
+        cactus.add(barrel);
+        if (random() > 0.5) {
+          cactus.add(makeSphere(0.08, materials.flower, bx, h + 0.04, bz));
+        }
+      }
+      cactus.rotation.y = random() * TAU;
+      group.add(cactus);
+      addExplorationCollider(x, z, 0.42, "tree");
+      return;
+    }
+    // Classic saguaro: ribbed column with one or two raised arms and blooms.
+    const height = 1.45 + random() * 1.5;
+    cactus.add(makeCylinder(0.17, 0.22, height, 9, materials.cactus, 0, height / 2, 0));
+    const arms = 1 + Math.floor(random() * 2);
+    for (let i = 0; i < arms; i += 1) {
+      const side = i === 0 ? (random() > 0.5 ? 1 : -1) : (random() > 0.5 ? 1 : -1);
+      const armY = height * (0.42 + random() * 0.26);
+      const reach = 0.34 + random() * 0.22;
+      const arm = makeCylinder(0.07, 0.09, 0.6 + random() * 0.3, 7, materials.cactus, side * reach, armY, (random() - 0.5) * 0.2);
       arm.rotation.z = Math.PI / 2;
-      const lift = makeCylinder(0.07, 0.085, 0.46 + random() * 0.34, 8, materials.cactus, side * 0.64, armY + 0.18, 0);
+      const lift = makeCylinder(0.065, 0.085, 0.42 + random() * 0.34, 7, materials.cactus, side * (reach + 0.32), armY + 0.22, 0);
       cactus.add(arm, lift);
+      if (random() > 0.55) {
+        cactus.add(makeSphere(0.08, materials.flower, side * (reach + 0.32), armY + 0.46 + random() * 0.2, 0));
+      }
+    }
+    if (random() > 0.5) {
+      cactus.add(makeSphere(0.09, materials.flower, 0, height + 0.05, 0));
     }
     cactus.rotation.y = random() * TAU;
     group.add(cactus);
@@ -4863,28 +5232,40 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function addSwampWillow(group, x, z, random) {
+    // Leaning willow on a buttressed root flare, a broad drooping canopy, and
+    // long trailing withies that sweep toward the water.
     const tree = new THREE.Group();
     setExplorationLocalGroundPosition(tree, x, z);
-    const height = 2.2 + random() * 1.4;
-    const trunk = makeCylinder(0.18, 0.3, height, 8, materials.wood, 0, height / 2, 0);
-    trunk.rotation.z = (random() - 0.5) * 0.18;
-    tree.add(trunk);
-    for (let i = 0; i < 4; i += 1) {
-      const angle = (i / 4) * TAU + random() * 0.4;
-      const crown = makeSphere(0.82 + random() * 0.28, materials.willowLeaf, Math.cos(angle) * 0.42, height + 0.34 + random() * 0.24, Math.sin(angle) * 0.42);
-      crown.scale.set(1.0, 0.62 + random() * 0.16, 1.08);
-      tree.add(crown);
+    const height = 2.2 + random() * 1.5;
+    const lean = (random() - 0.5) * 0.22;
+    const trunk = makeCylinder(0.18, 0.32, height, 8, materials.wood, 0, height / 2, 0);
+    trunk.rotation.z = lean;
+    tree.add(trunk, makeCylinder(0.34, 0.54, 0.34, 8, materials.wood, 0, 0.17, 0));
+    for (let i = 0; i < 3; i += 1) {
+      const angle = (i / 3) * TAU + random() * 0.5;
+      const knee = makeCylinder(0.07, 0.12, 0.4, 6, materials.wood, Math.cos(angle) * 0.36, 0.2, Math.sin(angle) * 0.36);
+      knee.rotation.z = Math.cos(angle) * 0.5;
+      knee.rotation.x = -Math.sin(angle) * 0.5;
+      tree.add(knee);
     }
-    for (let i = 0; i < 7; i += 1) {
-      const angle = (i / 7) * TAU + random() * 0.35;
-      const length = 0.82 + random() * 0.72;
-      const vine = makeCylinder(0.012, 0.018, length, 5, materials.reed, Math.cos(angle) * (0.55 + random() * 0.32), height + 0.1 - length / 2, Math.sin(angle) * (0.55 + random() * 0.32));
-      vine.rotation.x = (random() - 0.5) * 0.35;
-      vine.rotation.z = (random() - 0.5) * 0.35;
+    for (let i = 0; i < 5; i += 1) {
+      const angle = (i / 5) * TAU + random() * 0.4;
+      addCanopyCluster(tree, materials.willowLeaf,
+        Math.cos(angle) * 0.5, height + 0.28 + random() * 0.22, Math.sin(angle) * 0.5,
+        0.78 + random() * 0.22, random, { blobs: 2, spread: 0.4 });
+    }
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (i / 8) * TAU + random() * 0.35;
+      const length = 0.9 + random() * 0.85;
+      const radial = 0.6 + random() * 0.4;
+      const vine = makeCylinder(0.012, 0.02, length, 5, materials.willowLeaf, Math.cos(angle) * radial, height + 0.05 - length / 2, Math.sin(angle) * radial);
+      vine.rotation.x = (random() - 0.5) * 0.3;
+      vine.rotation.z = (random() - 0.5) * 0.3;
       vine.castShadow = false;
       tree.add(vine);
     }
     tree.rotation.y = random() * TAU;
+    tree.scale.setScalar(1.22 + random() * 0.3);
     if (Math.hypot(x, z) > 92) {
       tree.traverse(child => {
         if (child.isMesh) {
@@ -4893,30 +5274,41 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       });
     }
     group.add(tree);
-    addExplorationCollider(x, z, 0.72, "tree");
+    addExplorationCollider(x, z, 0.95, "tree");
   }
 
   function addBriarOak(group, x, z, random) {
+    // Gnarled briarwood: thick buttressed bole, radiating crooked limbs each
+    // carrying a clustered canopy, mossy patches and a few thorn spurs.
     const tree = new THREE.Group();
     setExplorationLocalGroundPosition(tree, x, z);
-    const height = 2.25 + random() * 1.85;
-    const trunk = makeCylinder(0.24, 0.38, height, 9, materials.rootwood, 0, height / 2, 0);
+    const height = 2.2 + random() * 1.9;
+    const trunk = makeCylinder(0.26, 0.42, height, 9, materials.rootwood, 0, height / 2, 0);
     trunk.rotation.z = (random() - 0.5) * 0.16;
-    tree.add(trunk);
-    for (let i = 0; i < 5; i += 1) {
-      const angle = (i / 5) * TAU + random() * 0.5;
-      const branch = makeCylinder(0.05, 0.11, 1.1 + random() * 0.65, 7, materials.rootwood, Math.cos(angle) * 0.42, height * 0.74 + random() * 0.28, Math.sin(angle) * 0.42);
-      branch.rotation.z = Math.cos(angle) * 0.76;
-      branch.rotation.x = -Math.sin(angle) * 0.76;
-      tree.add(branch);
-      const crown = makeSphere(0.86 + random() * 0.34, materials.briarLeaf, Math.cos(angle) * (0.66 + random() * 0.36), height + 0.12 + random() * 0.38, Math.sin(angle) * (0.66 + random() * 0.36));
-      crown.scale.set(1.18, 0.74 + random() * 0.18, 1.08);
-      tree.add(crown);
+    tree.add(trunk, makeCylinder(0.44, 0.66, 0.38, 9, materials.rootwood, 0, 0.19, 0));
+    const limbs = 4 + Math.floor(random() * 2);
+    for (let i = 0; i < limbs; i += 1) {
+      const angle = (i / limbs) * TAU + random() * 0.5;
+      const len = 1.0 + random() * 0.6;
+      const branch = makeCylinder(0.05, 0.12, len, 6, materials.rootwood, 0, len / 2, 0);
+      const pivot = new THREE.Group();
+      pivot.position.set(0, height * (0.66 + random() * 0.2), 0);
+      pivot.rotation.y = angle;
+      pivot.rotation.z = 0.7 + random() * 0.3;
+      pivot.add(branch);
+      tree.add(pivot);
+      addCanopyCluster(tree, materials.briarLeaf,
+        Math.cos(angle) * (0.7 + random() * 0.4), height + 0.1 + random() * 0.38, Math.sin(angle) * (0.7 + random() * 0.4),
+        0.82 + random() * 0.3, random, { blobs: 3, spread: 0.5, accent: materials.broadleafDeep });
+      if (random() > 0.6) {
+        tree.add(makeCone(0.07, 0.22, 5, materials.briarThorn, Math.cos(angle) * 0.5, height * 0.5, Math.sin(angle) * 0.5));
+      }
     }
     const moss = makeSphere(0.58, materials.mossRoof, -0.18, height * 0.42, 0.1);
     moss.scale.set(1.0, 0.28, 0.72);
     tree.add(moss);
     tree.rotation.y = random() * TAU;
+    tree.scale.setScalar(1.22 + random() * 0.3);
     if (Math.hypot(x, z) > 92) {
       tree.traverse(child => {
         if (child.isMesh) {
@@ -4925,7 +5317,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       });
     }
     group.add(tree);
-    addExplorationCollider(x, z, 0.82, "tree");
+    addExplorationCollider(x, z, 1.1, "tree");
   }
 
   function addBramblePatch(group, x, z, random, scale = 1) {
@@ -4974,16 +5366,43 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function addExplorationRock(group, x, z, random, large = false) {
-    const radius = large ? 1.15 + random() * 1.6 : 0.35 + random() * 0.85;
-    const geometry = new THREE.DodecahedronGeometry(radius, 0);
-    const rock = new THREE.Mesh(geometry, materials.stone);
-    setExplorationLocalGroundPosition(rock, x, z, large ? radius * 0.34 : 0.22);
-    rock.scale.set(1.2 + random() * 1.4, 0.55 + random() * 0.55, 0.8 + random() * 1.2);
-    rock.rotation.set(random() * 0.4, random() * TAU, random() * 0.28);
-    addShadow(rock);
-    rock.castShadow = large;
-    group.add(rock);
-    addExplorationCollider(x, z, large ? radius * 1.15 : Math.max(0.42, radius * 0.82), "rock");
+    // Faceted boulder cluster: a main partially-buried mass plus a few smaller
+    // chunks around its foot. Tinted per biome and built from cached, quantized
+    // icosahedra so the added variety stays cheap.
+    const biome = biomeAt(x, z);
+    const baseMat = biome === "mountain" ? materials.mountainGround
+      : biome === "desert" ? materials.sandstone
+      : biome === "swamp" ? materials.darkStone
+      : materials.stone;
+    const accentMat = biome === "desert" ? materials.stone : materials.rubble;
+    const cluster = new THREE.Group();
+    setExplorationLocalGroundPosition(cluster, x, z);
+    const baseY = explorationGroundLocalY(x, z);
+    cluster.rotation.y = random() * TAU;
+    const mainRadius = large ? 1.15 + random() * 1.5 : 0.4 + random() * 0.8;
+    const addChunk = (radius, material, ox, oz, sink) => {
+      const qr = quantizeStep(radius, 0.1);
+      const detail = qr > 0.9 ? 1 : 0;
+      const geometry = cachedPrimitiveGeometry("rockico", [qr, detail], () => new THREE.IcosahedronGeometry(qr, detail));
+      const chunk = new THREE.Mesh(geometry, material);
+      const groundDelta = explorationGroundLocalY(x + ox, z + oz) - baseY;
+      chunk.position.set(ox, groundDelta + radius * (0.2 - sink), oz);
+      chunk.scale.set(1.1 + random() * 0.6, 0.62 + random() * 0.5, 0.86 + random() * 0.55);
+      chunk.rotation.set(random() * 0.5, random() * TAU, random() * 0.4);
+      addShadow(chunk);
+      chunk.castShadow = large;
+      cluster.add(chunk);
+    };
+    addChunk(mainRadius, baseMat, 0, 0, 0.15);
+    const satellites = large ? 2 + Math.floor(random() * 2) : (random() > 0.5 ? 1 : 0);
+    for (let i = 0; i < satellites; i += 1) {
+      const angle = random() * TAU;
+      const dist = mainRadius * (0.85 + random() * 0.7);
+      const r = mainRadius * (0.3 + random() * 0.4);
+      addChunk(r, random() > 0.5 ? baseMat : accentMat, Math.cos(angle) * dist, Math.sin(angle) * dist, 0.35);
+    }
+    group.add(cluster);
+    addExplorationCollider(x, z, large ? mainRadius * 1.08 : Math.max(0.42, mainRadius * 0.82), "rock");
   }
 
   function addExplorationFlowers(group, random, count) {
@@ -5007,10 +5426,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     group.add(flowers);
   }
 
-  function randomPointInBiome(random, biomeId, padding = 7) {
+  function randomPointInBiome(random, biomeId, padding = 7, filter = null) {
     const biome = game.exploration.biomes.find(entry => entry.id === biomeId);
     if (!biome) {
-      return randomExplorationPoint(random, 20, game.exploration.radius - 12);
+      return randomExplorationPoint(random, 20, game.exploration.radius - 12, filter);
     }
     const rotation = biome.rotation || 0;
     const cos = Math.cos(rotation);
@@ -5023,6 +5442,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const x = biome.x + localX * cos - localZ * sin;
       const z = biome.z + localX * sin + localZ * cos;
       if (Math.hypot(x, z) < 16 || Math.hypot(x, z) > game.exploration.radius - padding || !biomeContains(biome, x, z, padding) || isExplorationBlocked(x, z)) {
+        continue;
+      }
+      if (filter && !filter(x, z)) {
         continue;
       }
       return { x, z };
@@ -5997,10 +6419,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.dialogVoiceKey = "";
     keys.clear();
     player.blockHeld = false;
-    setDialogAskActive(false);
-    if (dialogueInput) {
-      dialogueInput.value = "";
-    }
     playSfx("ui", 0.7);
     refreshQuestDialog();
     questDialog.hidden = false;
@@ -6009,10 +6427,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function closeQuestDialog() {
-    setDialogAskActive(false);
-    if (dialogueInput) {
-      dialogueInput.value = "";
-    }
     questDialog.hidden = true;
     actionDock.hidden = false;
     game.dialogNpc = null;
@@ -6052,31 +6466,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       chip.addEventListener("click", () => askDialogueQuestion(topic.query));
       dialogueTopics.appendChild(chip);
     });
-  }
-
-  function setDialogAskActive(active) {
-    game.dialogAskActive = !!active;
-    if (!dialogueInput) {
-      return;
-    }
-    if (active) {
-      dialogueInput.placeholder = "Type your question, then press Enter";
-      try {
-        dialogueInput.focus({ preventScroll: true });
-        dialogueInput.select();
-      } catch (error) {
-        dialogueInput.focus();
-      }
-      if (dialogueHint) {
-        dialogueHint.textContent = "Enter send \u00b7 Esc cancel typing";
-      }
-    } else {
-      dialogueInput.placeholder = "Press T to ask something";
-      if (document.activeElement === dialogueInput) {
-        dialogueInput.blur();
-      }
-      if (dialogueHint) {
-        dialogueHint.textContent = "1-4 ask a topic \u00b7 T type a question \u00b7 Enter send \u00b7 Esc back";
+    if (dialogueHint) {
+      const count = game.dialogTopics.length;
+      if (count > 1) {
+        dialogueHint.textContent = "1-" + count + " ask \u00b7 Esc back";
+      } else if (count === 1) {
+        dialogueHint.textContent = "1 ask \u00b7 Esc back";
+      } else {
+        dialogueHint.textContent = "Esc back";
       }
     }
   }
@@ -6086,7 +6483,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (!npc) {
       return;
     }
-    const text = String(rawText == null ? (dialogueInput ? dialogueInput.value : "") : rawText).trim();
+    const text = String(rawText == null ? "" : rawText).trim();
     if (!text) {
       playSfx("uiBack", 0.8);
       return;
@@ -6097,9 +6494,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     questDialogStatus.textContent = "You asked: \u201c" + echo + "\u201d";
     game.dialogVoiceKey = "";
     playDialogVoiceIfChanged();
-    if (dialogueInput) {
-      dialogueInput.value = "";
-    }
   }
 
   function dialogActionButtons() {
@@ -6149,29 +6543,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function handleQuestDialogKey(event) {
     if (questDialog.hidden) {
       return false;
-    }
-    // Typing mode: the ask input is focused. Let characters/arrows/backspace
-    // edit the text normally; only intercept Enter (send) and Escape (cancel).
-    if (game.dialogAskActive || document.activeElement === dialogueInput) {
-      if (event.code === "Enter" || event.code === "NumpadEnter") {
-        event.preventDefault();
-        askDialogueQuestion();
-        return true;
-      }
-      if (event.code === "Escape") {
-        event.preventDefault();
-        playSfx("uiBack", 1);
-        setDialogAskActive(false);
-        return true;
-      }
-      return true;
-    }
-    // Open the free-text question box.
-    if (event.code === "KeyT") {
-      event.preventDefault();
-      setDialogAskActive(true);
-      playSfx("uiMove", 1);
-      return true;
     }
     // Quick-ask a suggested topic by number.
     if (event.code.length === 6 && event.code.startsWith("Digit")) {
@@ -7131,14 +7502,27 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const frontLeft = makeBox(1.48, 2.6, 0.24, wall, -1.56, 1.35, -1.88);
     const frontRight = makeBox(1.48, 2.6, 0.24, wall, 1.56, 1.35, -1.88);
     const door = makeBox(0.92, 1.9, 0.08, materials.wood, 0, 1.02, -2.04);
+    const doorFrame = makeBox(1.16, 2.16, 0.05, materials.darkStone, 0, 1.1, -2.0);
     const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, -0.8);
     const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, 0.8);
     roofA.rotation.x = -0.52;
     roofB.rotation.x = 0.52;
+    // Filled gable ends + ridge beam so the roof reads as a solid pitched form.
+    const gableFront = makeGable(4.6, 1.05, 0.24, wall, 0, 2.6, -1.92);
+    const gableBack = makeGable(4.6, 1.05, 0.24, wall, 0, 2.6, 1.92);
+    const ridge = makeBox(5.2, 0.18, 0.2, materials.darkStone, 0, 3.56, 0);
+    // Capped chimney off the back slope.
+    const chimney = makeBox(0.52, 1.5, 0.52, variant % 2 ? materials.cityWall : materials.stone, 1.45, 3.35, 1.15);
+    const chimneyCap = makeBox(0.68, 0.2, 0.68, materials.darkStone, 1.45, 4.18, 1.15);
     const sign = makeBox(1.0, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, 0, 1.55, -2.07);
+    const signArm = makeBox(0.06, 0.06, 0.5, materials.wood, 0, 1.92, -2.16);
     const windowA = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), -1.28, 1.58, -2.06);
     const windowB = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), 1.28, 1.58, -2.06);
-    house.add(floor, back, left, right, frontLeft, frontRight, door, roofA, roofB, sign, windowA, windowB);
+    const windowFrameA = makeBox(0.72, 0.6, 0.05, materials.wood, -1.28, 1.58, -2.02);
+    const windowFrameB = makeBox(0.72, 0.6, 0.05, materials.wood, 1.28, 1.58, -2.02);
+    house.add(floor, back, left, right, frontLeft, frontRight, door, doorFrame, roofA, roofB,
+      gableFront, gableBack, ridge, chimney, chimneyCap, sign, signArm,
+      windowFrameA, windowA, windowFrameB, windowB);
     group.add(house);
     addExplorationCollider(x, z, scale * 3.05, "structure");
     return house;
@@ -7147,27 +7531,67 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function addCityCastle(group, x, z) {
     const castle = new THREE.Group();
     setExplorationLocalGroundPosition(castle, x, z);
-    const base = makeBox(14, 0.18, 10.5, materials.darkStone, 0, 0.09, 0);
-    const keep = makeBox(7.2, 6.75, 6.2, materials.cityWall, 0, 3.48, 0.6);
-    const gate = makeBox(1.55, 2.3, 0.12, materials.wood, 0, 1.18, -2.58);
-    const lintel = makeBox(2.1, 0.3, 0.18, materials.darkStone, 0, 2.42, -2.62);
-    castle.add(base, keep, gate, lintel);
-    const towerPositions = [
-      [-4.6, -3.4],
-      [4.6, -3.4],
-      [-4.6, 4.4],
-      [4.6, 4.4]
-    ];
+    const keepW = 7.2;
+    const keepD = 6.2;
+    const keepH = 6.75;
+    const keepZ = 0.6;
+    const base = makeBox(14, 0.22, 10.5, materials.darkStone, 0, 0.11, 0);
+    const plinth = makeBox(keepW + 0.7, 0.95, keepD + 0.7, materials.cityWall, 0, 0.68, keepZ);
+    const keep = makeBox(keepW, keepH, keepD, materials.cityWall, 0, keepH / 2 + 0.25, keepZ);
+    castle.add(base, plinth, keep);
+
+    // Battlements around the keep roofline (front/back rows + rotated side rows).
+    const topY = keepH + 0.25;
+    const merlon = { height: 0.62, depth: 0.24, merlonW: 0.6, gap: 0.5, material: materials.cityWall };
+    addMerlonRow(castle, keepW, { ...merlon, y: topY, z: keepZ + keepD / 2 - 0.18 });
+    addMerlonRow(castle, keepW, { ...merlon, y: topY, z: keepZ - keepD / 2 + 0.18 });
+    for (const sx of [-1, 1]) {
+      const row = new THREE.Group();
+      row.position.set(sx * (keepW / 2 - 0.18), 0, keepZ);
+      row.rotation.y = Math.PI / 2;
+      addMerlonRow(row, keepD, { ...merlon, y: topY });
+      castle.add(row);
+    }
+    // Corner buttresses give the keep mass and shadow.
+    for (const bx of [-1, 1]) {
+      for (const bz of [-1, 1]) {
+        castle.add(makeBox(0.72, keepH * 0.82, 0.72, materials.cityWall, bx * (keepW / 2), keepH * 0.41 + 0.25, keepZ + bz * (keepD / 2)));
+      }
+    }
+
+    // Round corner towers with corbelled, crenellated heads and conical caps.
+    const towerPositions = [[-4.6, -3.4], [4.6, -3.4], [-4.6, 4.4], [4.6, 4.4]];
+    const towerH = 7.7;
     for (const [tx, tz] of towerPositions) {
-      const tower = makeCylinder(0.92, 1.08, 7.25, 18, materials.cityWall, tx, 3.62, tz);
-      const cap = makeCone(1.28, 1.7, 18, materials.cityRoof, tx, 8.1, tz);
-      castle.add(tower, cap);
+      castle.add(makeCylinder(0.95, 1.14, towerH, 16, materials.cityWall, tx, towerH / 2, tz));
+      castle.add(makeCylinder(1.16, 1.0, 0.3, 16, materials.cityWall, tx, towerH + 0.15, tz));
+      const ring = new THREE.Group();
+      ring.position.set(tx, 0, tz);
+      addCrenelRing(ring, 1.04, { y: towerH + 0.3, count: 8, merlonW: 0.42, height: 0.44, depth: 0.24 });
+      castle.add(ring);
+      castle.add(makeCone(1.34, 1.95, 16, materials.cityRoof, tx, towerH + 0.3 + 0.975, tz));
+      castle.add(makeSphere(0.12, materials.gold, tx, towerH + 0.3 + 1.95 + 0.1, tz));
     }
-    for (let i = 0; i < 5; i += 1) {
-      castle.add(makeBox(0.62, 0.54, 0.48, materials.darkStone, -2.7 + i * 1.35, 7.15, -2.55));
+
+    // Arched entrance on the front face with timber doors and a portcullis hint.
+    const gateZ = keepZ - keepD / 2 - 0.05;
+    castle.add(makeBox(2.1, 2.8, 0.3, materials.darkStone, 0, 1.4, gateZ));
+    castle.add(makeBox(2.4, 0.32, 0.22, materials.darkStone, 0, 2.62, gateZ - 0.02));
+    for (const side of [-1, 1]) {
+      const shoulder = makeBox(0.46, 0.46, 0.18, materials.cityWall, side * 0.78, 2.5, gateZ - 0.02);
+      shoulder.rotation.z = side * 0.62;
+      castle.add(shoulder);
     }
-    const banner = makeBox(0.1, 1.45, 0.86, materials.blue, -3.7, 4.6, -2.72);
-    castle.add(banner);
+    castle.add(makeBox(0.8, 2.2, 0.12, materials.wood, -0.42, 1.1, gateZ - 0.12));
+    castle.add(makeBox(0.8, 2.2, 0.12, materials.wood, 0.42, 1.1, gateZ - 0.12));
+    for (let i = 0; i < 3; i += 1) {
+      castle.add(makeBox(0.08, 2.0, 0.06, materials.iron, -0.5 + i * 0.5, 1.0, gateZ - 0.2));
+    }
+
+    // Banners flank the gate.
+    castle.add(makeBox(0.1, 1.7, 0.9, materials.cityBannerRed, -1.7, 4.5, gateZ + 0.1));
+    castle.add(makeBox(0.1, 1.7, 0.9, materials.blue, 1.7, 4.5, gateZ + 0.1));
+
     group.add(castle);
     addExplorationCollider(x, z, 6.15, "structure");
     addExplorationCollider(x - 4.6, z - 3.4, 1.45, "structure");
@@ -7183,17 +7607,51 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const nave = makeBox(7.2, 3.25, 11.2, materials.cityWall, 0, 1.72, 0);
     const apse = makeCylinder(1.8, 2.0, 3.3, 18, materials.cityWall, 0, 1.7, 6.1);
     apse.rotation.x = Math.PI / 2;
+    const apseRoof = makeCone(2.25, 1.7, 18, materials.cityRoof, 0, 3.45, 6.1);
     const roofA = makeBox(4.55, 0.44, 12.3, materials.cityRoof, -1.95, 3.88, 0);
     const roofB = makeBox(4.55, 0.44, 12.3, materials.cityRoof, 1.95, 3.88, 0);
     roofA.rotation.z = 0.52;
     roofB.rotation.z = -0.52;
+    const ridge = makeBox(0.34, 0.34, 12.4, materials.darkStone, 0, 5.18, 0);
+    church.add(nave, apse, apseRoof, roofA, roofB, ridge);
+
+    // Stepped buttresses and tall lancet windows down each nave wall.
+    for (const side of [-1, 1]) {
+      for (const bz of [-3.6, 0, 3.6]) {
+        church.add(makeBox(0.5, 2.8, 0.7, materials.cityWall, side * 3.7, 1.4, bz));
+        const cap = makeBox(0.5, 0.55, 0.95, materials.cityWall, side * 3.75, 2.75, bz);
+        cap.rotation.x = side * 0;
+        church.add(cap);
+        const lancet = makeBox(0.06, 1.5, 0.42, materials.stainedGlass.clone(), side * 3.63, 2.0, bz + 1.8);
+        church.add(lancet);
+      }
+    }
+
+    // Bell tower: battlemented head with corner pinnacles under the spire.
     const tower = makeBox(3.0, 6.5, 3.0, materials.cityWall, 0, 3.28, -5.55);
-    const spire = makeCone(1.82, 3.95, 24, materials.cityRoof, 0, 8.38, -5.55);
+    church.add(tower);
+    const towerTop = 6.53;
+    addMerlonRow(church, 3.0, { y: towerTop, z: -5.55 + 1.5 - 0.16, height: 0.5, depth: 0.2, merlonW: 0.42, gap: 0.34 });
+    addMerlonRow(church, 3.0, { y: towerTop, z: -5.55 - 1.5 + 0.16, height: 0.5, depth: 0.2, merlonW: 0.42, gap: 0.34 });
+    for (const sx of [-1, 1]) {
+      const row = new THREE.Group();
+      row.position.set(sx * (1.5 - 0.16), 0, -5.55);
+      row.rotation.y = Math.PI / 2;
+      addMerlonRow(row, 3.0, { y: towerTop, height: 0.5, depth: 0.2, merlonW: 0.42, gap: 0.34 });
+      church.add(row);
+      for (const sz of [-1, 1]) {
+        church.add(makeCone(0.34, 1.0, 8, materials.cityRoof, sx * 1.5, towerTop + 0.5, -5.55 + sz * 1.5));
+      }
+    }
+    const spire = makeCone(1.55, 4.2, 24, materials.cityRoof, 0, towerTop + 0.5 + 2.1, -5.55);
+    const louvre = makeBox(1.1, 1.3, 0.1, materials.darkStone, 0, 5.4, -7.06);
     const door = makeBox(1.08, 1.88, 0.08, materials.wood, 0, 0.99, -7.1);
+    const doorArch = makeCylinder(0.62, 0.62, 0.1, 12, materials.darkStone, 0, 1.95, -7.1);
+    doorArch.rotation.x = Math.PI / 2;
     const glass = makeBox(0.74, 1.2, 0.08, materials.stainedGlass.clone(), 0, 3.72, -7.12);
-    const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, 10.26, -5.55);
-    const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, 10.42, -5.55);
-    church.add(nave, apse, roofA, roofB, tower, spire, door, glass, crossV, crossH);
+    const crossV = makeBox(0.16, 1.22, 0.14, materials.gold, 0, towerTop + 0.5 + 4.2 + 0.6, -5.55);
+    const crossH = makeBox(0.82, 0.14, 0.14, materials.gold, 0, towerTop + 0.5 + 4.2 + 0.76, -5.55);
+    church.add(spire, louvre, door, doorArch, glass, crossV, crossH);
     group.add(church);
     addExplorationCollider(x, z, 4.9, "structure");
     addExplorationCollider(x, z - 5.55, 2.15, "structure");
@@ -7335,17 +7793,20 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       [37, 22, 0.7, 30]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
-      const wall = makeBox(ww, 3.1, wd, materials.cityWall, x + wx, 1.55, z + wz);
-      group.add(wall);
-      addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
+      addCurtainWall(group, x + wx, z + wz, ww, wd, { height: 3.1 });
     }
+    // South gatehouse straddles the road; short stubs close the gap to the wall.
+    addGatehouse(group, x, z - 37, { span: 5.4, height: 3.1, banner: materials.cityBannerRed });
+    addCurtainWall(group, x - 5.7, z - 37, 2.7, 0.7, { height: 3.1 });
+    addCurtainWall(group, x + 5.7, z - 37, 2.7, 0.7, { height: 3.1 });
+    // Corner towers: conical caps, gold finials, alternating banners.
+    const cornerBanners = [materials.cityBannerRed, materials.blue, materials.blue, materials.cityBannerRed];
     for (let i = 0; i < 4; i += 1) {
       const sx = i % 2 ? 37 : -37;
       const sz = i > 1 ? 37 : -37;
-      const tower = makeCylinder(1.05, 1.2, 4.35, 16, materials.cityWall, x + sx, 2.18, z + sz);
-      const roof = makeCone(1.52, 1.7, 16, materials.cityRoof, x + sx, 5.18, z + sz);
-      group.add(tower, roof);
-      addExplorationCollider(x + sx, z + sz, 1.55, "structure");
+      addWallTower(group, x + sx, z + sz, {
+        radius: 1.1, height: 4.6, coneHeight: 1.9, finial: true, banner: cornerBanners[i], colliderPad: 0.5
+      });
     }
 
     addWayfinderBeacon(group, x, z, random);
@@ -7404,15 +7865,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       [29, 13, 0.72, 18]
     ];
     for (const [wx, wz, ww, wd] of wallSegments) {
-      const wall = makeBox(ww, 2.86, wd, materials.cityWall, x + wx, 1.43, z + wz);
-      group.add(wall);
-      addExplorationLineColliders(x + wx, z + wz, ww, wd, "structure");
+      addCurtainWall(group, x + wx, z + wz, ww, wd, { height: 2.86 });
     }
     for (const [tx, tz] of [[-29, -24], [29, -24], [-29, 24], [29, 24]]) {
-      const tower = makeCylinder(0.9, 1.05, 4.05, 14, materials.cityWall, x + tx, 2.02, z + tz);
-      const cap = makeCone(1.2, 1.42, 14, materials.cityRoof, x + tx, 4.76, z + tz);
-      group.add(tower, cap);
-      addExplorationCollider(x + tx, z + tz, 1.28, "structure");
+      addWallTower(group, x + tx, z + tz, {
+        radius: 0.95, height: 4.05, coneHeight: 1.55, colliderPad: 0.4,
+        banner: tx < 0 ? materials.cityBannerRed : materials.blue
+      });
     }
 
     // Court pieces conform to terrain height like the pavement above, so
@@ -7495,8 +7954,27 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const worldX = game.exploration.origin.x + localX;
     const worldZ = game.exploration.origin.z + localZ;
     for (const collider of explorationCollidersNear(worldX, worldZ, 5.2)) {
-      const spacing = collider.kind === "tree" ? 1.15 : collider.kind === "rock" ? 1.25 : collider.kind === "decor" ? 0.85 : 2.1;
+      const spacing = collider.kind === "tree" ? 0.95 : collider.kind === "rock" ? 1.25 : collider.kind === "decor" ? 0.85 : 2.1;
       if (Math.hypot(worldX - collider.x, worldZ - collider.z) < collider.radius + spacing) {
+        return true;
+      }
+    }
+    // Quest pickups don't register colliders, so keep later scatter (trees,
+    // rocks) from burying them.
+    for (const item of game.questItems) {
+      if (Math.hypot(worldX - item.position.x, worldZ - item.position.z) < item.pickupRadius + 1.0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Enemy seed points keep ~3x the generic road clearance (~8-10m from the
+  // centerlines) so roads aren't lined with ambushes. Patrols may still wander
+  // close — only the seed/home point is pushed out.
+  function isEnemySeedNearRoad(localX, localZ) {
+    for (const road of game.exploration.roads) {
+      if (distanceToRoadSegment(localX, localZ, road) < (road.width * 0.55 + 1.4) * 3) {
         return true;
       }
     }
@@ -7609,6 +8087,31 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.patrolTarget = world.clone();
     enemy.state = "patrol";
     enemy.cooldown = 0.8 + random() * 1.8;
+    // Wilds Director registry: each original (build-time) seed call records
+    // its point so the director can refill it after the enemy dies. Captured
+    // before applyEnemyTier so baseHealth/baseSpeed are the pre-tier values
+    // (they already include factory wave rolls and per-seed mods like the
+    // 0.82x barbarian health). Respawned enemies arrive here with a
+    // wildsSeedId already set and are not re-registered. Arena enemies never
+    // pass through this function, so the registry stays exploration-only.
+    if (enemy.wildsSeedId == null) {
+      const wilds = game.exploration.wilds;
+      enemy.wildsSeedId = wilds.seedPoints.length;
+      wilds.seedPoints.push({
+        id: enemy.wildsSeedId,
+        type: enemy.type,
+        x: world.x,
+        z: world.z,
+        awareness,
+        homeRadius,
+        baseHealth: enemy.maxHealth,
+        baseSpeed: enemy.speed,
+        hoverHeight: numberOrZero(enemy.hoverHeight),
+        desiredRange: numberOrZero(enemy.desiredRange),
+        respawnAt: 0,     // 0 = occupied; >0 = empty, refill at this clock.elapsedTime
+        clearedBonus: 0   // cleared-zone pushback already applied (capped)
+      });
+    }
     applyEnemyTier(enemy, world);
     game.enemies.push(enemy);
     return enemy;
@@ -7689,15 +8192,51 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (!biome) {
       return;
     }
-    const boardwalk = makeBox(19, 0.12, 1.15, materials.swampPlank, biome.x - 4, 0.18, biome.z + 3);
-    boardwalk.position.y = explorationGroundLocalY(biome.x - 4, biome.z + 3, 0.18);
-    boardwalk.rotation.y = -0.34;
-    group.add(boardwalk);
+    // Stilted plank boardwalk. Every piece samples the current terrain
+    // sampler: deck segments pitch to follow the ground line, posts run from
+    // the deck underside down past the sampled ground (so they still reach
+    // the visible floor where late-registered flat zones shift the sampler),
+    // and end ramps grade the walkway flush into the bog. Heights were
+    // previously hardcoded for the old, flatter swamp and broke when the
+    // terrain was made more rugged.
+    const walkYaw = -0.34;
+    const walkDirX = Math.cos(walkYaw);
+    const walkDirZ = -Math.sin(walkYaw);
+    const walkX = biome.x - 4;
+    const walkZ = biome.z + 3;
+    const walkHalfLength = 9.5;
+    const walkGroundAt = (along) => explorationGroundLocalY(walkX + walkDirX * along, walkZ + walkDirZ * along);
+    const deckSegments = 7;
+    const segmentLength = (walkHalfLength * 2) / deckSegments;
+    for (let i = 0; i < deckSegments; i += 1) {
+      const along = -walkHalfLength + (i + 0.5) * segmentLength;
+      const nearY = walkGroundAt(along - segmentLength * 0.5);
+      const farY = walkGroundAt(along + segmentLength * 0.5);
+      const deck = makeBox(segmentLength + 0.1, 0.12, 1.15, materials.swampPlank, walkX + walkDirX * along, (nearY + farY) / 2 + 0.18, walkZ + walkDirZ * along);
+      deck.rotation.y = walkYaw;
+      deck.rotation.z = Math.atan2(farY - nearY, segmentLength);
+      group.add(deck);
+    }
     for (let i = 0; i < 7; i += 1) {
       const offset = -8.4 + i * 2.8;
-      const postA = makeCylinder(0.055, 0.08, 0.86, 6, materials.wood, biome.x - 4 + Math.cos(boardwalk.rotation.y) * offset - Math.sin(boardwalk.rotation.y) * 0.62, 0.43, biome.z + 3 + Math.sin(boardwalk.rotation.y) * offset + Math.cos(boardwalk.rotation.y) * 0.62);
-      const postB = makeCylinder(0.055, 0.08, 0.86, 6, materials.wood, biome.x - 4 + Math.cos(boardwalk.rotation.y) * offset + Math.sin(boardwalk.rotation.y) * 0.62, 0.43, biome.z + 3 + Math.sin(boardwalk.rotation.y) * offset - Math.cos(boardwalk.rotation.y) * 0.62);
-      group.add(postA, postB);
+      const deckY = walkGroundAt(offset) + 0.18;
+      for (const side of [-1, 1]) {
+        const postX = walkX + walkDirX * offset - walkDirZ * side * 0.62;
+        const postZ = walkZ + walkDirZ * offset + walkDirX * side * 0.62;
+        const postTop = deckY - 0.05;
+        const postBottom = explorationGroundLocalY(postX, postZ) - 1.4;
+        const post = makeCylinder(0.055, 0.08, postTop - postBottom, 6, materials.wood, postX, (postTop + postBottom) / 2, postZ);
+        group.add(post);
+      }
+    }
+    const rampLength = 1.7;
+    for (const end of [-1, 1]) {
+      const deckTopY = walkGroundAt(end * walkHalfLength) + 0.24;
+      const rampEndY = walkGroundAt(end * (walkHalfLength + rampLength)) + 0.03;
+      const ramp = makeBox(rampLength + 0.12, 0.1, 1.15, materials.swampPlank, walkX + walkDirX * end * (walkHalfLength + rampLength * 0.5), (deckTopY + rampEndY) / 2 - 0.05, walkZ + walkDirZ * end * (walkHalfLength + rampLength * 0.5));
+      ramp.rotation.y = walkYaw;
+      ramp.rotation.z = Math.atan2((rampEndY - deckTopY) * end, rampLength);
+      group.add(ramp);
     }
     for (let i = 0; i < 5; i += 1) {
       const point = randomPointInBiome(random, "swamp", 10);
@@ -7764,6 +8303,22 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
     const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
     const briarBiome = game.exploration.biomes.find(biome => biome.id === "briar");
+    // TEMP DEBUG (remove before finishing): console teleport for smoke tests.
+    window.__dbgTeleport = (x, z, yaw) => {
+      player.position.copy(explorationToWorld(x, z));
+      player.group.position.copy(player.position);
+      if (Number.isFinite(yaw)) {
+        game.cameraYaw = yaw;
+      }
+    };
+    window.__dbgBiomes = () => JSON.parse(JSON.stringify(game.exploration.biomes));
+    window.__dbgEnemies = () => game.enemies.filter(e => !e.dead).map(e => ({
+      type: e.type, state: e.state, x: Math.round(e.position.x - game.exploration.origin.x), z: Math.round(e.position.z - game.exploration.origin.z)
+    }));
+    window.__dbgGod = () => {
+      player.maxHealth = 1000000;
+      player.health = 1000000;
+    };
 
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
@@ -7833,13 +8388,31 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     addBriarMarkers(group, briarBiome, random);
     addExplorationRoadNetwork(group);
 
-    for (let i = 0; i < 240; i += 1) {
+    for (let i = 0; i < 260; i += 1) {
       const point = randomExplorationPoint(random, 16, game.exploration.radius - 28, (x, z) => biomeAt(x, z) === "meadow");
       addExplorationTree(group, point.x, point.z, random);
     }
-    for (let i = 0; i < 132; i += 1) {
+    // Clustered meadow groves: thicken the woods in dense stands around
+    // scattered centers instead of uniformly, so clearings stay open. Points
+    // that land on roads, structures, or other trees are simply skipped.
+    for (let g = 0; g < 16; g += 1) {
+      const center = randomExplorationPoint(random, 26, game.exploration.radius - 40, (x, z) => biomeAt(x, z) === "meadow");
+      const stand = 7 + Math.floor(random() * 6);
+      for (let i = 0; i < stand; i += 1) {
+        const angle = random() * TAU;
+        const dist = 2.4 + Math.sqrt(random()) * 8.5;
+        const tx = center.x + Math.cos(angle) * dist;
+        const tz = center.z + Math.sin(angle) * dist;
+        const rim = Math.hypot(tx, tz);
+        if (rim < 16 || rim > game.exploration.radius - 28 || biomeAt(tx, tz) !== "meadow" || isExplorationBlocked(tx, tz)) {
+          continue;
+        }
+        addExplorationTree(group, tx, tz, random);
+      }
+    }
+    for (let i = 0; i < 168; i += 1) {
       const point = randomPointInBiome(random, "mountain", 5);
-      if (random() > 0.42) {
+      if (random() > 0.32) {
         addMountainPine(group, point.x, point.z, random);
       } else {
         addExplorationRock(group, point.x, point.z, random, random() > 0.6);
@@ -7853,9 +8426,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         addDryBush(group, point.x, point.z, random);
       }
     }
-    for (let i = 0; i < 116; i += 1) {
+    for (let i = 0; i < 136; i += 1) {
       const point = randomPointInBiome(random, "swamp", 6);
-      if (random() > 0.62) {
+      if (random() > 0.5) {
         addSwampWillow(group, point.x, point.z, random);
       } else if (random() > 0.22) {
         addReeds(group, point.x, point.z, random);
@@ -7863,9 +8436,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         addBogPool(group, point.x, point.z, 1.3 + random() * 1.6, 0.8 + random() * 1.1, random);
       }
     }
-    for (let i = 0; i < 138; i += 1) {
+    for (let i = 0; i < 186; i += 1) {
       const point = randomPointInBiome(random, "briar", 6);
-      if (random() > 0.42) {
+      if (random() > 0.34) {
         addBriarOak(group, point.x, point.z, random);
       } else if (random() > 0.18) {
         addBramblePatch(group, point.x, point.z, random, 0.85 + random() * 0.55);
@@ -7884,30 +8457,31 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     // Meadow: the roaming brawler stays the staple; some spawns are converted
     // to ranged Bandit Archers so the region has a close + distance pairing.
-    for (let i = 0; i < 22; i += 1) {
-      const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow");
+    const enemySeedFilter = (x, z) => !isEnemySeedNearRoad(x, z);
+    for (let i = 0; i < 26; i += 1) {
+      const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow" && enemySeedFilter(x, z));
       const world = explorationToWorld(point.x, point.z);
       const mob = createBarbarian(world.x, world.z, 1 + Math.floor(random() * 3));
       mob.health *= 0.82;
       mob.maxHealth = mob.health;
       seedExplorationEnemy(mob, world, random, 14 + random() * 8, 9.5);
     }
-    for (let i = 0; i < 12; i += 1) {
-      const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow");
+    for (let i = 0; i < 14; i += 1) {
+      const point = randomExplorationPoint(random, 35, game.exploration.radius - 32, (x, z) => biomeAt(x, z) === "meadow" && enemySeedFilter(x, z));
       const world = explorationToWorld(point.x, point.z);
       const archer = createBanditArcher(world.x, world.z, 1 + Math.floor(random() * 3));
       seedExplorationEnemy(archer, world, random, 16 + random() * 8, 11);
     }
     // Desert: the close-range spider stays; some spawns become Sand Vipers that
     // spit venom orbs from a distance.
-    for (let i = 0; i < 8; i += 1) {
-      const point = randomPointInBiome(random, "desert", 13);
+    for (let i = 0; i < 10; i += 1) {
+      const point = randomPointInBiome(random, "desert", 13, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const spider = createSpider(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(spider, world, random, 13 + random() * 6, 7.5);
     }
-    for (let i = 0; i < 5; i += 1) {
-      const point = randomPointInBiome(random, "desert", 13);
+    for (let i = 0; i < 6; i += 1) {
+      const point = randomPointInBiome(random, "desert", 13, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const viper = createSandViper(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(viper, world, random, 14 + random() * 6, 9);
@@ -7915,7 +8489,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     // Mountain: the distance drake stays; reanimated Bonewardens give the peaks
     // a close-range melee threat.
     for (let i = 0; i < 3; i += 1) {
-      const point = randomPointInBiome(random, "mountain", 16);
+      const point = randomPointInBiome(random, "mountain", 16, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const dragon = createDragon(world.x, world.z, 1 + Math.floor(random() * 2));
       dragon.health *= 0.72;
@@ -7924,28 +8498,28 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       dragon.desiredRange = 9.2 + random() * 2.0;
       seedExplorationEnemy(dragon, world, random, 21 + random() * 8, 18);
     }
-    for (let i = 0; i < 4; i += 1) {
-      const point = randomPointInBiome(random, "mountain", 16);
+    for (let i = 0; i < 5; i += 1) {
+      const point = randomPointInBiome(random, "mountain", 16, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const warden = createBonewarden(world.x, world.z, 1 + Math.floor(random() * 3));
       seedExplorationEnemy(warden, world, random, 13 + random() * 7, 10);
     }
     // Swamp: the wisp gains a hex-orb distance attack; the Bog Lurker adds a
     // second, close-range mire threat.
-    for (let i = 0; i < 6; i += 1) {
-      const point = randomPointInBiome(random, "swamp", 12);
+    for (let i = 0; i < 7; i += 1) {
+      const point = randomPointInBiome(random, "swamp", 12, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const wisp = createWisp(world.x, world.z, 1 + Math.floor(random() * 2));
       seedExplorationEnemy(wisp, world, random, 15 + random() * 6, 9.5);
     }
-    for (let i = 0; i < 5; i += 1) {
-      const point = randomPointInBiome(random, "swamp", 12);
+    for (let i = 0; i < 6; i += 1) {
+      const point = randomPointInBiome(random, "swamp", 12, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const lurker = createBogLurker(world.x, world.z, 1 + Math.floor(random() * 3));
       seedExplorationEnemy(lurker, world, random, 13 + random() * 6, 9);
     }
-    for (let i = 0; i < 12; i += 1) {
-      const point = randomPointInBiome(random, "briar", 12);
+    for (let i = 0; i < 14; i += 1) {
+      const point = randomPointInBiome(random, "briar", 12, enemySeedFilter);
       const world = explorationToWorld(point.x, point.z);
       const beast = createBriarBeast(world.x, world.z, 1 + Math.floor(random() * 3));
       seedExplorationEnemy(beast, world, random, 14 + random() * 7, 8.5);
@@ -8454,30 +9028,73 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const helmetBand = makeCylinder(0.31, 0.31, 0.08, 18, materials.gold, 0, 2.25, 0);
     const crownRidge = makeBox(0.09, 0.44, 0.08, materials.gold, 0, 2.48, 0);
     crownRidge.rotation.x = 0.25;
-    const plume = makeBox(0.12, 0.56, 0.1, materials.cloth, 0, 2.67, 0.08);
-    plume.rotation.x = 0.32;
+    // Plume: gold finial + three fanned cloth slats instead of a single block.
+    const plumeFinial = makeCone(0.07, 0.16, 8, materials.gold, 0, 2.56, 0.04);
+    const plumeMid = makeBox(0.11, 0.6, 0.09, materials.cloth, 0, 2.69, 0.09);
+    plumeMid.rotation.x = 0.32;
+    const plumeLeft = makeBox(0.09, 0.5, 0.07, materials.cloth.clone(), -0.08, 2.64, 0.08);
+    plumeLeft.rotation.set(0.34, 0, 0.16);
+    const plumeRight = makeBox(0.09, 0.5, 0.07, materials.cloth.clone(), 0.08, 2.64, 0.08);
+    plumeRight.rotation.set(0.34, 0, -0.16);
     const leftTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), -0.3, 0.62, 0);
     leftTasset.rotation.z = 0.18;
     const rightTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), 0.3, 0.62, 0);
     rightTasset.rotation.z = -0.18;
-    const leftLeg = makeBox(0.22, 0.78, 0.24, materials.iron, -0.22, 0.34, 0);
-    const rightLeg = makeBox(0.22, 0.78, 0.24, materials.iron, 0.22, 0.34, 0);
-    const leftKnee = makeSphere(0.13, materials.steel, -0.22, 0.55, -0.11);
-    leftKnee.scale.set(1, 0.62, 0.72);
-    const rightKnee = makeSphere(0.13, materials.steel, 0.22, 0.55, -0.11);
-    rightKnee.scale.set(1, 0.62, 0.72);
-    const leftBoot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, -0.22, -0.03, -0.05);
-    const rightBoot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0.22, -0.03, -0.05);
-    const leftArm = makeBox(0.2, 0.78, 0.22, materials.iron, -0.58, 1.34, 0);
-    const rightArm = makeBox(0.2, 0.78, 0.22, materials.iron, 0.58, 1.34, 0);
+    // Second, lower tasset layer deepens the armored hip silhouette.
+    const leftTasset2 = makeBox(0.22, 0.26, 0.28, materials.steel.clone(), -0.27, 0.4, 0.02);
+    leftTasset2.rotation.z = 0.2;
+    const rightTasset2 = makeBox(0.22, 0.26, 0.28, materials.steel.clone(), 0.27, 0.4, 0.02);
+    rightTasset2.rotation.z = -0.2;
+    // Segmented faulds skirt of steel plates fanning out from the belt.
+    const faulds = new THREE.Group();
+    faulds.position.set(0, 1.0, 0);
+    for (let i = 0; i < 4; i += 1) {
+      const angle = (i - 1.5) * 0.46;
+      const plate = makeBox(0.24, 0.32, 0.1, materials.steel.clone(), Math.sin(angle) * 0.44, -0.26, -Math.cos(angle) * 0.44);
+      plate.rotation.set(0.12, angle, 0);
+      faulds.add(plate);
+    }
+    // Gold rivet row across the breastplate.
+    const rivets = new THREE.Group();
+    for (let i = 0; i < 4; i += 1) {
+      rivets.add(makeSphere(0.03, materials.gold, -0.21 + i * 0.14, 1.62, -0.44));
+    }
+
+    // Hip-pivot leg Groups (thigh + knee + shin + boot) so walk/mount rotation.x
+    // swings from the top, not the leg's center.
+    function makeKnightLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeCylinder(0.13, 0.14, 0.4, 12, materials.iron, 0, -0.18, 0);
+      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.16, -0.11);
+      knee.scale.set(1, 0.62, 0.72);
+      const shin = makeCylinder(0.11, 0.12, 0.4, 12, materials.iron.clone(), 0, -0.5, 0.01);
+      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.73, -0.05);
+      leg.add(thigh, knee, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeKnightLeg(-0.22);
+    const rightLeg = makeKnightLeg(0.22);
+
+    // Shoulder-pivot arm Groups (upper + elbow + forearm + gauntlet cuff + fist).
+    function makeKnightArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.72, 0);
+      const upper = makeCylinder(0.11, 0.1, 0.4, 12, materials.iron, 0, -0.2, 0);
+      const elbow = makeSphere(0.1, materials.steel.clone(), 0, -0.4, 0);
+      const forearm = makeCylinder(0.1, 0.11, 0.38, 12, materials.iron.clone(), 0, -0.58, -0.01);
+      const gauntlet = makeCylinder(0.12, 0.13, 0.18, 10, materials.steel.clone(), 0, -0.68, -0.02);
+      gauntlet.rotation.z = Math.PI / 2;
+      const fist = makeSphere(0.12, materials.steel.clone(), 0, -0.8, -0.02);
+      arm.add(upper, elbow, forearm, gauntlet, fist);
+      return arm;
+    }
+    const leftArm = makeKnightArm(-0.58);
+    const rightArm = makeKnightArm(0.58);
     const leftPauldron = makeCylinder(0.18, 0.28, 0.2, 14, materials.steel, -0.58, 1.76, 0);
     const rightPauldron = makeCylinder(0.18, 0.28, 0.2, 14, materials.steel, 0.58, 1.76, 0);
     leftPauldron.rotation.z = Math.PI / 2;
     rightPauldron.rotation.z = Math.PI / 2;
-    const leftGauntlet = makeCylinder(0.12, 0.13, 0.2, 10, materials.steel, -0.58, 1.0, -0.02);
-    const rightGauntlet = makeCylinder(0.12, 0.13, 0.2, 10, materials.steel, 0.58, 1.0, -0.02);
-    leftGauntlet.rotation.z = Math.PI / 2;
-    rightGauntlet.rotation.z = Math.PI / 2;
 
     const swordPivot = new THREE.Group();
     swordPivot.position.set(0.7, 1.27, -0.05);
@@ -8513,10 +9130,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     group.add(
       hips, chest, tabard, tabardTrim, belt, beltBuckle, cape, capeClaspLeft, capeClaspRight,
-      head, visor, visorSlit, helmet, helmetBand, crownRidge, plume,
-      leftTasset, rightTasset,
-      leftLeg, rightLeg, leftKnee, rightKnee, leftBoot, rightBoot,
-      leftArm, rightArm, leftPauldron, rightPauldron, leftGauntlet, rightGauntlet,
+      head, visor, visorSlit, helmet, helmetBand, crownRidge, plumeFinial, plumeMid, plumeLeft, plumeRight,
+      leftTasset, rightTasset, leftTasset2, rightTasset2, faulds, rivets,
+      leftLeg, rightLeg,
+      leftArm, rightArm, leftPauldron, rightPauldron,
       swordPivot, shieldPivot, slashArc, hitFlash
     );
     scene.add(group);
@@ -8549,9 +9166,20 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const shoulderWrap = makeBox(1.16, 0.18, 0.5, materials.wizardTrim.clone(), 0, 1.75, -0.03);
     const cape = makeBox(0.92, 1.24, 0.06, materials.royalBlue, 0, 1.12, 0.49);
     cape.rotation.x = -0.12;
+    // Flared hem ring at the bottom of the robe + vertical fold accents.
+    const hemRing = makeCylinder(0.94, 1.02, 0.18, 18, materials.wizardRobe.clone(), 0, 0.12, 0);
+    const fold1 = makeBox(0.08, 0.92, 0.1, materials.wizardRobe.clone(), -0.36, 0.5, -0.52);
+    fold1.rotation.z = 0.05;
+    const fold2 = makeBox(0.08, 0.92, 0.1, materials.wizardRobe.clone(), 0.36, 0.5, -0.52);
+    fold2.rotation.z = -0.05;
+    const fold3 = makeBox(0.08, 1.0, 0.1, materials.wizardRobe.clone(), 0, 0.48, -0.58);
 
     const head = makeSphere(0.26, materials.skin, 0, 2.02, 0);
-    const beard = makeBox(0.32, 0.36, 0.08, materials.bone, 0, 1.84, -0.23);
+    // Two stacked bone beard boxes + nose + brow ridge for a craggier face.
+    const beardTop = makeBox(0.32, 0.22, 0.09, materials.bone, 0, 1.88, -0.22);
+    const beardBottom = makeBox(0.24, 0.22, 0.08, materials.bone.clone(), 0, 1.7, -0.2);
+    const nose = makeBox(0.06, 0.1, 0.08, materials.skin.clone(), 0, 1.98, -0.26);
+    const brow = makeBox(0.3, 0.05, 0.06, materials.skin.clone(), 0, 2.11, -0.24);
     const leftEye = makeSphere(0.032, materials.lightningCore.clone(), -0.08, 2.06, -0.24);
     const rightEye = makeSphere(0.032, materials.lightningCore.clone(), 0.08, 2.06, -0.24);
     const hatBrim = makeCylinder(0.43, 0.43, 0.08, 24, materials.wizardHat.clone(), 0, 2.23, 0);
@@ -8559,20 +9187,45 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     hatCone.position.set(0.02, 2.67, 0.02);
     hatCone.rotation.z = -0.1;
     addShadow(hatCone);
+    // Bent hat tip + gold star emblem on the band.
+    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 16), materials.wizardHat.clone());
+    hatTip.position.set(-0.12, 3.0, 0.05);
+    hatTip.rotation.z = 0.66;
+    addShadow(hatTip);
     const hatBand = makeCylinder(0.27, 0.3, 0.08, 18, materials.gold, 0, 2.35, 0);
+    const hatStar = makeBox(0.1, 0.1, 0.04, materials.gold, 0, 2.4, -0.29);
+    hatStar.rotation.z = Math.PI / 4;
 
-    const leftLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, -0.22, 0.2, 0);
-    const rightLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, 0.22, 0.2, 0);
-    const leftBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.05);
-    const rightBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0.22, -0.04, -0.05);
-    const leftArm = makeBox(0.2, 0.72, 0.22, materials.wizardRobe.clone(), -0.58, 1.33, 0);
-    const rightArm = makeBox(0.2, 0.72, 0.22, materials.wizardRobe.clone(), 0.58, 1.33, 0);
-    const leftHand = makeSphere(0.105, materials.skin, -0.58, 0.94, -0.03);
-    const rightHand = makeSphere(0.105, materials.skin, 0.58, 0.94, -0.03);
-    const leftCuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), -0.58, 1.02, -0.02);
-    const rightCuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), 0.58, 1.02, -0.02);
-    leftCuff.rotation.z = Math.PI / 2;
-    rightCuff.rotation.z = Math.PI / 2;
+    // Hip-pivot leg Groups (thigh + shin + boot) under the robe.
+    function makeWizLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.5, 0);
+      const thigh = makeCylinder(0.11, 0.12, 0.32, 10, materials.darkLeather, 0, -0.15, 0);
+      const shin = makeCylinder(0.09, 0.1, 0.3, 10, materials.darkLeather, 0, -0.4, 0.01);
+      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.54, -0.05);
+      leg.add(thigh, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeWizLeg(-0.22);
+    const rightLeg = makeWizLeg(0.22);
+
+    // Shoulder-pivot sleeved arm Groups (neutral rotation 0, since the cast pose
+    // lerps back to 0). Flared upper sleeve + forearm, with the hand/cuff/drape
+    // as children so they swing with the arm during casting.
+    function makeWizArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.69, 0);
+      const upper = makeCylinder(0.14, 0.16, 0.4, 12, materials.wizardRobe.clone(), 0, -0.2, 0);
+      const forearm = makeCylinder(0.11, 0.12, 0.36, 12, materials.wizardRobe.clone(), 0, -0.56, 0);
+      const cuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), 0, -0.67, -0.02);
+      cuff.rotation.z = Math.PI / 2;
+      const hand = makeSphere(0.105, materials.skin.clone(), 0, -0.78, -0.03);
+      const drape = makeBox(0.2, 0.32, 0.06, materials.wizardRobe.clone(), 0, -0.42, 0.08);
+      arm.add(upper, forearm, cuff, hand, drape);
+      return arm;
+    }
+    const leftArm = makeWizArm(-0.58);
+    const rightArm = makeWizArm(0.58);
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
@@ -8593,10 +9246,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     hitFlash.visible = false;
 
     group.add(
-      robeLower, robeUpper, sash, sashPouch, frontTrim, shoulderWrap, cape,
-      head, beard, leftEye, rightEye, hatBrim, hatCone, hatBand,
-      leftLeg, rightLeg, leftBoot, rightBoot,
-      leftArm, rightArm, leftHand, rightHand, leftCuff, rightCuff,
+      robeLower, robeUpper, sash, sashPouch, frontTrim, shoulderWrap, cape, hemRing, fold1, fold2, fold3,
+      head, beardTop, beardBottom, nose, brow, leftEye, rightEye, hatBrim, hatCone, hatTip, hatBand, hatStar,
+      leftLeg, rightLeg,
+      leftArm, rightArm,
       staffPivot, castGlow, burstRing, hitFlash
     );
     scene.add(group);
@@ -8908,11 +9561,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     },
     {
       character: "wizard",
-      tagline: "Storm caster. Magica fuels every spell and refills over time. Lightly built - keep your distance.",
+      tagline: "Healer-support caster. Drops a shared Healing Draught the whole party can grab - it heals more, recharges faster, and reaches farther as you level. Backs it with light magic and crowd control. Lightly built - support from the back line.",
       abilities: [
+        { id: "potion", keys: "MMB / H" },
         { id: "lightning", keys: "LMB / Space / J" },
         { id: "burst", keys: "RMB / K" },
-        { id: "potion", keys: "MMB / H" },
         { id: "frostbind", keys: "F" },
         { id: "stormcrown", keys: "C" }
       ]
@@ -9124,9 +9777,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       { keys: "R", label: "Mount", text: "mount or dismount your active mount once a quest grants one." },
       { keys: "M", label: "Switch mount", text: "cycle between owned mounts - the horse from Rowan and the Skyhatched Drake from Brunna's roost quest." },
       { keys: "G", label: "Swap kit", text: "cycle between your unlocked weapon kits." },
-      { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5-6)." },
-      { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-9)." },
-      { keys: "H", label: "Potion", text: "wizards drop a shared healing potion." },
+      { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5)." },
+      { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-8)." },
+      { keys: "H", label: "Healing Draught", text: "wizards drop a shared healing draught for the party; it grows stronger as the wizard levels." },
       { keys: "V", text: "Mute or unmute audio." },
       { keys: "Enter", label: "Chat", text: "in an online room, open the one-line chat to message your party. Enter sends, Esc cancels. Movement and attacks are paused while you type." },
       { keys: "Esc", text: "Pause, resume, or close dialogue." },
@@ -9152,7 +9805,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       { label: "XP thresholds", text: "level 2 at " + xpForLevel(2) + " XP, level 3 at " + xpForLevel(3) + " XP, level 5 at " + xpForLevel(5) + " XP, level 9 at " + xpForLevel(9) + " XP." },
       { label: "Knight growth", text: "+6 max health and +7 max guard per level after level 1." },
       { label: "Wizard growth", text: "+4 max health, +8 max magica, and +0.65 magica regen per level after level 1." },
-      { label: "Ranger growth", text: "+4 max health, +6 focus, and +0.5 focus regen per level after level 1." }
+      { label: "Ranger growth", text: "+4 max health, +6 focus, and +0.5 focus regen per level after level 1." },
+      { label: "Death penalty", text: "dying costs one level: your XP falls back to the previous level's threshold and abilities above it lock until re-earned. At level 1 you only lose progress toward level 2." }
     ]);
 
     const kits = helpSection("Weapon Kits");
@@ -9193,7 +9847,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each kill grants XP, every cleared wave pays a bonus, and every third wave lands a milestone reward.");
     helpList(arena, [
       { keys: "Y", label: "Yield", text: "leave mid-wave with your kill XP but no wave bonus. Yielding is respected, not shameful." },
-      { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues." },
+      { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues - but like any death, defeat costs you one level." },
       { text: "Online, everyone fights the same waves. Joiners arriving mid-wave wait at the infirmary and enter at the next bell." }
     ]);
   }
@@ -10124,6 +10778,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       z: potion.position.z,
       kind: potion.kind || (potion.fullHeal ? "full" : "small"),
       healAmount: potion.healAmount,
+      pickupRadius: potion.pickupRadius,
       fullHeal: !!potion.fullHeal,
       activityType: potion.activityType || "",
       activityId: potion.activityId || ""
@@ -10157,29 +10812,40 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return type === "briarRaider" ? "briarBeast" : type;
   }
 
+  // Single factory dispatch shared by the joiner snapshot path and the host
+  // Wilds Director respawns, so the two stay in sync by construction.
+  function createEnemyOfType(rawType, x, z, wave) {
+    const type = normalizeEnemyType(rawType);
+    if (type === "dragon") {
+      return createDragon(x, z, wave);
+    }
+    if (type === "spider") {
+      return createSpider(x, z, wave);
+    }
+    if (type === "wisp") {
+      return createWisp(x, z, wave);
+    }
+    if (type === "briarBeast") {
+      return createBriarBeast(x, z, wave);
+    }
+    if (type === "banditArcher") {
+      return createBanditArcher(x, z, wave);
+    }
+    if (type === "sandViper") {
+      return createSandViper(x, z, wave);
+    }
+    if (type === "bonewarden") {
+      return createBonewarden(x, z, wave);
+    }
+    if (type === "bogLurker") {
+      return createBogLurker(x, z, wave);
+    }
+    return createBarbarian(x, z, wave);
+  }
+
   function createEnemyFromSnapshot(state) {
     const wave = Math.max(1, game.wave || 1);
-    const type = normalizeEnemyType(state.type);
-    let enemy;
-    if (type === "dragon") {
-      enemy = createDragon(state.x, state.z, wave);
-    } else if (type === "spider") {
-      enemy = createSpider(state.x, state.z, wave);
-    } else if (type === "wisp") {
-      enemy = createWisp(state.x, state.z, wave);
-    } else if (type === "briarBeast") {
-      enemy = createBriarBeast(state.x, state.z, wave);
-    } else if (type === "banditArcher") {
-      enemy = createBanditArcher(state.x, state.z, wave);
-    } else if (type === "sandViper") {
-      enemy = createSandViper(state.x, state.z, wave);
-    } else if (type === "bonewarden") {
-      enemy = createBonewarden(state.x, state.z, wave);
-    } else if (type === "bogLurker") {
-      enemy = createBogLurker(state.x, state.z, wave);
-    } else {
-      enemy = createBarbarian(state.x, state.z, wave);
-    }
+    const enemy = createEnemyOfType(state.type, state.x, state.z, wave);
     enemy.remoteControlled = true;
     assignEnemyId(enemy, state.enemyId);
     game.enemies.push(enemy);
@@ -10358,6 +11024,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     potion.group.position.x = potion.position.x;
     potion.group.position.z = potion.position.z;
     potion.healAmount = state.healAmount || potion.healAmount;
+    if (numberOrZero(state.pickupRadius) > 0) {
+      potion.pickupRadius = state.pickupRadius;
+    }
     potion.fullHeal = !!state.fullHeal;
     potion.kind = state.kind || potion.kind;
     potion.activityType = state.activityType || "";
@@ -10565,9 +11234,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const inArena = message.activityType === "arena"
       && arenaActivityActive()
       && arenaListIncludes(game.exploration.arenaActivity.participants, message.id);
+    // Host authority: clamp the requester's claimed heal/radius to the Tier III
+    // maxima so a client cannot author an over-heal.
+    const healCap = defaultCombatTuning.wizardPotionHealT3;
+    const radiusCap = defaultCombatTuning.wizardPotionRadiusT3;
+    const reqHeal = clamp(numberOrZero(message.healAmount) || defaultCombatTuning.wizardPotionHealT1, 1, healCap);
+    const reqRadius = clamp(numberOrZero(message.pickupRadius) || defaultCombatTuning.wizardPotionRadiusT1, 0.9, radiusCap);
     game.potions.push(createHealthPotion(x, z, {
       kind: "wizard",
-      healAmount: 28,
+      healAmount: reqHeal,
+      pickupRadius: reqRadius,
       activityType: inArena ? "arena" : "",
       activityId: inArena ? game.exploration.arenaActivity.activityId : ""
     }));
@@ -10607,7 +11283,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function explorationRewardForEnemy(enemy) {
-    const base = enemy.type === "dragon" ? 28
+    // Dragons pay out like the group encounter they now are (was 28).
+    const base = enemy.type === "dragon" ? 60
       : enemy.type === "wisp" ? 14
       : enemy.type === "spider" ? 10
       : enemy.type === "briarBeast" ? 13
@@ -10862,26 +11539,67 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const helmetBand = makeCylinder(0.31, 0.31, 0.08, 18, trim, 0, 2.25, 0);
     const crownRidge = makeBox(0.09, 0.44, 0.08, trim, 0, 2.48, 0);
     crownRidge.rotation.x = 0.25;
-    const plume = makeBox(0.12, 0.56, 0.1, capeMat, 0, 2.67, 0.08);
-    plume.rotation.x = 0.32;
-    const leftLeg = makeBox(0.22, 0.78, 0.24, materials.iron, -0.22, 0.34, 0);
-    const rightLeg = makeBox(0.22, 0.78, 0.24, materials.iron, 0.22, 0.34, 0);
-    const leftKnee = makeSphere(0.13, materials.steel.clone(), -0.22, 0.55, -0.11);
-    leftKnee.scale.set(1, 0.62, 0.72);
-    const rightKnee = makeSphere(0.13, materials.steel.clone(), 0.22, 0.55, -0.11);
-    rightKnee.scale.set(1, 0.62, 0.72);
-    const leftBoot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, -0.22, -0.03, -0.05);
-    const rightBoot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0.22, -0.03, -0.05);
-    const leftArm = makeBox(0.2, 0.78, 0.22, materials.iron, -0.58, 1.34, 0);
-    const rightArm = makeBox(0.2, 0.78, 0.22, materials.iron, 0.58, 1.34, 0);
+    // Plume: trim finial + three fanned cape-colored slats (mirrors local knight).
+    const plumeFinial = makeCone(0.07, 0.16, 8, trim, 0, 2.56, 0.04);
+    const plumeMid = makeBox(0.11, 0.6, 0.09, capeMat, 0, 2.69, 0.09);
+    plumeMid.rotation.x = 0.32;
+    const plumeLeft = makeBox(0.09, 0.5, 0.07, capeMat, -0.08, 2.64, 0.08);
+    plumeLeft.rotation.set(0.34, 0, 0.16);
+    const plumeRight = makeBox(0.09, 0.5, 0.07, capeMat, 0.08, 2.64, 0.08);
+    plumeRight.rotation.set(0.34, 0, -0.16);
+    const leftTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), -0.3, 0.62, 0);
+    leftTasset.rotation.z = 0.18;
+    const rightTasset = makeBox(0.26, 0.34, 0.3, materials.steel.clone(), 0.3, 0.62, 0);
+    rightTasset.rotation.z = -0.18;
+    const leftTasset2 = makeBox(0.22, 0.26, 0.28, materials.steel.clone(), -0.27, 0.4, 0.02);
+    leftTasset2.rotation.z = 0.2;
+    const rightTasset2 = makeBox(0.22, 0.26, 0.28, materials.steel.clone(), 0.27, 0.4, 0.02);
+    rightTasset2.rotation.z = -0.2;
+    const faulds = new THREE.Group();
+    faulds.position.set(0, 1.0, 0);
+    for (let i = 0; i < 4; i += 1) {
+      const angle = (i - 1.5) * 0.46;
+      const plate = makeBox(0.24, 0.32, 0.1, materials.steel.clone(), Math.sin(angle) * 0.44, -0.26, -Math.cos(angle) * 0.44);
+      plate.rotation.set(0.12, angle, 0);
+      faulds.add(plate);
+    }
+    const rivets = new THREE.Group();
+    for (let i = 0; i < 4; i += 1) {
+      rivets.add(makeSphere(0.03, trim, -0.21 + i * 0.14, 1.62, -0.44));
+    }
+
+    function makeKnightLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeCylinder(0.13, 0.14, 0.4, 12, materials.iron, 0, -0.18, 0);
+      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.16, -0.11);
+      knee.scale.set(1, 0.62, 0.72);
+      const shin = makeCylinder(0.11, 0.12, 0.4, 12, materials.iron.clone(), 0, -0.5, 0.01);
+      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.73, -0.05);
+      leg.add(thigh, knee, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeKnightLeg(-0.22);
+    const rightLeg = makeKnightLeg(0.22);
+
+    function makeKnightArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.72, 0);
+      const upper = makeCylinder(0.11, 0.1, 0.4, 12, materials.iron, 0, -0.2, 0);
+      const elbow = makeSphere(0.1, materials.steel.clone(), 0, -0.4, 0);
+      const forearm = makeCylinder(0.1, 0.11, 0.38, 12, materials.iron.clone(), 0, -0.58, -0.01);
+      const gauntlet = makeCylinder(0.12, 0.13, 0.18, 10, materials.steel.clone(), 0, -0.68, -0.02);
+      gauntlet.rotation.z = Math.PI / 2;
+      const fist = makeSphere(0.12, materials.steel.clone(), 0, -0.8, -0.02);
+      arm.add(upper, elbow, forearm, gauntlet, fist);
+      return arm;
+    }
+    const leftArm = makeKnightArm(-0.58);
+    const rightArm = makeKnightArm(0.58);
     const leftPauldron = makeCylinder(0.18, 0.28, 0.2, 14, materials.steel.clone(), -0.58, 1.76, 0);
     const rightPauldron = makeCylinder(0.18, 0.28, 0.2, 14, materials.steel.clone(), 0.58, 1.76, 0);
     leftPauldron.rotation.z = Math.PI / 2;
     rightPauldron.rotation.z = Math.PI / 2;
-    const leftGauntlet = makeCylinder(0.12, 0.13, 0.2, 10, materials.steel.clone(), -0.58, 1.0, -0.02);
-    const rightGauntlet = makeCylinder(0.12, 0.13, 0.2, 10, materials.steel.clone(), 0.58, 1.0, -0.02);
-    leftGauntlet.rotation.z = Math.PI / 2;
-    rightGauntlet.rotation.z = Math.PI / 2;
 
     const swordPivot = new THREE.Group();
     swordPivot.position.set(0.7, 1.27, -0.05);
@@ -10903,9 +11621,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     group.add(
       hips, chest, tabard, tabardTrim, belt, beltBuckle, cape, capeClaspLeft, capeClaspRight,
-      head, visor, visorSlit, helmet, helmetBand, crownRidge, plume,
-      leftLeg, rightLeg, leftKnee, rightKnee, leftBoot, rightBoot,
-      leftArm, rightArm, leftPauldron, rightPauldron, leftGauntlet, rightGauntlet,
+      head, visor, visorSlit, helmet, helmetBand, crownRidge, plumeFinial, plumeMid, plumeLeft, plumeRight,
+      leftTasset, rightTasset, leftTasset2, rightTasset2, faulds, rivets,
+      leftLeg, rightLeg,
+      leftArm, rightArm, leftPauldron, rightPauldron,
       swordPivot, shieldPivot
     );
     return { body: chest, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: swordPivot, nameTagY: 3.22 };
@@ -10925,9 +11644,18 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const shoulderWrap = makeBox(1.16, 0.18, 0.5, trim, 0, 1.75, -0.03);
     const cape = makeBox(0.92, 1.24, 0.06, capeMat, 0, 1.12, 0.49);
     cape.rotation.x = -0.12;
+    const hemRing = makeCylinder(0.94, 1.02, 0.18, 18, robe.clone(), 0, 0.12, 0);
+    const fold1 = makeBox(0.08, 0.92, 0.1, robe.clone(), -0.36, 0.5, -0.52);
+    fold1.rotation.z = 0.05;
+    const fold2 = makeBox(0.08, 0.92, 0.1, robe.clone(), 0.36, 0.5, -0.52);
+    fold2.rotation.z = -0.05;
+    const fold3 = makeBox(0.08, 1.0, 0.1, robe.clone(), 0, 0.48, -0.58);
 
     const head = makeSphere(0.26, materials.skin, 0, 2.02, 0);
-    const beard = makeBox(0.32, 0.36, 0.08, materials.bone, 0, 1.84, -0.23);
+    const beardTop = makeBox(0.32, 0.22, 0.09, materials.bone, 0, 1.88, -0.22);
+    const beardBottom = makeBox(0.24, 0.22, 0.08, materials.bone.clone(), 0, 1.7, -0.2);
+    const nose = makeBox(0.06, 0.1, 0.08, materials.skin, 0, 1.98, -0.26);
+    const brow = makeBox(0.3, 0.05, 0.06, materials.skin, 0, 2.11, -0.24);
     const leftEye = makeSphere(0.032, glow, -0.08, 2.06, -0.24);
     const rightEye = makeSphere(0.032, glow.clone(), 0.08, 2.06, -0.24);
     const hatBrim = makeCylinder(0.43, 0.43, 0.08, 24, hatMat, 0, 2.23, 0);
@@ -10935,20 +11663,40 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     hatCone.position.set(0.02, 2.67, 0.02);
     hatCone.rotation.z = -0.1;
     addShadow(hatCone);
+    const hatTip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 16), hatMat.clone());
+    hatTip.position.set(-0.12, 3.0, 0.05);
+    hatTip.rotation.z = 0.66;
+    addShadow(hatTip);
     const hatBand = makeCylinder(0.27, 0.3, 0.08, 18, trim, 0, 2.35, 0);
+    const hatStar = makeBox(0.1, 0.1, 0.04, trim, 0, 2.4, -0.29);
+    hatStar.rotation.z = Math.PI / 4;
 
-    const leftLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, -0.22, 0.2, 0);
-    const rightLeg = makeBox(0.22, 0.58, 0.22, materials.darkLeather, 0.22, 0.2, 0);
-    const leftBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.05);
-    const rightBoot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0.22, -0.04, -0.05);
-    const leftArm = makeBox(0.2, 0.72, 0.22, robe.clone(), -0.58, 1.33, 0);
-    const rightArm = makeBox(0.2, 0.72, 0.22, robe.clone(), 0.58, 1.33, 0);
-    const leftHand = makeSphere(0.105, materials.skin, -0.58, 0.94, -0.03);
-    const rightHand = makeSphere(0.105, materials.skin, 0.58, 0.94, -0.03);
-    const leftCuff = makeCylinder(0.13, 0.14, 0.16, 12, trim, -0.58, 1.02, -0.02);
-    const rightCuff = makeCylinder(0.13, 0.14, 0.16, 12, trim, 0.58, 1.02, -0.02);
-    leftCuff.rotation.z = Math.PI / 2;
-    rightCuff.rotation.z = Math.PI / 2;
+    function makeWizLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.5, 0);
+      const thigh = makeCylinder(0.11, 0.12, 0.32, 10, materials.darkLeather, 0, -0.15, 0);
+      const shin = makeCylinder(0.09, 0.1, 0.3, 10, materials.darkLeather, 0, -0.4, 0.01);
+      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.54, -0.05);
+      leg.add(thigh, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeWizLeg(-0.22);
+    const rightLeg = makeWizLeg(0.22);
+
+    function makeWizArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.69, 0);
+      const upper = makeCylinder(0.14, 0.16, 0.4, 12, robe.clone(), 0, -0.2, 0);
+      const forearm = makeCylinder(0.11, 0.12, 0.36, 12, robe.clone(), 0, -0.56, 0);
+      const cuff = makeCylinder(0.13, 0.14, 0.16, 12, trim, 0, -0.67, -0.02);
+      cuff.rotation.z = Math.PI / 2;
+      const hand = makeSphere(0.105, materials.skin, 0, -0.78, -0.03);
+      const drape = makeBox(0.2, 0.32, 0.06, robe.clone(), 0, -0.42, 0.08);
+      arm.add(upper, forearm, cuff, hand, drape);
+      return arm;
+    }
+    const leftArm = makeWizArm(-0.58);
+    const rightArm = makeWizArm(0.58);
 
     const staffPivot = new THREE.Group();
     staffPivot.position.set(0.64, 1.02, -0.08);
@@ -10956,10 +11704,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     staffPivot.rotation.set(0.08, 0, -0.16);
 
     group.add(
-      robeLower, robeUpper, sash, frontTrim, shoulderWrap, cape,
-      head, beard, leftEye, rightEye, hatBrim, hatCone, hatBand,
-      leftLeg, rightLeg, leftBoot, rightBoot,
-      leftArm, rightArm, leftHand, rightHand, leftCuff, rightCuff,
+      robeLower, robeUpper, sash, frontTrim, shoulderWrap, cape, hemRing, fold1, fold2, fold3,
+      head, beardTop, beardBottom, nose, brow, leftEye, rightEye, hatBrim, hatCone, hatTip, hatBand, hatStar,
+      leftLeg, rightLeg,
+      leftArm, rightArm,
       staffPivot
     );
     return { body: robeUpper, leftLeg, rightLeg, leftArm, rightArm, weaponPivot: staffPivot, nameTagY: 3.36 };
@@ -11339,11 +12087,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function pointInAttackCone(source, yaw, target, range, minDot) {
     const forward = forwardFromYaw(yaw, new THREE.Vector3());
     const toTarget = target.clone().sub(source);
+    // Horizontal check: remote action sources arrive with y=0 while enemies
+    // carry a terrain-height y, so a 3D distance would shrink (or kill) the
+    // range on elevated ground. Local melee/ability checks are horizontal too.
+    toTarget.y = 0;
     const distance = toTarget.length();
     if (distance > range || distance < 0.001) {
       return false;
     }
-    toTarget.y = 0;
     toTarget.normalize();
     return forward.dot(toTarget) >= minDot;
   }
@@ -11399,8 +12150,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const crown = action === "stormcrown";
       const radius = crown ? tuning.stormcrownRadius + 0.1 : 3.45;
       for (const enemy of game.enemies) {
-        if (!enemy.dead && enemy.position.distanceTo(source) < radius + enemy.radius) {
-          const direction = enemy.position.clone().sub(source).normalize();
+        if (!enemy.dead && Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z) < radius + enemy.radius) {
+          const direction = enemy.position.clone().sub(source);
+          direction.y = 0;
+          direction.normalize();
           const damage = crown ? tuning.stormcrownDamageMin : Math.max(16, tuning.burstDamageMin - 4);
           damageEnemy(enemy, damage, direction, crown ? 0.6 : 0.55, sourceId);
           if (crown) {
@@ -11477,7 +12230,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
         continue;
       }
-      const distance = enemy.position.distanceTo(source);
+      const distance = Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z);
       if (distance < bestDistance) {
         bestDistance = distance;
         best = enemy;
@@ -11597,6 +12350,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     };
   }
 
+  // Ground (feet) height for a combat target. The local player's logical
+  // position keeps y = 0 while the body rides the terrain, whereas remote
+  // player target positions already carry a terrain-anchored y. Enemy
+  // projectiles must aim/test against this anchor, not absolute world heights.
+  function combatTargetGroundY(target) {
+    if (!target || target.local) {
+      return explorationGroundWorldY(player.position.x, player.position.z);
+    }
+    return target.position.y;
+  }
+
   function nearestCombatTarget(enemy) {
     let best = null;
     let bestDistance = Infinity;
@@ -11645,25 +12409,63 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     const hips = makeCylinder(0.44, 0.52, 0.62, 14, materials.leather, 0, 0.68, 0);
     const chest = makeCylinder(0.55, 0.45, 0.92, 14, materials.skin, 0, 1.34, 0);
+    // Defined ab/chest plate sits on the front of the torso for muscle relief.
+    const abPlate = makeBox(0.6, 0.62, 0.16, materials.skin.clone(), 0, 1.2, -0.34);
     const fur = makeBox(1.12, 0.24, 0.66, materials.fur, 0, 1.84, 0);
+    // Back fur cape flap hangs off the shoulders.
+    const capeFlap = makeBox(0.84, 0.98, 0.1, materials.fur.clone(), 0, 1.4, 0.34);
+    capeFlap.rotation.x = 0.12;
+    // Tunic skirt flares under the belt over the hips.
+    const tunicSkirt = makeCylinder(0.5, 0.66, 0.5, 14, materials.leather.clone(), 0, 0.74, 0);
+
     const head = makeSphere(0.28, materials.skin, 0, 2.1, 0);
-    const beard = makeBox(0.36, 0.3, 0.12, materials.fur, 0, 1.96, -0.22);
+    const cheekL = makeBox(0.11, 0.11, 0.12, materials.skin.clone(), -0.18, 2.05, -0.18);
+    const cheekR = makeBox(0.11, 0.11, 0.12, materials.skin.clone(), 0.18, 2.05, -0.18);
+    // Braided beard built from three stacked, tapering fur boxes.
+    const beard1 = makeBox(0.38, 0.2, 0.13, materials.fur, 0, 1.98, -0.22);
+    const beard2 = makeBox(0.3, 0.18, 0.11, materials.fur.clone(), 0, 1.82, -0.2);
+    const beard3 = makeBox(0.18, 0.16, 0.09, materials.fur.clone(), 0, 1.67, -0.18);
     const hair = makeCylinder(0.22, 0.29, 0.24, 12, materials.fur, 0, 2.33, 0);
     const leftEye = makeSphere(0.035, materials.emberEye, -0.09, 2.14, -0.24);
     const rightEye = makeSphere(0.035, materials.emberEye, 0.09, 2.14, -0.24);
     const nose = makeBox(0.06, 0.09, 0.08, materials.skin, 0, 2.07, -0.28);
     const warPaint = makeBox(0.38, 0.035, 0.025, materials.warPaint, 0, 2.18, -0.27);
+    const warPaint2 = makeBox(0.3, 0.03, 0.025, materials.warPaint.clone(), 0, 2.01, -0.26);
     const helmetBand = makeCylinder(0.31, 0.31, 0.12, 16, materials.iron, 0, 2.28, 0);
-    const hornLeft = makeCylinder(0.018, 0.082, 0.36, 8, materials.bone, -0.26, 2.34, -0.08);
-    const hornRight = makeCylinder(0.018, 0.082, 0.36, 8, materials.bone, 0.26, 2.34, -0.08);
+    const hornLeft = makeCylinder(0.03, 0.11, 0.42, 8, materials.bone, -0.26, 2.34, -0.08);
+    const hornRight = makeCylinder(0.03, 0.11, 0.42, 8, materials.bone, 0.26, 2.34, -0.08);
     hornLeft.rotation.set(-0.18, -0.34, 1.0);
     hornRight.rotation.set(-0.18, 0.34, -1.0);
-    const leftLeg = makeBox(0.23, 0.7, 0.25, materials.leather, -0.23, 0.3, 0);
-    const rightLeg = makeBox(0.23, 0.7, 0.25, materials.leather, 0.23, 0.3, 0);
-    const leftBoot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, -0.22, -0.04, -0.04);
-    const rightBoot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, 0.22, -0.04, -0.04);
-    const leftArm = makeBox(0.2, 0.68, 0.2, materials.skin, -0.58, 1.25, 0);
-    const rightArm = makeBox(0.2, 0.68, 0.2, materials.skin, 0.58, 1.25, 0);
+
+    // Hip-pivot leg Group: origin at the hip so the generic melee state machine's
+    // per-frame rotation.x swings the whole leg from the top, not the middle.
+    function makeLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.66, 0);
+      const thigh = makeCylinder(0.14, 0.16, 0.42, 10, materials.leather.clone(), 0, -0.21, 0);
+      const loin = makeBox(0.26, 0.28, 0.16, materials.fur.clone(), 0, -0.06, -0.12);
+      const shin = makeCylinder(0.1, 0.12, 0.4, 10, materials.darkLeather, 0, -0.58, 0.01);
+      const boot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, 0, -0.78, -0.04);
+      leg.add(thigh, loin, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeLeg(-0.23);
+    const rightLeg = makeLeg(0.23);
+
+    // Shoulder-pivot arms with upper-arm, forearm, and a fist. Not animated by the
+    // melee state machine, but structured to match the quality bar.
+    function makeArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.6, 0);
+      const upper = makeCylinder(0.12, 0.11, 0.4, 10, materials.skin.clone(), 0, -0.2, 0);
+      const forearm = makeCylinder(0.11, 0.1, 0.38, 10, materials.skin.clone(), 0, -0.56, 0);
+      const fist = makeSphere(0.13, materials.skin.clone(), 0, -0.78, 0);
+      arm.add(upper, forearm, fist);
+      return arm;
+    }
+    const leftArm = makeArm(-0.58);
+    const rightArm = makeArm(0.58);
+
     const belt = makeCylinder(0.5, 0.52, 0.12, 14, materials.darkLeather, 0, 0.98, 0);
     const buckle = makeBox(0.18, 0.12, 0.06, materials.gold, 0, 0.98, -0.44);
     const leftShoulder = makeCylinder(0.17, 0.24, 0.18, 12, materials.iron, -0.56, 1.68, 0);
@@ -11687,7 +12489,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const gripWrapBottom = makeCylinder(0.052, 0.052, 0.12, 8, materials.darkLeather, 0, 0, -0.78);
     gripWrapTop.rotation.x = Math.PI / 2;
     gripWrapBottom.rotation.x = Math.PI / 2;
-    weaponPivot.add(haft, axe, axeSpike, gripWrapTop, gripWrapBottom);
+    // Leather thong dangling from the haft.
+    const haftThong = makeBox(0.012, 0.16, 0.05, materials.darkLeather.clone(), 0, -0.1, -0.46);
+    weaponPivot.add(haft, axe, axeSpike, gripWrapTop, gripWrapBottom, haftThong);
     weaponPivot.rotation.set(-0.12, -0.3, -0.7);
 
     const healthRoot = new THREE.Group();
@@ -11704,8 +12508,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     telegraph.visible = false;
 
     group.add(
-      hips, chest, fur, head, beard, hair, leftEye, rightEye, nose, warPaint, helmetBand, hornLeft, hornRight,
-      leftLeg, rightLeg, leftBoot, rightBoot, leftArm, rightArm, belt, buckle, leftShoulder, rightShoulder,
+      hips, chest, abPlate, fur, capeFlap, tunicSkirt,
+      head, cheekL, cheekR, beard1, beard2, beard3, hair, leftEye, rightEye, nose, warPaint, warPaint2,
+      helmetBand, hornLeft, hornRight,
+      leftLeg, rightLeg, leftArm, rightArm, belt, buckle, leftShoulder, rightShoulder,
       leftBracer, rightBracer, weaponPivot, healthRoot, telegraph
     );
 
@@ -11713,20 +12519,35 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function makeWing(side) {
+    const wing = new THREE.Group();
+    // Wing keypoints: root at the shoulder, fanning to the wingtip and trailing edge.
+    const root = [0, 0.04, 0];
+    const tip = [side * 3.05, 0.26, -0.48];
+    const mid = [side * 1.96, 0.04, -1.18];
+    const trailFar = [side * 1.34, -0.18, -1.98];
+    const trailNear = [side * 0.28, -0.02, -0.82];
+    // Membrane split into three panels for a bat-wing silhouette instead of a flat quad.
     const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array([
-      0, 0.04, 0,
-      side * 3.05, 0.26, -0.48,
-      side * 1.34, -0.18, -1.98,
-      side * 0.28, -0.02, -0.82
-    ]);
+    const vertices = new Float32Array([...root, ...tip, ...mid, ...trailFar, ...trailNear]);
     geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    geometry.setIndex([0, 1, 3, 1, 2, 3]);
+    geometry.setIndex([0, 1, 2, 0, 2, 4, 2, 3, 4]);
     geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, materials.dragonWing);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
+    const membrane = new THREE.Mesh(geometry, materials.dragonWing);
+    membrane.castShadow = true;
+    membrane.receiveShadow = true;
+    wing.add(membrane);
+
+    // Bone finger-struts fanning out from the root along the membrane ribs.
+    const rootV = new THREE.Vector3(root[0], root[1], root[2]);
+    for (const finger of [tip, mid, trailFar]) {
+      const dir = new THREE.Vector3(finger[0], finger[1], finger[2]).sub(rootV);
+      const len = dir.length();
+      const strut = makeCylinder(0.028, 0.016, len, 6, materials.bone, 0, 0, 0);
+      strut.position.copy(rootV).addScaledVector(dir, 0.5);
+      strut.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      wing.add(strut);
+    }
+    return wing;
   }
 
   function createDragonModel(scale) {
@@ -11736,24 +12557,56 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const body = makeCylinder(0.54, 0.76, 2.05, 18, materials.dragonScale, 0, 0, 0);
     body.rotation.x = Math.PI / 2;
     const belly = makeBox(0.64, 0.12, 1.36, materials.dragonBelly, 0, -0.31, -0.12);
-    const neck = makeCylinder(0.24, 0.36, 0.86, 14, materials.dragonScale, 0, 0.36, -1.02);
-    neck.rotation.x = 0.7;
+    // Three tapered, curving neck segments so the head reaches forward to the
+    // mouth point (~z -2.0) that launchFireball reads via group.localToWorld.
+    const neck1 = makeCylinder(0.3, 0.36, 0.52, 14, materials.dragonScale, 0, 0.16, -0.76);
+    neck1.rotation.x = 0.5;
+    const neck2 = makeCylinder(0.25, 0.3, 0.48, 14, materials.dragonScale, 0, 0.42, -1.12);
+    neck2.rotation.x = 0.74;
+    const neck3 = makeCylinder(0.21, 0.26, 0.44, 14, materials.dragonScale, 0, 0.62, -1.42);
+    neck3.rotation.x = 0.96;
     const head = makeSphere(0.42, materials.dragonScale, 0, 0.68, -1.54);
     head.scale.set(1.18, 0.88, 1.12);
     const snout = makeBox(0.54, 0.26, 0.54, materials.dragonScale, 0, 0.58, -1.96);
     const upperJaw = makeBox(0.5, 0.14, 0.58, materials.dragonScale, 0, 0.64, -2.12);
     const lowerJaw = makeBox(0.48, 0.11, 0.48, materials.dragonBelly, 0, 0.45, -2.1);
+    // Lower-jaw teeth ride as children so they swing open with the jaw hinge.
+    for (let i = -1; i <= 1; i += 1) {
+      const tooth = makeCone(0.028, 0.13, 5, materials.bone, i * 0.15, 0.07, -0.18);
+      lowerJaw.add(tooth);
+    }
     const leftEye = makeSphere(0.06, materials.dragonEye, -0.2, 0.75, -1.9);
     const rightEye = makeSphere(0.06, materials.dragonEye, 0.2, 0.75, -1.9);
+    // Brow ridges over the eyes and nostril dots on the snout for a meaner head.
+    const browLeft = makeBox(0.18, 0.06, 0.16, materials.dragonScale, -0.2, 0.84, -1.9);
+    browLeft.rotation.set(0.1, 0, 0.22);
+    const browRight = makeBox(0.18, 0.06, 0.16, materials.dragonScale, 0.2, 0.84, -1.9);
+    browRight.rotation.set(0.1, 0, -0.22);
+    const nostrilLeft = makeSphere(0.035, materials.dragonScale, -0.11, 0.62, -2.2);
+    const nostrilRight = makeSphere(0.035, materials.dragonScale, 0.11, 0.62, -2.2);
     const hornLeft = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, -0.21, 0.98, -1.46);
     const hornRight = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, 0.21, 0.98, -1.46);
     hornLeft.rotation.set(-0.82, -0.22, 0.18);
     hornRight.rotation.set(-0.82, 0.22, -0.18);
 
-    const tail = makeCylinder(0.09, 0.36, 1.92, 12, materials.dragonScale, 0, -0.04, 1.48);
-    tail.rotation.x = Math.PI / 2 + 0.18;
-    const tailTip = makeCylinder(0.035, 0.13, 0.66, 10, materials.dragonScale, 0, 0.08, 2.48);
-    tailTip.rotation.x = Math.PI / 2 + 0.42;
+    // Segmented tail: four decreasing cylinders sweeping back to a cone tip, each
+    // crowned with a bone spike so the ridge runs the full length of the dragon.
+    const tailSegmentsGroup = new THREE.Group();
+    const tailSegData = [
+      [0.34, 0.4, 0.52, 1.18, 0.12],
+      [0.26, 0.32, 0.5, 1.62, 0.24],
+      [0.18, 0.24, 0.48, 2.04, 0.36],
+      [0.1, 0.17, 0.44, 2.4, 0.48]
+    ];
+    for (const [rt, rb, h, z, droop] of tailSegData) {
+      const seg = makeCylinder(rt, rb, h, 12, materials.dragonScale, 0, -0.02 - droop * 0.12, z);
+      seg.rotation.x = Math.PI / 2 + droop;
+      const spike = makeCylinder(0.012, 0.05, 0.16, 6, materials.bone, 0, 0.18 - droop * 0.1, z - 0.04);
+      spike.rotation.x = -0.2;
+      tailSegmentsGroup.add(seg, spike);
+    }
+    const tailTip = makeCone(0.12, 0.5, 10, materials.dragonScale, 0, -0.28, 2.78);
+    tailTip.rotation.x = -(Math.PI / 2 + 0.6);
 
     const leftWing = new THREE.Group();
     leftWing.position.set(-0.48, 0.3, -0.2);
@@ -11777,6 +12630,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     const spineSpikes = new THREE.Group();
     const spikePositions = [
+      [0, 0.66, -1.42, 0.14],
+      [0, 0.74, -1.1, 0.18],
       [0, 0.9, -1.18, 0.22],
       [0, 0.68, -0.72, 0.26],
       [0, 0.58, -0.18, 0.3],
@@ -11802,7 +12657,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     hpFill.position.z = 0.003;
     healthRoot.add(hpBack, hpFill);
 
-    group.add(body, belly, neck, head, snout, upperJaw, lowerJaw, leftEye, rightEye, hornLeft, hornRight, tail, tailTip, leftWing, rightWing, leftClaw, rightClaw, rearLeftLeg, rearRightLeg, rearLeftFoot, rearRightFoot, spineSpikes, mouthGlow, healthRoot);
+    group.add(body, belly, neck1, neck2, neck3, head, snout, upperJaw, lowerJaw, leftEye, rightEye, browLeft, browRight, nostrilLeft, nostrilRight, hornLeft, hornRight, tailSegmentsGroup, tailTip, leftWing, rightWing, leftClaw, rightClaw, rearLeftLeg, rearRightLeg, rearLeftFoot, rearRightFoot, spineSpikes, mouthGlow, healthRoot);
 
     return { group, body, leftWing, rightWing, lowerJaw, mouthGlow, healthRoot, hpFill };
   }
@@ -11862,21 +12717,44 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     const floatRoot = new THREE.Group();
     floatRoot.position.y = 0.98;
+    // Nested translucent shells produce a layered glow falloff (outer -> core).
+    const outerShell = makeSphere(0.58, materials.wisp.clone(), 0, 0, 0);
+    outerShell.material.opacity = 0.16;
+    outerShell.scale.set(1.0, 1.14, 1.0);
     const shell = makeSphere(0.42, materials.wisp.clone(), 0, 0, 0);
     shell.scale.set(1.0, 1.18, 1.0);
+    const midHalo = makeSphere(0.27, materials.wisp.clone(), 0, 0, 0);
+    midHalo.material.opacity = 0.3;
     const core = makeSphere(0.16, materials.wispCore.clone(), 0, 0, 0);
     const ringA = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.014, 8, 28), materials.wispCore.clone());
     ringA.rotation.x = Math.PI / 2;
     const ringB = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.012, 8, 24), materials.wisp.clone());
     ringB.rotation.y = Math.PI / 2;
+    const ringC = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.01, 8, 26), materials.wispCore.clone());
+    ringC.rotation.set(Math.PI / 3, 0, Math.PI / 4);
     const sparks = [];
     for (let i = 0; i < 4; i += 1) {
       const spark = makeSphere(0.055, materials.wispCore.clone(), 0, 0, 0);
       sparks.push(spark);
       floatRoot.add(spark);
     }
+    // Trailing wake of shrinking motes dragged behind the wisp by its velocity.
+    const trail = [];
+    for (let i = 0; i < 5; i += 1) {
+      const mote = makeSphere(0.05, materials.wispCore.clone(), 0, 0, 0);
+      mote.material.opacity = Math.max(0.06, 0.5 - i * 0.1);
+      trail.push(mote);
+      floatRoot.add(mote);
+    }
+    // Slow-drifting ember motes that flicker for extra ethereal life.
+    const embers = [];
+    for (let i = 0; i < 3; i += 1) {
+      const ember = makeSphere(0.03, materials.wispCore.clone(), 0, 0, 0);
+      embers.push(ember);
+      floatRoot.add(ember);
+    }
     const glow = new THREE.PointLight(0x8affd2, 1.25, 5.5, 1.9);
-    floatRoot.add(shell, core, ringA, ringB, glow);
+    floatRoot.add(outerShell, shell, midHalo, core, ringA, ringB, ringC, glow);
 
     const healthRoot = new THREE.Group();
     healthRoot.position.set(0, 1.72, 0);
@@ -11891,7 +12769,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     telegraph.visible = false;
 
     group.add(floatRoot, healthRoot, telegraph);
-    return { group, floatRoot, shell, core, ringA, ringB, sparks, healthRoot, hpFill, telegraph };
+    return { group, floatRoot, shell, core, ringA, ringB, ringC, sparks, trail, embers, healthRoot, hpFill, telegraph };
   }
 
   function makeCreatureHealthBar(yOffset, fillColor, backColor = 0x1c150a, width = 0.86) {
@@ -12065,7 +12943,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     ribCage.scale.set(1.0, 1, 0.72);
     const ribs = new THREE.Group();
     for (let i = 0; i < 3; i += 1) {
-      const rib = new THREE.Mesh(new THREE.TorusGeometry(0.2 - i * 0.022, 0.018, 6, 16, Math.PI), materials.bone.clone());
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(0.23 - i * 0.024, 0.022, 6, 16, Math.PI), materials.bone.clone());
       rib.position.set(0, 1.2 + i * 0.16, -0.04);
       rib.rotation.x = Math.PI / 2;
       ribs.add(rib);
@@ -12074,13 +12952,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     breastplate.scale.set(1, 1, 0.7);
     const plateRune = makeBox(0.14, 0.2, 0.02, materials.necroticGlow, 0, 1.36, -0.27);
 
-    const skull = makeSphere(0.17, materials.bone.clone(), 0, 1.92, -0.02);
-    skull.scale.set(1, 1.1, 1.05);
-    const jaw = makeBox(0.18, 0.1, 0.16, materials.bone.clone(), 0, 1.8, -0.06);
-    const helm = makeCylinder(0.19, 0.2, 0.16, 10, materials.iron, 0, 2.05, 0);
-    const nasal = makeBox(0.05, 0.18, 0.05, materials.iron.clone(), 0, 1.92, -0.18);
-    const leftEye = makeSphere(0.035, materials.necroticGlow, -0.07, 1.93, -0.16);
-    const rightEye = makeSphere(0.035, materials.necroticGlow, 0.07, 1.93, -0.16);
+    // Oversized skull with shadowed sockets so the undead head reads at
+    // gameplay distance; the glow eyes sit inside dark recesses.
+    const skull = makeSphere(0.2, materials.bone.clone(), 0, 1.93, -0.02);
+    skull.scale.set(1, 1.12, 1.05);
+    const jaw = makeBox(0.21, 0.11, 0.18, materials.bone.clone(), 0, 1.79, -0.07);
+    const helm = makeCylinder(0.22, 0.23, 0.17, 10, materials.iron, 0, 2.08, 0);
+    const nasal = makeBox(0.05, 0.2, 0.05, materials.iron.clone(), 0, 1.94, -0.2);
+    const socketL = makeSphere(0.06, materials.darkStone.clone(), -0.08, 1.95, -0.17);
+    const socketR = makeSphere(0.06, materials.darkStone.clone(), 0.08, 1.95, -0.17);
+    const leftEye = makeSphere(0.042, materials.necroticGlow, -0.08, 1.95, -0.2);
+    const rightEye = makeSphere(0.042, materials.necroticGlow, 0.08, 1.95, -0.2);
 
     const leftShoulder = makeCylinder(0.14, 0.2, 0.18, 10, materials.darkStone.clone(), -0.4, 1.66, 0);
     const rightShoulder = makeCylinder(0.14, 0.2, 0.18, 10, materials.darkStone.clone(), 0.4, 1.66, 0);
@@ -12121,85 +13003,124 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     telegraph.visible = false;
 
     group.add(
-      pelvis, spine, ribCage, ribs, breastplate, plateRune, skull, jaw, helm, nasal, leftEye, rightEye,
+      pelvis, spine, ribCage, ribs, breastplate, plateRune, skull, jaw, helm, nasal, socketL, socketR, leftEye, rightEye,
       leftShoulder, rightShoulder, leftArm, weaponPivot, leftLeg, rightLeg, bars.healthRoot, telegraph
     );
     return { group, weaponPivot, leftLeg, rightLeg, chest: ribCage, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
   }
 
-  // Swamp Bog Lurker: a hunched mire beast that fights at close range with
-  // grasping clawed arms. Reuses the humanoid melee state machine.
+  // Swamp Bog Lurker: a hunched swamp troll whose silhouette is built around a
+  // massive shoulder hump, a low jutting head under a heavy brow, and long
+  // dangling arms with oversized bone claws. Moss drapes and weed strands hang
+  // off the hump. Reuses the humanoid melee state machine: hip-pivot legs,
+  // rotatable chest for the stun lean, and a clawed weaponPivot arm whose rest
+  // rotation matches what updateEnemyAttack restores after a swing.
   function createBogLurkerModel(scale) {
     const group = new THREE.Group();
     group.scale.setScalar(scale);
 
+    // Short stubby legs under the bulk (hip pivots; rotation.x = walk swing).
     function makeLeg(x) {
       const leg = new THREE.Group();
-      leg.position.set(x, 0.62, 0.08);
-      const thigh = makeCylinder(0.14, 0.16, 0.34, 8, materials.bogHide.clone(), 0, -0.16, 0);
-      const shin = makeCylinder(0.1, 0.13, 0.3, 8, materials.bogHide.clone(), 0, -0.42, -0.06);
-      const foot = makeBox(0.28, 0.1, 0.36, materials.bogMuck, 0, -0.58, -0.16);
+      leg.position.set(x, 0.66, 0.14);
+      const thigh = makeCylinder(0.15, 0.18, 0.36, 8, materials.bogHide.clone(), 0, -0.16, 0);
+      const shin = makeCylinder(0.11, 0.14, 0.32, 8, materials.bogHide.clone(), 0, -0.44, -0.05);
+      const foot = makeBox(0.34, 0.12, 0.44, materials.bogMuck, 0, -0.6, -0.13);
       leg.add(thigh, shin, foot);
       return leg;
     }
-    const leftLeg = makeLeg(-0.26);
-    const rightLeg = makeLeg(0.26);
+    const leftLeg = makeLeg(-0.3);
+    const rightLeg = makeLeg(0.3);
 
-    const back = makeSphere(0.6, materials.bogHide, 0, 1.18, 0.16);
-    back.scale.set(1.2, 0.9, 1.3);
-    const chest = makeSphere(0.46, materials.bogHide.clone(), 0, 0.98, -0.34);
-    chest.scale.set(1.15, 0.95, 1.0);
-    const belly = makeBox(0.6, 0.4, 0.5, materials.bogMuck.clone(), 0, 0.78, -0.3);
-    const mossMantle = makeBox(0.96, 0.12, 1.0, materials.bogMoss, 0, 1.5, 0.18);
-    mossMantle.rotation.x = -0.1;
-    const reeds = new THREE.Group();
-    for (let i = 0; i < 5; i += 1) {
-      const reed = makeCylinder(0.012, 0.02, 0.5 + Math.random() * 0.2, 5, materials.reed, (Math.random() - 0.5) * 0.7, 1.7, 0.1 + (Math.random() - 0.5) * 0.5);
-      reed.rotation.set((Math.random() - 0.5) * 0.4, 0, (Math.random() - 0.5) * 0.4);
-      reeds.add(reed);
+    // Hunched mass: belly low, chest leaning forward, hump towering at the rear.
+    const belly = makeSphere(0.5, materials.bogMuck.clone(), 0, 0.82, -0.08);
+    belly.scale.set(1.15, 0.85, 1.0);
+    const chest = makeSphere(0.5, materials.bogHide.clone(), 0, 1.08, -0.28);
+    chest.scale.set(1.25, 0.9, 1.05);
+    const hump = makeSphere(0.58, materials.bogHide, 0, 1.46, 0.2);
+    hump.scale.set(1.3, 0.95, 1.3);
+    // Bone spine nubs breaking through the hump moss.
+    const spineNubs = new THREE.Group();
+    for (let i = 0; i < 3; i += 1) {
+      const nub = makeCone(0.07, 0.2, 6, materials.bone, 0, 1.96 - i * 0.13, 0.02 + i * 0.3);
+      nub.rotation.x = 0.3 + i * 0.28;
+      spineNubs.add(nub);
     }
 
-    const head = makeSphere(0.32, materials.bogHide.clone(), 0, 1.04, -0.86);
-    head.scale.set(1.3, 0.78, 1.0);
-    const jaw = makeBox(0.5, 0.16, 0.4, materials.bogMuck.clone(), 0, 0.86, -0.92);
-    const leftEye = makeSphere(0.05, materials.emberEye, -0.16, 1.12, -1.0);
-    const rightEye = makeSphere(0.05, materials.emberEye, 0.16, 1.12, -1.0);
-    const tuskL = makeCone(0.04, 0.2, 6, materials.bone, -0.14, 0.92, -1.12);
-    tuskL.rotation.x = -0.3;
-    const tuskR = makeCone(0.04, 0.2, 6, materials.bone, 0.14, 0.92, -1.12);
-    tuskR.rotation.x = -0.3;
+    // Moss growth over the hump: rounded patches sunk into the hide (spheres
+    // read organic at distance; a flat box looked like a carried slab) plus
+    // moss curtains hanging down both flanks.
+    const mossMantle = makeSphere(0.52, materials.bogMoss, 0, 1.62, 0.2);
+    mossMantle.scale.set(1.32, 0.55, 1.32);
+    const mossPatch = makeSphere(0.3, materials.bogMoss.clone(), 0.22, 1.58, -0.22);
+    mossPatch.scale.set(1.2, 0.5, 1.1);
+    mossPatch.rotation.z = -0.2;
+    const drapeL = makeBox(0.16, 0.62, 0.9, materials.bogMoss.clone(), -0.64, 1.42, 0.22);
+    drapeL.rotation.z = 0.3;
+    const drapeR = makeBox(0.16, 0.62, 0.9, materials.bogMoss.clone(), 0.64, 1.42, 0.22);
+    drapeR.rotation.z = -0.3;
+    // Dripping weed strands swinging off the mantle edges (fixed dims so the
+    // geometry cache shares them; variation comes from rotation/position).
+    const weeds = new THREE.Group();
+    const weedSpots = [
+      [-0.5, 1.6, -0.34, 0.3], [0.52, 1.62, -0.3, -0.26],
+      [-0.34, 1.7, 0.62, 0.18], [0.38, 1.68, 0.6, -0.2]
+    ];
+    for (const [wx, wy, wz, tilt] of weedSpots) {
+      const strand = makeCylinder(0.014, 0.03, 0.46, 5, materials.reed, wx, wy - 0.2, wz);
+      strand.rotation.set((Math.random() - 0.5) * 0.2, 0, tilt + (Math.random() - 0.5) * 0.15);
+      weeds.add(strand);
+    }
 
+    // Low head jutting forward from under the hump: heavy brow, ember eyes in
+    // its shadow, wide underbite jaw with upward tusks.
+    const neck = makeCylinder(0.18, 0.24, 0.4, 8, materials.bogHide.clone(), 0, 1.06, -0.62);
+    neck.rotation.x = 1.12;
+    const head = makeSphere(0.3, materials.bogHide.clone(), 0, 1.02, -0.86);
+    head.scale.set(1.2, 0.85, 1.15);
+    const brow = makeBox(0.6, 0.16, 0.34, materials.bogMuck.clone(), 0, 1.18, -0.9);
+    brow.rotation.x = -0.18;
+    const leftEye = makeSphere(0.06, materials.emberEye, -0.16, 1.06, -1.04);
+    const rightEye = makeSphere(0.06, materials.emberEye, 0.16, 1.06, -1.04);
+    const jaw = makeBox(0.5, 0.15, 0.42, materials.bogMuck.clone(), 0, 0.84, -0.92);
+    const tuskL = makeCone(0.05, 0.24, 6, materials.bone, -0.18, 0.96, -1.08);
+    tuskL.rotation.set(-0.35, 0, 0.18);
+    const tuskR = makeCone(0.05, 0.24, 6, materials.bone, 0.18, 0.96, -1.08);
+    tuskR.rotation.set(-0.35, 0, -0.18);
+
+    // Long grasping arms: shoulders high on the hump, oversized muck-ball
+    // hands with bone claws reaching to knee height. Both arms share dims.
+    function buildArmMeshes(target, clawTiltX) {
+      target.add(
+        makeCylinder(0.15, 0.17, 0.54, 8, materials.bogHide.clone(), 0, -0.25, -0.02),
+        makeCylinder(0.11, 0.14, 0.52, 8, materials.bogHide.clone(), 0, -0.7, -0.06),
+        makeSphere(0.19, materials.bogMuck.clone(), 0, -1.0, -0.1)
+      );
+      for (const cx of [-0.11, 0, 0.11]) {
+        const claw = makeCone(0.04, 0.3, 6, materials.bone.clone(), cx, -1.08, -0.24);
+        claw.rotation.x = clawTiltX;
+        target.add(claw);
+      }
+    }
     const leftArm = new THREE.Group();
-    leftArm.position.set(-0.5, 1.2, -0.2);
-    leftArm.add(
-      makeCylinder(0.12, 0.14, 0.5, 8, materials.bogHide.clone(), 0, -0.24, 0),
-      makeCylinder(0.09, 0.11, 0.5, 8, materials.bogHide.clone(), 0, -0.66, 0.04),
-      makeBox(0.22, 0.12, 0.3, materials.bogMuck.clone(), 0, -0.94, -0.02)
-    );
-    leftArm.rotation.x = 0.2;
+    leftArm.position.set(-0.68, 1.34, -0.06);
+    buildArmMeshes(leftArm, -2.6);
+    leftArm.rotation.set(0.16, 0, 0.14);
 
     const weaponPivot = new THREE.Group();
-    weaponPivot.position.set(0.5, 1.2, -0.2);
-    weaponPivot.add(
-      makeCylinder(0.13, 0.15, 0.52, 8, materials.bogHide.clone(), 0, -0.24, 0),
-      makeCylinder(0.1, 0.12, 0.52, 8, materials.bogHide.clone(), 0, -0.68, 0.04),
-      makeSphere(0.16, materials.bogMuck.clone(), 0, -0.96, -0.02)
-    );
-    for (const cx of [-0.1, 0, 0.1]) {
-      const claw = makeCone(0.03, 0.22, 6, materials.bone.clone(), cx, -1.04, -0.14);
-      claw.rotation.x = -0.5;
-      weaponPivot.add(claw);
-    }
+    weaponPivot.position.set(0.68, 1.34, -0.06);
+    buildArmMeshes(weaponPivot, -2.2);
     weaponPivot.rotation.set(-0.12, -0.3, -0.7);
 
-    const bars = makeCreatureHealthBar(2.0, 0x8fcf6a, 0x132011);
+    const bars = makeCreatureHealthBar(2.45, 0x8fcf6a, 0x132011);
     const telegraph = new THREE.Mesh(new THREE.RingGeometry(0.75, 0.92, 32), materials.danger.clone());
     telegraph.rotation.x = -Math.PI / 2;
     telegraph.position.y = 0.025;
     telegraph.visible = false;
 
     group.add(
-      leftLeg, rightLeg, back, chest, belly, mossMantle, reeds, head, jaw, leftEye, rightEye, tuskL, tuskR,
+      leftLeg, rightLeg, belly, chest, hump, spineNubs, mossMantle, mossPatch, drapeL, drapeR, weeds,
+      neck, head, brow, leftEye, rightEye, jaw, tuskL, tuskR,
       leftArm, weaponPivot, bars.healthRoot, telegraph
     );
     return { group, weaponPivot, leftLeg, rightLeg, chest, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
@@ -12281,7 +13202,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 72 + wave * 12,
       maxHealth: 72 + wave * 12,
-      speed: (2.0 + Math.random() * 0.32 + Math.min(wave * 0.04, 0.4)) * ENEMY_SPEED_MULTIPLIER,
+      speed: (2.5 + Math.random() * 0.32 + Math.min(wave * 0.04, 0.4)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1.05 + Math.min(wave * 0.045, 0.6),
       radius: 0.62 * scale,
       cooldown: 0.7 + Math.random() * 1.1,
@@ -12492,8 +13413,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       hoverHeight: 2.68 + Math.random() * 0.36,
       desiredRange: 8.8 + Math.random() * 2.2,
-      health: 92 + wave * 19,
-      maxHealth: 92 + wave * 19,
+      // Dragons are a multi-player-tier encounter: ~2.4x the old 92 + wave*19
+      // durability so a solo at-level player struggles and duos/trios shine.
+      // Tier scaling (applyEnemyTier) and arena wave scaling compose on top.
+      health: 225 + wave * 32,
+      maxHealth: 225 + wave * 32,
       speed: (2.8 + Math.min(wave * 0.05, 0.6)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1 + Math.min(wave * 0.04, 0.6),
       radius: 1.38 * scale,
@@ -12820,7 +13744,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       fullHeal,
       activityType: options.activityType || "",
       activityId: options.activityId || "",
-      pickupRadius: fullHeal ? 1.25 : 0.9,
+      pickupRadius: numberOrZero(options.pickupRadius) > 0 ? options.pickupRadius : (fullHeal ? 1.25 : 0.9),
       bobSeed: Math.random() * 10
     }, options.netId);
   }
@@ -12842,10 +13766,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function dropDragonHealthPotion(enemy) {
-    // Arena dragons always pay out (wave sustain); open-world dragons only sometimes.
-    if (game.mode === "exploration" && !arenaActivityActive() && Math.random() > 0.6) {
-      return;
-    }
+    // Dragons are now group-tier fights: every kill pays out a potion so the
+    // post-fight sustain matches the much higher durability/threat.
     const dropPosition = enemy.position.clone();
     if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
@@ -12871,6 +13793,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       showAbilityLocked("potion");
       return false;
     }
+    const tier = wizardPotionTier();
     const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
     const dropPosition = tmpVec2.copy(player.position).add(behind);
     if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
@@ -12879,25 +13802,33 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
       }
     }
+    // Tier III: instant top-up on the (squishy) wizard. Local authority over
+    // own HP; the new value rides serializePlayerState() to the host.
+    if (tier.splash > 0 && player.health < player.maxHealth) {
+      player.health = Math.min(player.maxHealth, player.health + tier.splash);
+    }
     if (isJoinedClient()) {
       const inArena = localPlayerInArenaActivity();
       sendOnlineMessage({
         kind: "dropPotion",
         x: dropPosition.x,
         z: dropPosition.z,
+        healAmount: tier.heal,
+        pickupRadius: tier.radius,
         activityType: inArena ? "arena" : "",
         activityId: inArena ? game.exploration.arenaActivity.activityId : "",
         state: serializePlayerState()
       });
       player.potionCooldown = player.potionCooldownMax;
       spawnImpact(dropPosition, 0x7ae8ff, 12);
-      showBanner("Potion dropped");
+      showBanner("Healing Draught dropped");
       playSfx("potion", 0.85);
       return true;
     }
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
       kind: "wizard",
-      healAmount: 28,
+      healAmount: tier.heal,
+      pickupRadius: tier.radius,
       activityType: localPlayerInArenaActivity() ? "arena" : "",
       activityId: localPlayerInArenaActivity() ? game.exploration.arenaActivity.activityId : ""
     }));
@@ -12905,7 +13836,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     player.potionCooldown = player.potionCooldownMax;
     spawnImpact(dropPosition, 0x7ae8ff, 12);
     broadcastOnlineEffect({ type: "impact", x: dropPosition.x, y: 0, z: dropPosition.z, color: 0x7ae8ff, count: 12, sfx: "potion", sfxIntensity: 0.85, sfxDistance: 36 });
-    showBanner("Potion dropped");
+    showBanner("Healing Draught dropped");
     playSfx("potion", 0.85);
     return true;
   }
@@ -13704,11 +14635,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         continue;
       }
       tmpVec2.copy(enemy.position).sub(player.position);
+      // Horizontal range: player.position.y stays 0 while exploration enemies
+      // keep a terrain-height y, so a 3D distance breaks melee on high ground.
+      tmpVec2.y = 0;
       const distance = tmpVec2.length();
       if (distance > tuning.slashRange) {
         continue;
       }
-      tmpVec2.y = 0;
       tmpVec2.normalize();
       const dot = forward.dot(tmpVec2);
       if (dot < 0.18) {
@@ -13854,7 +14787,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function spawnRemoteLightningVisual(source, yaw) {
     const start = source.clone();
     const direction = forwardFromYaw(yaw, new THREE.Vector3());
-    start.y = 1.45;
+    start.y = (game.mode === "exploration" ? explorationGroundWorldY(start.x, start.z) : 0) + 1.45;
     start.addScaledVector(direction, 0.72);
     game.playerProjectiles.push(createLightningProjectile(start, direction.multiplyScalar(12.8), {
       visualOnly: true,
@@ -13867,7 +14800,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function spawnRemoteArrowVisual(source, yaw, pierce = false) {
     const start = source.clone();
     const direction = forwardFromYaw(yaw, new THREE.Vector3());
-    start.y = 1.5;
+    start.y = (game.mode === "exploration" ? explorationGroundWorldY(start.x, start.z) : 0) + 1.5;
     start.addScaledVector(direction, 0.62);
     game.playerProjectiles.push(createArrowProjectile(start, direction.multiplyScalar(26 * (pierce ? 1.15 : 1)), {
       visualOnly: true,
@@ -13905,13 +14838,94 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (enemy.type === "dragon") {
       return out.copy(enemy.group.position);
     }
+    // Anchor aim height to the rendered base (terrain in exploration, 0 in the
+    // arena) so elevated enemies are targeted at their actual body, not at a
+    // fixed world height tuned for flat ground.
+    const baseY = enemy.group.position.y;
     if (enemy.type === "wisp") {
-      return out.set(enemy.position.x, 1.05, enemy.position.z);
+      return out.set(enemy.position.x, baseY + 1.05, enemy.position.z);
     }
     if (enemy.type === "sandViper") {
-      return out.set(enemy.position.x, 0.65, enemy.position.z);
+      return out.set(enemy.position.x, baseY + 0.65, enemy.position.z);
     }
-    return out.set(enemy.position.x, 1.08, enemy.position.z);
+    return out.set(enemy.position.x, baseY + 1.08, enemy.position.z);
+  }
+
+  function enemyBodyHeight(enemy) {
+    const scale = enemy.scale || 1;
+    if (enemy.type === "sandViper") {
+      return 1.1 * scale;
+    }
+    if (enemy.type === "spider") {
+      return 1.3 * scale;
+    }
+    if (enemy.type === "wisp") {
+      return 1.75 * scale;
+    }
+    return 2.2 * scale;
+  }
+
+  // Swept hit test: the projectile's travel segment this frame is tested against
+  // the enemy's actual body volume (a terrain-anchored vertical cylinder, or a
+  // sphere around the dragon's hovering body). This makes elevated shots connect
+  // and prevents fast arrows from tunneling past a target between frames.
+  function projectileSegmentHitsEnemy(projectile, enemy, fromX, fromY, fromZ) {
+    const to = projectile.group.position;
+    const hitRadius = enemy.radius + projectile.radius;
+    if (enemy.type === "dragon") {
+      const center = enemy.group.position;
+      const dx = to.x - fromX;
+      const dy = to.y - fromY;
+      const dz = to.z - fromZ;
+      const lengthSq = dx * dx + dy * dy + dz * dz;
+      const t = lengthSq < 0.000001
+        ? 0
+        : clamp(((center.x - fromX) * dx + (center.y - fromY) * dy + (center.z - fromZ) * dz) / lengthSq, 0, 1);
+      const cx = fromX + dx * t - center.x;
+      const cy = fromY + dy * t - center.y;
+      const cz = fromZ + dz * t - center.z;
+      return cx * cx + cy * cy + cz * cz <= hitRadius * hitRadius;
+    }
+    const baseY = enemy.group.position.y;
+    const minY = baseY - projectile.radius;
+    const maxY = baseY + enemyBodyHeight(enemy) + projectile.radius;
+    const dx = to.x - fromX;
+    const dz = to.z - fromZ;
+    const fx = fromX - enemy.position.x;
+    const fz = fromZ - enemy.position.z;
+    const a = dx * dx + dz * dz;
+    const b = 2 * (fx * dx + fz * dz);
+    const c = fx * fx + fz * fz - hitRadius * hitRadius;
+    let tMin = 0;
+    let tMax = 1;
+    if (a < 0.000001) {
+      if (c > 0) {
+        return false;
+      }
+    } else {
+      const disc = b * b - 4 * a * c;
+      if (disc < 0) {
+        return false;
+      }
+      const sqrtDisc = Math.sqrt(disc);
+      tMin = Math.max(0, (-b - sqrtDisc) / (2 * a));
+      tMax = Math.min(1, (-b + sqrtDisc) / (2 * a));
+      if (tMin > tMax) {
+        return false;
+      }
+    }
+    const dy = to.y - fromY;
+    if (Math.abs(dy) < 0.000001) {
+      return fromY >= minY && fromY <= maxY;
+    }
+    let tEnter = (minY - fromY) / dy;
+    let tExit = (maxY - fromY) / dy;
+    if (tEnter > tExit) {
+      const swap = tEnter;
+      tEnter = tExit;
+      tExit = swap;
+    }
+    return Math.max(tMin, tEnter) <= Math.min(tMax, tExit);
   }
 
   function findLightningTarget(projectile) {
@@ -13957,6 +14971,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         }
       }
 
+      const fromX = projectile.group.position.x;
+      const fromY = projectile.group.position.y;
+      const fromZ = projectile.group.position.z;
       projectile.group.position.addScaledVector(projectile.velocity, dt);
       if (projectile.shell) {
         projectile.shell.rotation.y += dt * 9.0;
@@ -13978,8 +14995,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
           if (projectile.hitIds && projectile.hitIds.has(enemy)) {
             continue;
           }
-          const targetPosition = getEnemyAimPosition(enemy, tmpVec);
-          if (projectile.group.position.distanceTo(targetPosition) > enemy.radius + projectile.radius) {
+          if (!projectileSegmentHitsEnemy(projectile, enemy, fromX, fromY, fromZ)) {
             continue;
           }
           const hitDirection = projectile.velocity.clone();
@@ -14049,7 +15065,168 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       game.kills += 1;
       if (game.mode === "exploration" && enemy.exploration) {
         applyExplorationEnemyReward(enemy, sourceId);
+        scheduleWildsRespawn(enemy);
       }
+    }
+  }
+
+  // --- Wilds Director (Phase 1): timed far-from-player respawns at the
+  // original exploration seed points. Runs only where updateExplorationEnemies
+  // runs (host/solo, never during Crownring activity); joiners receive the
+  // respawned enemies through the regular world snapshots.
+
+  function wildsTierDelayMultiplier(tier) {
+    const index = clamp((tier || 1) - 1, 0, WILDS_TIER_DELAY_MUL.length - 1);
+    return WILDS_TIER_DELAY_MUL[index];
+  }
+
+  // Tier band a respawn at this world position would land in (mirrors the
+  // distance-from-origin banding in applyEnemyTier).
+  function wildsTierAt(worldX, worldZ) {
+    const radius = Math.max(1, game.exploration.radius);
+    const danger = Math.hypot(worldX - game.exploration.origin.x, worldZ - game.exploration.origin.z) / radius;
+    if (danger < 0.25) {
+      return 1;
+    }
+    return danger >= 0.5 ? 3 : 2;
+  }
+
+  function scheduleWildsRespawn(enemy, tier = enemy.tier) {
+    const wilds = game.exploration.wilds;
+    const record = Number.isInteger(enemy.wildsSeedId) ? wilds.seedPoints[enemy.wildsSeedId] : null;
+    if (!record || record.respawnAt > 0) {
+      return;
+    }
+    const delay = (WILDS_RESPAWN_DELAY + Math.random() * WILDS_RESPAWN_JITTER) * wildsTierDelayMultiplier(tier);
+    record.respawnAt = clock.elapsedTime + delay;
+    record.clearedBonus = 0;
+    // Cleared-zone pushback: every kill delays already-empty neighbor points,
+    // so a fought-over battlefield stays clear noticeably longer than a lone
+    // kill. Capped per record so timers can't run away.
+    for (const other of wilds.seedPoints) {
+      if (other === record || other.respawnAt <= 0) {
+        continue;
+      }
+      const dx = other.x - record.x;
+      const dz = other.z - record.z;
+      if (dx * dx + dz * dz > WILDS_CLEARED_ZONE_RADIUS * WILDS_CLEARED_ZONE_RADIUS) {
+        continue;
+      }
+      const bonus = Math.min(WILDS_CLEARED_ZONE_BONUS, WILDS_CLEARED_ZONE_MAX_BONUS - other.clearedBonus);
+      if (bonus > 0) {
+        other.clearedBonus += bonus;
+        other.respawnAt += bonus;
+      }
+    }
+  }
+
+  function spawnWildsEnemy(record) {
+    const enemy = createEnemyOfType(record.type, record.x, record.z, 1 + Math.floor(Math.random() * 3));
+    // Restore the recorded pre-tier stats so the respawn matches the original
+    // seed (factory wave rolls and per-seed health mods included); the
+    // seedExplorationEnemy call below re-applies the distance tier on top.
+    enemy.health = record.baseHealth;
+    enemy.maxHealth = record.baseHealth;
+    enemy.speed = record.baseSpeed;
+    if (record.hoverHeight > 0) {
+      enemy.hoverHeight = record.hoverHeight;
+    }
+    if (record.desiredRange > 0) {
+      enemy.desiredRange = record.desiredRange;
+    }
+    enemy.wildsSeedId = record.id;
+    seedExplorationEnemy(enemy, new THREE.Vector3(record.x, 0, record.z), Math.random, record.awareness, record.homeRadius);
+    record.respawnAt = 0;
+    record.clearedBonus = 0;
+    return enemy;
+  }
+
+  function updateWildsDirector(dt) {
+    const wilds = game.exploration.wilds;
+    const total = wilds.seedPoints.length;
+    if (!total) {
+      return;
+    }
+    wilds.timer -= dt;
+    if (wilds.timer > 0) {
+      return;
+    }
+    wilds.timer = WILDS_DIRECTOR_INTERVAL;
+    const now = clock.elapsedTime;
+    // One pass over live enemies per tick (not per frame): global cap count
+    // plus the set of seed points that still have their enemy alive.
+    let liveCount = 0;
+    const liveSeedIds = new Set();
+    for (const enemy of game.enemies) {
+      if (!enemy.exploration || enemy.dead) {
+        continue;
+      }
+      liveCount += 1;
+      if (Number.isInteger(enemy.wildsSeedId)) {
+        liveSeedIds.add(enemy.wildsSeedId);
+      }
+    }
+    const targets = combatTargets();
+    const checks = Math.min(WILDS_CHECKS_PER_TICK, total);
+    let spawns = 0;
+    for (let i = 0; i < checks && spawns < WILDS_SPAWNS_PER_TICK; i += 1) {
+      const record = wilds.seedPoints[wilds.cursor % total];
+      wilds.cursor = (wilds.cursor + 1) % total;
+      if (record.respawnAt <= 0) {
+        // Self-heal: occupied on paper but no live enemy. Happens when shared
+        // actors are wiped without deaths (e.g. the host opening the
+        // Crownring clears all enemies); schedule a normal refill.
+        if (!liveSeedIds.has(record.id)) {
+          record.clearedBonus = 0;
+          record.respawnAt = now + (WILDS_RESPAWN_DELAY + Math.random() * WILDS_RESPAWN_JITTER) * wildsTierDelayMultiplier(wildsTierAt(record.x, record.z));
+        }
+        continue;
+      }
+      if (now < record.respawnAt || liveCount >= WILDS_ENEMY_CAP) {
+        continue;
+      }
+      // Never spawn in sight: the point must be far from EVERY player
+      // (local + remotes). Leaving respawnAt untouched means a camped point
+      // simply stays suppressed until players move on.
+      let tooClose = false;
+      for (const target of targets) {
+        const dx = target.position.x - record.x;
+        const dz = target.position.z - record.z;
+        if (dx * dx + dz * dz < WILDS_MIN_PLAYER_DISTANCE * WILDS_MIN_PLAYER_DISTANCE) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) {
+        continue;
+      }
+      // Area cap: don't pile spawns into a pocket that is already crowded.
+      let nearby = 0;
+      for (const enemy of game.enemies) {
+        if (!enemy.exploration || enemy.dead) {
+          continue;
+        }
+        const dx = enemy.position.x - record.x;
+        const dz = enemy.position.z - record.z;
+        if (dx * dx + dz * dz < WILDS_AREA_RADIUS * WILDS_AREA_RADIUS) {
+          nearby += 1;
+          if (nearby >= WILDS_AREA_CAP) {
+            break;
+          }
+        }
+      }
+      if (nearby >= WILDS_AREA_CAP) {
+        continue;
+      }
+      // Re-validate the point at spawn time. Seed points already passed the
+      // build-time road-clearance + blocked checks and colliders are static,
+      // but this keeps the invariant explicit and cheap.
+      if (isExplorationBlocked(record.x - game.exploration.origin.x, record.z - game.exploration.origin.z)) {
+        continue;
+      }
+      spawnWildsEnemy(record);
+      spawns += 1;
+      liveCount += 1;
     }
   }
 
@@ -14153,7 +15330,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (!enemy.attackHitDone && t > 0.38) {
       enemy.attackHitDone = true;
-      if (playerDistance < 2.05) {
+      if (playerDistance < 1.3 + enemy.radius) {
         const hitDirection = forwardFromYaw(enemy.yaw, tmpVec2);
         const mul = enemy.damageMul || 1;
         applyCombatTargetDamage(combatTargetById(enemy.targetId) || nearestCombatTarget(enemy), Math.round(19 * mul), Math.round(25 * mul), hitDirection, 0.18);
@@ -14161,7 +15338,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 0.8 + Math.random() * 0.6;
+      enemy.cooldown = 0.6 + Math.random() * 0.45;
       enemy.telegraph.visible = false;
     }
   }
@@ -14213,7 +15390,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       if (shouldChase) {
         enemy.state = "chase";
         enemy.yaw = yawFromDirection(playerDirection);
-        if (playerDistance < 2.1 && enemy.cooldown <= 0) {
+        // Pounce from arm's length; the lunge itself closes the remaining gap.
+        if (playerDistance < 1.45 + enemy.radius && enemy.cooldown <= 0) {
           beginSpiderAttack(enemy);
         } else {
           const desired = playerDirection.multiplyScalar(enemy.speed * 1.02);
@@ -14275,7 +15453,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.05 + Math.random() * 0.7;
+      enemy.cooldown = 0.8 + Math.random() * 0.55;
       enemy.telegraph.visible = false;
       enemy.floatRoot.scale.setScalar(1);
     }
@@ -14287,12 +15465,45 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.floatRoot.position.y = 0.98 + bob;
     enemy.shell.scale.setScalar(1.02 + Math.sin(time * 5.1) * 0.08);
     enemy.core.scale.setScalar(1.0 + Math.sin(time * 7.2) * 0.16);
+    enemy.core.material.opacity = 0.82 + Math.sin(time * 9.4) * 0.14;
     enemy.ringA.rotation.z += dt * 2.7;
     enemy.ringB.rotation.x -= dt * 3.6;
+    if (enemy.ringC) {
+      enemy.ringC.rotation.y += dt * 1.8;
+    }
     for (let i = 0; i < enemy.sparks.length; i += 1) {
       const angle = time * (1.2 + i * 0.18) + i * TAU / enemy.sparks.length;
       const radius = 0.42 + Math.sin(time * 2.1 + i) * 0.06;
       enemy.sparks[i].position.set(Math.cos(angle) * radius, Math.sin(time * 3.8 + i) * 0.12, Math.sin(angle) * radius);
+    }
+    if (enemy.trail && enemy.trail.length) {
+      // Trail in floatRoot-local space: convert world velocity into the group's
+      // local frame so the wake streams out directly behind the direction of travel.
+      const back = tmpVec.copy(enemy.velocity);
+      back.y = 0;
+      const sp = back.length();
+      if (sp > 0.001 && enemy.group) {
+        back.normalize().applyQuaternion(enemy.group.quaternion.clone().invert());
+      } else {
+        back.set(0, 0, 0);
+      }
+      for (let i = 0; i < enemy.trail.length; i += 1) {
+        const dist = (i + 1) * 0.24;
+        enemy.trail[i].position.set(
+          -back.x * dist,
+          Math.sin(time * 4.0 + i) * 0.05 - i * 0.015,
+          -back.z * dist
+        );
+        enemy.trail[i].scale.setScalar(Math.max(0.22, 1 - i * 0.16));
+      }
+    }
+    if (enemy.embers && enemy.embers.length) {
+      for (let i = 0; i < enemy.embers.length; i += 1) {
+        const rise = (time * 0.6 + i * 0.4) % 1;
+        const angle = time * 0.8 + i * TAU / enemy.embers.length;
+        enemy.embers[i].position.set(Math.cos(angle) * 0.18, -0.2 + rise * 0.7, Math.sin(angle) * 0.18);
+        enemy.embers[i].material.opacity = 0.7 * (1 - rise);
+      }
     }
   }
 
@@ -14425,7 +15636,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.6 + Math.random() * 0.9;
+      enemy.cooldown = 1.25 + Math.random() * 0.7;
       enemy.telegraph.visible = false;
       if (enemy.bowArmR) {
         enemy.bowArmR.rotation.x = -0.55;
@@ -14532,7 +15743,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.3 + Math.random() * 0.8;
+      enemy.cooldown = 1.0 + Math.random() * 0.6;
       enemy.telegraph.visible = false;
       if (enemy.mouthGlow) {
         enemy.mouthGlow.visible = false;
@@ -14611,7 +15822,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.5 + Math.random() * 0.9;
+      enemy.cooldown = 1.15 + Math.random() * 0.7;
       enemy.telegraph.visible = false;
       enemy.floatRoot.scale.setScalar(1);
     }
@@ -14705,6 +15916,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const target = nearestCombatTarget(enemy);
       enemy.targetId = target.id;
       const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
+      // Horizontal plane only: the local player's logical y stays 0 while
+      // seeded exploration enemies keep their spawn terrain-height y, so a 3D
+      // distance never drops below melee initiation range on high ground
+      // (mountain Bonewardens could never attack) and the stale y component
+      // also bleeds chase speed out of the x/z axes.
+      toPlayer.y = 0;
       const playerDistance = Math.max(0.001, toPlayer.length());
       const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
       const detailed = playerDistance * playerDistance < EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ || enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse" || enemy.state === "fire" || enemy.stunned > 0;
@@ -14746,7 +15963,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         if (shouldChase) {
           enemy.state = "chase";
           enemy.yaw = yawFromDirection(playerDirection);
-          if (playerDistance < 2.15 && enemy.cooldown <= 0) {
+          // Engage at arm's length, scaled by body size, instead of walking
+          // into the player first (bigger types like briarBeast swing sooner).
+          if (playerDistance < 1.6 + enemy.radius && enemy.cooldown <= 0) {
             beginEnemyAttack(enemy, Math.random() < 0.24 ? "heavy" : "slash");
           } else {
             const desired = playerDirection.multiplyScalar(enemy.speed * 0.86);
@@ -14810,6 +16029,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
 
     game.enemies = game.enemies.filter(enemy => !enemy.dead);
+    updateWildsDirector(dt);
     updateExplorationGoals();
   }
 
@@ -14845,7 +16065,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
           enemy.velocity.multiplyScalar(Math.pow(0.06, dt));
           enemy.telegraph.visible = false;
         } else if (enemy.state === "chase") {
-          if (distance < 2.15 && enemy.cooldown <= 0) {
+          if (distance < 1.6 + enemy.radius && enemy.cooldown <= 0) {
             beginEnemyAttack(enemy, Math.random() < 0.37 ? "heavy" : "slash");
           } else {
             const desired = direction.multiplyScalar(enemy.speed);
@@ -14979,33 +16199,49 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.state = "fire";
     enemy.attackTimer = 0;
     enemy.attackHitDone = false;
+    enemy.volleyCount = 0;
     enemy.attackDuration = 1.18;
     enemy.velocity.multiplyScalar(0.22);
     playPositionalSfx("dragonRoar", enemy.group ? enemy.group.position : enemy.position, 1.0, 72);
   }
 
+  // Center orb first (full homing), then two flanking orbs with a horizontal
+  // spread and gentle tracking. The roar/mouth-glow telegraph still leads the
+  // first launch, so the burst stays readable and dodgeable by moving lateral.
+  const DRAGON_VOLLEY_TIMES = [0.5, 0.68, 0.86];
+  const DRAGON_VOLLEY_SPREAD = [0, 0.2, -0.2];
+
   function updateDragonAttack(enemy, dt, distance, direction) {
     enemy.attackTimer += dt;
-    if (!enemy.attackHitDone && enemy.attackTimer > enemy.attackDuration * 0.58) {
+    const volleyCount = enemy.volleyCount ?? (enemy.attackHitDone ? DRAGON_VOLLEY_TIMES.length : 0);
+    enemy.volleyCount = volleyCount;
+    while (enemy.volleyCount < DRAGON_VOLLEY_TIMES.length
+      && enemy.attackTimer > enemy.attackDuration * DRAGON_VOLLEY_TIMES[enemy.volleyCount]) {
+      launchFireball(enemy, DRAGON_VOLLEY_SPREAD[enemy.volleyCount]);
+      enemy.volleyCount += 1;
       enemy.attackHitDone = true;
-      launchFireball(enemy);
     }
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
-      enemy.cooldown = 1.4 + Math.random() * 1.0;
+      enemy.cooldown = 1.1 + Math.random() * 0.75;
     }
     if (distance > enemy.desiredRange + 2.5) {
       enemy.velocity.addScaledVector(direction, dt * enemy.speed * 0.55);
     }
   }
 
-  function launchFireball(enemy) {
+  function launchFireball(enemy, spreadAngle = 0) {
     const source = enemy.group.localToWorld(new THREE.Vector3(0, 0.28, -2.02));
     const targetInfo = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
     const target = tmpVec.copy(targetInfo.position);
-    target.y = 0.86;
+    // Aim at the target's torso on the terrain they actually stand on, not an
+    // absolute world height (dragons hover ~2.7u above ground and shoot down).
+    target.y = combatTargetGroundY(targetInfo) + 0.86;
     const speed = 5.1 + Math.min(game.wave * 0.12, 1.1);
     const velocity = target.sub(source).normalize().multiplyScalar(speed);
+    if (spreadAngle) {
+      velocity.applyAxisAngle(up, spreadAngle);
+    }
 
     const fireball = createFireballVisual({
       x: source.x,
@@ -15015,10 +16251,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       vy: velocity.y,
       vz: velocity.z,
       speed,
-      turnRate: 0.82,
+      // Side orbs of a volley track gently so the spread stays sidesteppable.
+      turnRate: spreadAngle ? 0.3 : 0.82,
       life: 4.2,
-      damage: Math.round((26 + Math.min(game.wave * 2, 12)) * (enemy.damageMul || 1)),
-      guardDamage: Math.round((38 + Math.min(game.wave * 2, 14)) * (enemy.damageMul || 1)),
+      damage: Math.round((34 + Math.min(game.wave * 2, 12)) * (enemy.damageMul || 1)),
+      guardDamage: Math.round((48 + Math.min(game.wave * 2, 14)) * (enemy.damageMul || 1)),
       targetId: targetInfo.id
     });
     if (enemy.activityType === "arena") {
@@ -15038,7 +16275,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const source = enemy.group.localToWorld(sourceLocal.clone());
     const targetInfo = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
     const target = tmpVec.copy(targetInfo.position);
-    target.y = config.aimHeight ?? 0.95;
+    target.y = combatTargetGroundY(targetInfo) + (config.aimHeight ?? 0.95);
     const speed = config.speed || 9;
     const velocity = target.sub(source).normalize().multiplyScalar(speed);
     const mul = enemy.damageMul || 1;
@@ -15086,6 +16323,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     enemy.attackTimer += dt;
     const t = enemy.attackTimer / enemy.attackDuration;
     const heavy = enemy.attackType === "heavy";
+    // Hit reach tracks the radius-scaled initiation range (1.6 + radius) with
+    // a small cushion so a swing that starts in range still lands.
+    const reach = 1.6 + (enemy.radius || 0.65);
     enemy.telegraph.visible = true;
     enemy.telegraph.material.opacity = heavy ? 0.46 * (1 - smoothstep(0.58, 1, t)) : 0.34 * (1 - smoothstep(0.55, 1, t));
 
@@ -15096,7 +16336,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       if (!enemy.attackHitDone && t > 0.58) {
         enemy.attackHitDone = true;
         const mul = enemy.damageMul || 1;
-        tryHitPlayer(enemy, Math.round(38 * mul), Math.round(52 * mul), 2.45, 0.22);
+        tryHitPlayer(enemy, Math.round(38 * mul), Math.round(52 * mul), reach + 0.55, 0.22);
       }
     } else {
       const wind = clamp(t / 0.36, 0, 1);
@@ -15105,14 +16345,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       if (!enemy.attackHitDone && t > 0.34) {
         enemy.attackHitDone = true;
         const mul = enemy.damageMul || 1;
-        tryHitPlayer(enemy, Math.round(20 * mul), Math.round(26 * mul), 2.05, 0.0);
+        tryHitPlayer(enemy, Math.round(20 * mul), Math.round(26 * mul), reach + 0.25, 0.0);
       }
     }
 
     if (enemy.attackTimer >= enemy.attackDuration) {
       enemy.state = "chase";
       enemy.attackType = null;
-      enemy.cooldown = heavy ? 0.95 + Math.random() * 0.55 : 0.55 + Math.random() * 0.45;
+      enemy.cooldown = heavy ? 0.75 + Math.random() * 0.42 : 0.42 + Math.random() * 0.35;
       enemy.telegraph.visible = false;
       if (enemy.type === "briarBeast") {
         enemy.weaponPivot.rotation.set(0, 0, 0);
@@ -15129,11 +16369,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function tryHitPlayer(enemy, damage, guardDamage, range, extraPush) {
     const target = combatTargetById(enemy.targetId) || nearestCombatTarget(enemy);
     const toPlayer = tmpVec.copy(target.position).sub(enemy.position);
+    // Horizontal range, matching the initiation check: exploration enemies
+    // carry a terrain-height y while the local player's logical y stays 0.
+    toPlayer.y = 0;
     const distance = toPlayer.length();
     if (distance > range) {
       return;
     }
-    toPlayer.y = 0;
     toPlayer.normalize();
     const enemyForward = forwardFromYaw(enemy.yaw, tmpVec2);
     if (enemyForward.dot(toPlayer) < 0.2) {
@@ -15168,8 +16410,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function handlePlayerDefeat() {
+    // Apply the level regression before the recovery flows below restore
+    // vitals, so health/guard/mana refill to the reduced caps.
+    const penalty = applyDeathLevelPenalty();
     if (localPlayerInArenaActivity()) {
       endCrownringArenaActivity("defeat");
+      if (penalty) {
+        showBanner(penalty.lostLevel
+          ? "Recovered at Crownford infirmary - level lost, now level " + penalty.level
+          : "Recovered at Crownford infirmary - level progress lost", 3.2);
+      }
       return;
     }
     if (game.mode === "exploration" || online.connected) {
@@ -15192,7 +16442,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       player.hurtTimer = 0;
       player.group.position.copy(player.position);
       spawnImpact(player.position, 0xf7df9a, 22);
-      showBanner("Respawned");
+      showBanner(penalty
+        ? (penalty.lostLevel ? "Respawned - level lost, now level " + penalty.level : "Respawned - level progress lost")
+        : "Respawned", penalty ? 3 : 1.8);
       if (game.mode === "exploration") {
         saveProgress();
       }
@@ -15202,13 +16454,62 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     endGame();
   }
 
+  // Swept hit test for enemy projectiles vs a player: the projectile's travel
+  // segment this frame is tested against a vertical capsule anchored at the
+  // target's actual ground height (mirrors projectileSegmentHitsEnemy for
+  // player arrows). Fixes elevated-terrain misses and inter-frame tunneling.
+  function fireballSegmentHitsTarget(fireball, targetPosition, groundY, fromX, fromY, fromZ) {
+    const to = fireball.group.position;
+    const hitRadius = 0.78;
+    const minY = groundY - 0.25;
+    const maxY = groundY + 2.35;
+    const dx = to.x - fromX;
+    const dz = to.z - fromZ;
+    const fx = fromX - targetPosition.x;
+    const fz = fromZ - targetPosition.z;
+    const a = dx * dx + dz * dz;
+    const b = 2 * (fx * dx + fz * dz);
+    const c = fx * fx + fz * fz - hitRadius * hitRadius;
+    let tMin = 0;
+    let tMax = 1;
+    if (a < 0.000001) {
+      if (c > 0) {
+        return false;
+      }
+    } else {
+      const disc = b * b - 4 * a * c;
+      if (disc < 0) {
+        return false;
+      }
+      const sqrtDisc = Math.sqrt(disc);
+      tMin = Math.max(0, (-b - sqrtDisc) / (2 * a));
+      tMax = Math.min(1, (-b + sqrtDisc) / (2 * a));
+      if (tMin > tMax) {
+        return false;
+      }
+    }
+    const dy = to.y - fromY;
+    if (Math.abs(dy) < 0.000001) {
+      return fromY >= minY && fromY <= maxY;
+    }
+    let tEnter = (minY - fromY) / dy;
+    let tExit = (maxY - fromY) / dy;
+    if (tEnter > tExit) {
+      const swap = tEnter;
+      tEnter = tExit;
+      tExit = swap;
+    }
+    return Math.max(tMin, tEnter) <= Math.min(tMax, tExit);
+  }
+
   function updateFireballs(dt) {
     for (let i = game.fireballs.length - 1; i >= 0; i -= 1) {
       const fireball = game.fireballs[i];
       fireball.life -= dt;
       const targetInfo = combatTargetById(fireball.targetId) || combatTargetById(online.localId);
+      const targetGroundY = combatTargetGroundY(targetInfo);
       const homingTarget = tmpVec.copy(targetInfo.position);
-      homingTarget.y = 0.92;
+      homingTarget.y = targetGroundY + 0.92;
       const desiredDirection = homingTarget.sub(fireball.group.position);
       if (desiredDirection.lengthSq() > 0.0001) {
         desiredDirection.normalize();
@@ -15216,6 +16517,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         currentDirection.lerp(desiredDirection, clamp(fireball.turnRate * dt, 0, 0.055)).normalize();
         fireball.velocity.copy(currentDirection).multiplyScalar(fireball.speed);
       }
+      const fromX = fireball.group.position.x;
+      const fromY = fireball.group.position.y;
+      const fromZ = fireball.group.position.z;
       fireball.group.position.addScaledVector(fireball.velocity, dt);
       if (fireball.shell) {
         fireball.shell.rotation.y += dt * 7.5;
@@ -15230,9 +16534,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const impactColor = fireball.impactColor || 0xff7b2e;
       const impactSfx = fireball.impactSfx || "fireballImpact";
 
-      const target = tmpVec.copy(targetInfo.position);
-      target.y = 0.92;
-      if (fireball.group.position.distanceTo(target) < 0.78) {
+      if (fireballSegmentHitsTarget(fireball, targetInfo.position, targetGroundY, fromX, fromY, fromZ)) {
         const hitDirection = tmpVec2.copy(fireball.velocity);
         hitDirection.y = 0;
         if (hitDirection.lengthSq() > 0.0001) {
@@ -15249,7 +16551,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         continue;
       }
 
-      if (fireball.life <= 0 || fireball.group.position.y < 0.16) {
+      // Ground expiry against the terrain under the projectile, not absolute
+      // y = 0 (which let shots fly invisibly beneath elevated landforms).
+      if (fireball.life <= 0 || fireball.group.position.y < explorationGroundWorldY(fireball.group.position.x, fireball.group.position.z) + 0.16) {
         spawnImpact(fireball.group.position, impactColor, 10);
         playPositionalSfx(impactSfx, fireball.group.position, 0.7, 58);
         broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: impactColor, count: 10, sfx: impactSfx, sfxIntensity: 0.7, sfxDistance: 58 });

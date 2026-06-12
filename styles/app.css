@@ -959,9 +959,10 @@ button[hidden] {
   left: 50%;
   bottom: 26px;
   transform: translateX(-50%);
-  width: min(460px, calc(100vw - 32px));
+  width: min(480px, calc(100vw - 32px));
+  padding: 18px 20px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   z-index: 5;
   pointer-events: none;
 }
@@ -987,64 +988,49 @@ button[hidden] {
 
 .quest-ask {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
   pointer-events: auto;
 }
 
 .ask-topics {
-  display: flex;
+  display: grid;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
 .ask-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
+  gap: 9px;
+  padding: 7px 11px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  border-radius: 8px;
   background: rgba(12, 18, 28, 0.55);
   color: var(--ink);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1.4;
-  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ask-chip:hover {
+  border-color: rgba(122, 232, 255, 0.5);
+  background: rgba(18, 26, 38, 0.7);
 }
 
 .ask-chip .ask-chip-key {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 4px;
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 5px;
   background: rgba(122, 232, 255, 0.22);
   color: #cdeefb;
-  font-size: 10px;
-}
-
-.ask-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(8, 12, 20, 0.62);
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-}
-
-.ask-input:focus {
-  outline: none;
-  border-color: rgba(122, 232, 255, 0.7);
-  box-shadow: 0 0 0 2px rgba(122, 232, 255, 0.22);
-}
-
-.ask-input::placeholder {
-  color: rgba(228, 233, 240, 0.45);
+  font-size: 11px;
 }
 
 .ask-hint {

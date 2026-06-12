@@ -222,6 +222,22 @@ export const defaultCombatTuning = {
   heartseekerCooldown: 4,
   heartseekerDamageMin: 44,
   heartseekerDamageSpread: 12,
+  // Wizard healer identity: the Healing Draught drop is the wizard's first
+  // upgradable ability. Tiers are gated by character level (host-authoritative
+  // heal/cooldown/radius replicate via the existing potion drop + snapshot).
+  wizardPotionHealT1: 24,
+  wizardPotionHealT2: 32,
+  wizardPotionHealT3: 42,
+  wizardPotionCooldownT1: 16,
+  wizardPotionCooldownT2: 13,
+  wizardPotionCooldownT3: 10,
+  wizardPotionRadiusT1: 1.0,
+  wizardPotionRadiusT2: 1.4,
+  wizardPotionRadiusT3: 1.8,
+  wizardPotionTier2Level: 3,
+  wizardPotionTier3Level: 7,
+  wizardPotionSplashHeal: 14,
+  wizardPotionCooldownFloor: 7,
   // Kit stat identity defaults (overridden per kit in equipmentDefs).
   kitHealthBonus: 0,
   kitGuardBonus: 0,
@@ -236,16 +252,16 @@ export const abilityUnlockLevels = {
   arrow: 1,
   block: 1,
   roll: 1,
+  potion: 1,
   bash: 3,
-  burst: 3,
   pierce: 3,
-  potion: 5,
+  burst: 4,
   resolve: 5,
   parting: 5,
-  frostbind: 6,
+  frostbind: 5,
   heartseeker: 7,
   sweep: 8,
-  stormcrown: 9
+  stormcrown: 8
 };
 
 export const abilityDisplayNames = {
@@ -257,7 +273,7 @@ export const abilityDisplayNames = {
   bash: "Shield bash",
   burst: "Arcane burst",
   pierce: "Piercing shot",
-  potion: "Potion drop",
+  potion: "Healing Draught",
   resolve: "Warden's Resolve",
   sweep: "Sweeping Cut",
   frostbind: "Frostbind Bolt",
