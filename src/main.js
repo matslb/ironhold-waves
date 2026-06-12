@@ -3136,7 +3136,7 @@ import {
       serviceLabel: "Enter Underworks",
       clearXp: BELLWATER_DUNGEON_CLEAR_XP,
       firstClearBoon: { health: 3, guard: 3, mana: 3 },
-      recoveryFallback: { x: 63, z: 84 },
+      recoveryFallback: { x: 76.1, z: 106.9 },
       encounter: ["barbarian", "bonewarden", "briarBeast", "barbarian", "bogLurker", "barbarian"],
       startCopy: BELLWATER_DUNGEON_NAME + " sealed - clear the chamber",
       activeCopy: BELLWATER_DUNGEON_NAME + " already active",
@@ -4669,6 +4669,31 @@ import {
     return height;
   }
 
+  function explorationRenderedTerrainHeight(localX, localZ, seed = game.exploration.seed || "explore-local") {
+    const gridX = clamp((localX + EXPLORATION_TERRAIN_HALF_SIZE) / EXPLORATION_TERRAIN_CELL_SIZE, 0, EXPLORATION_TERRAIN_SEGMENTS);
+    const gridZ = clamp((localZ + EXPLORATION_TERRAIN_HALF_SIZE) / EXPLORATION_TERRAIN_CELL_SIZE, 0, EXPLORATION_TERRAIN_SEGMENTS);
+    const ix = Math.min(EXPLORATION_TERRAIN_SEGMENTS - 1, Math.floor(gridX));
+    const iz = Math.min(EXPLORATION_TERRAIN_SEGMENTS - 1, Math.floor(gridZ));
+    const tx = gridX - ix;
+    const tz = gridZ - iz;
+    const x0 = -EXPLORATION_TERRAIN_HALF_SIZE + ix * EXPLORATION_TERRAIN_CELL_SIZE;
+    const z0 = -EXPLORATION_TERRAIN_HALF_SIZE + iz * EXPLORATION_TERRAIN_CELL_SIZE;
+    const x1 = x0 + EXPLORATION_TERRAIN_CELL_SIZE;
+    const z1 = z0 + EXPLORATION_TERRAIN_CELL_SIZE;
+    const h00 = explorationTerrainHeight(x0, z0, seed);
+    const h10 = explorationTerrainHeight(x1, z0, seed);
+    const h01 = explorationTerrainHeight(x0, z1, seed);
+    const h11 = explorationTerrainHeight(x1, z1, seed);
+    if (tx + tz <= 1) {
+      return h00 + tx * (h10 - h00) + tz * (h01 - h00);
+    }
+    return h11 + (1 - tx) * (h01 - h11) + (1 - tz) * (h10 - h11);
+  }
+
+  function explorationRenderedGroundLocalY(localX, localZ, offset = 0, seed = game.exploration.seed || "explore-local") {
+    return explorationRenderedTerrainHeight(localX, localZ, seed) + offset;
+  }
+
   function explorationGroundWorldY(worldX, worldZ, offset = 0) {
     const activity = activeCombatActivity();
     if (activity) {
@@ -4702,6 +4727,7 @@ import {
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     const swamp = game.exploration.biomes.find(biome => biome.id === "swamp");
     const briar = game.exploration.biomes.find(biome => biome.id === "briar");
+    const bellwater = bellwaterUnderworksPlacement();
     const zones = [];
     const landmarkZones = [
       { x: -game.exploration.origin.x, z: -game.exploration.origin.z, radius: arenaRadius + 24, blend: 18, height: 0, strength: 1.0 },
@@ -4714,7 +4740,7 @@ import {
       { x: 158, z: 48, radius: 46, blend: 16, strength: 0.98 },
       { x: 125, z: -92, radius: 32, blend: 14, strength: 0.92 },
       { x: -133, z: 96, radius: 32, blend: 14, strength: 0.92 },
-      { x: 63, z: 81, radius: 22, blend: 10, strength: 0.84 },
+      { x: bellwater.x, z: bellwater.z, radius: 25, blend: 10, strength: 0.84 },
       { x: -104, z: -78, radius: 18, blend: 9, strength: 0.82 },
       { x: 155, z: -134, radius: 19, blend: 9, strength: 0.82 },
       { x: -209, z: 90, radius: 19, blend: 9, strength: 0.82 },
@@ -4751,7 +4777,7 @@ import {
     addPathZones([homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 5.8, 7.5, 0.58);
     addPathZones([northFork, { x: -4, z: 104 }, { x: 2, z: 132 }], 6.2, 8, 0.62);
     addPathZones([northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: 124, z: 30 }], 5.8, 7.5, 0.58);
-    addPathZones([{ x: 72, z: 91 }, { x: 67, z: 87 }, { x: 63, z: 81 }], 4.7, 6.8, 0.55);
+    addPathZones([{ x: 34, z: 100 }, bellwater.approach, { x: bellwater.x, z: bellwater.z }], 4.7, 6.8, 0.55);
     addPathZones([homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, meadowEastFork, { x: 118, z: -86 }], 5.2, 7, 0.54);
     addPathZones([homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, meadowWestFork, { x: -126, z: 90 }], 5.2, 7, 0.54);
     if (mountain) {
@@ -4806,6 +4832,10 @@ import {
     }
   }
 
+  const EXPLORATION_TERRAIN_SIZE = 760;
+  const EXPLORATION_TERRAIN_SEGMENTS = 132;
+  const EXPLORATION_TERRAIN_HALF_SIZE = EXPLORATION_TERRAIN_SIZE / 2;
+  const EXPLORATION_TERRAIN_CELL_SIZE = EXPLORATION_TERRAIN_SIZE / EXPLORATION_TERRAIN_SEGMENTS;
   const BIOME_PATCH_LIFT = 0.032;
   const LAKE_SURFACE_LIFT = 0.084;
   const ROAD_SURFACE_LIFT = 0.112;
@@ -5217,6 +5247,7 @@ import {
     const swampFork = { x: -92, z: 128 };
     const briarFork = { x: 98, z: -72 };
     const desert = game.exploration.biomes.find(biome => biome.id === "desert");
+    const bellwater = bellwaterUnderworksPlacement();
 
     addExplorationRoad(group, [
       homeDoor,
@@ -5237,7 +5268,11 @@ import {
       const arenaGate = arenaCity.roadAnchor || { x: arenaCity.localX - 34, z: arenaCity.localZ - 18 };
       addExplorationRoad(group, [northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: arenaGate.x - 18, z: arenaGate.z - 9 }, { ...arenaGate, junction: true, major: true }], 3.05, "formal");
     }
-    addExplorationRoad(group, [{ x: 72, z: 91, junction: true }, { x: 67, z: 87 }, { x: 63, z: 81, junction: true }], 2.15, "lane");
+    addExplorationRoad(group, [
+      { x: 34, z: 100, junction: true },
+      bellwater.approach,
+      { x: bellwater.x, z: bellwater.z, junction: true }
+    ], 2.15, "lane");
     if (desert) {
       const siltwell = { x: desert.x + 115, z: desert.z + 45 };
       addExplorationRoad(group, [desertFork, { x: -82, z: -92 }, { ...siltwell, junction: true }], 2.15, "desert");
@@ -5291,6 +5326,22 @@ import {
     return {
       x: x + fx * forward + sx * side,
       z: z + fz * forward + sz * side
+    };
+  }
+
+  const BELLWATER_UNDERWORKS_SHORE_LAKE = { x: 68, z: 85, rx: 17, rz: 10 };
+
+  function bellwaterUnderworksPlacement() {
+    const lake = BELLWATER_UNDERWORKS_SHORE_LAKE;
+    const rotation = -2.42;
+    const x = lake.x + 4;
+    const z = lake.z + lake.rz + 7.2;
+    return {
+      x,
+      z,
+      rotation,
+      approach: { x: lake.x + lake.rx + 8.5, z },
+      returnLocal: offsetFromFacing(x, z, rotation, 6.2)
     };
   }
 
@@ -5691,11 +5742,11 @@ import {
     const rotation = biome.rotation || 0;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    const positions = [0, explorationGroundLocalY(biome.x, biome.z, BIOME_PATCH_LIFT), 0];
+    const positions = [0, explorationRenderedGroundLocalY(biome.x, biome.z, BIOME_PATCH_LIFT, seed), 0];
     const uvs = [0.5, 0.5];
     const indices = [];
-    const rings = 10;
-    const segments = 112;
+    const rings = biome.id === "mountain" ? 26 : 14;
+    const segments = biome.id === "mountain" ? 192 : 128;
     const boundaryWobbles = [];
     for (let i = 0; i < segments; i += 1) {
       const angle = (i / segments) * TAU;
@@ -5717,7 +5768,7 @@ import {
         const localZ = x * sin + z * cos;
         const worldLocalX = biome.x + localX;
         const worldLocalZ = biome.z + localZ;
-        positions.push(localX, explorationGroundLocalY(worldLocalX, worldLocalZ, BIOME_PATCH_LIFT), localZ);
+        positions.push(localX, explorationRenderedGroundLocalY(worldLocalX, worldLocalZ, BIOME_PATCH_LIFT, seed), localZ);
         uvs.push(0.5 + Math.cos(angle) * 0.5 * radial, 0.5 + Math.sin(angle) * 0.5 * radial);
       }
     }
@@ -6418,16 +6469,15 @@ import {
   }
 
   function addBellwaterUnderworksPoi(group, random) {
-    const x = 63;
-    const z = 81;
-    const rotation = -2.42;
+    const placement = bellwaterUnderworksPlacement();
+    const { x, z, rotation, returnLocal } = placement;
     registerDungeonPoi({
       id: BELLWATER_DUNGEON_ID,
       name: BELLWATER_DUNGEON_NAME,
       localX: x,
       localZ: z,
       entranceLocal: { x, z },
-      returnLocal: { x: x - 2.8, z: z + 4.2 },
+      returnLocal,
       radius: 9,
       biome: "city"
     });
@@ -9655,7 +9705,7 @@ import {
 
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
-    const groundGeometry = new THREE.PlaneGeometry(760, 760, 132, 132);
+    const groundGeometry = new THREE.PlaneGeometry(EXPLORATION_TERRAIN_SIZE, EXPLORATION_TERRAIN_SIZE, EXPLORATION_TERRAIN_SEGMENTS, EXPLORATION_TERRAIN_SEGMENTS);
     const pos = groundGeometry.attributes.position;
     for (let i = 0; i < pos.count; i += 1) {
       const x = pos.getX(i);
