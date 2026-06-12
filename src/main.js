@@ -114,6 +114,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   const EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ = 92 * 92;
   const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
   const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
+  // Global tuning knob applied to every enemy's base speed at spawn. Bumping this
+  // scales chase, patrol, and kiting movement together. 1.0 = original speeds.
+  const ENEMY_SPEED_MULTIPLIER = 1.15;
   const QUEST_MAP_UPDATE_INTERVAL = 0.16;
   const MINIMAP_LOGICAL_SIZE = 176;
   const MINIMAP_DPR = 2;
@@ -9460,6 +9463,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     player.blocking = false;
     overlay.classList.remove("hidden");
     document.exitPointerLock?.();
+    // Stop music here directly: the rAF loop that normally drives setMusicPaused
+    // is frozen by the browser when the tab is hidden/blurred, which is the most
+    // common way to enter pause, so relying on it would leave music playing.
+    setMusicPaused(true);
     setMenuPhase("pause");
   }
 
@@ -9481,6 +9488,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.state = "playing";
     overlay.classList.add("hidden");
     roomRoster.hidden = true;
+    setMusicPaused(false);
     requestGamePointerLock();
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
   }
@@ -9494,6 +9502,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     player.blocking = false;
     overlay.classList.remove("hidden");
     document.exitPointerLock?.();
+    setMusicPaused(true);
     updateQuestMap();
     setMenuPhase("landing");
     if (message) {
@@ -12209,7 +12218,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       desiredRange: 9.5 + Math.random() * 1.8,
       health: 50 + wave * 8,
       maxHealth: 50 + wave * 8,
-      speed: 2.55 + Math.random() * 0.35 + Math.min(wave * 0.04, 0.4),
+      speed: (2.55 + Math.random() * 0.35 + Math.min(wave * 0.04, 0.4)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1 + Math.min(wave * 0.04, 0.55),
       radius: 0.55 * scale,
       cooldown: 1.0 + Math.random() * 1.4,
@@ -12241,7 +12250,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       desiredRange: 8.0 + Math.random() * 1.6,
       health: 44 + wave * 7,
       maxHealth: 44 + wave * 7,
-      speed: 2.95 + Math.random() * 0.4,
+      speed: (2.95 + Math.random() * 0.4) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1 + Math.min(wave * 0.04, 0.5),
       radius: 0.6 * scale,
       cooldown: 0.9 + Math.random() * 1.2,
@@ -12272,7 +12281,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 72 + wave * 12,
       maxHealth: 72 + wave * 12,
-      speed: 2.0 + Math.random() * 0.32 + Math.min(wave * 0.04, 0.4),
+      speed: (2.0 + Math.random() * 0.32 + Math.min(wave * 0.04, 0.4)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1.05 + Math.min(wave * 0.045, 0.6),
       radius: 0.62 * scale,
       cooldown: 0.7 + Math.random() * 1.1,
@@ -12303,7 +12312,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 78 + wave * 12,
       maxHealth: 78 + wave * 12,
-      speed: 1.95 + Math.random() * 0.3 + Math.min(wave * 0.035, 0.36),
+      speed: (1.95 + Math.random() * 0.3 + Math.min(wave * 0.035, 0.36)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1.1 + Math.min(wave * 0.045, 0.6),
       radius: 0.78 * scale,
       cooldown: 0.8 + Math.random() * 1.1,
@@ -12334,7 +12343,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 70 + wave * 16,
       maxHealth: 70 + wave * 16,
-      speed: 2.05 + Math.random() * 0.42 + Math.min(wave * 0.05, 0.55),
+      speed: (2.05 + Math.random() * 0.42 + Math.min(wave * 0.05, 0.55)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1 + Math.min(wave * 0.045, 0.65),
       radius: 0.65 * scale,
       cooldown: 0.6 + Math.random() * 1.2,
@@ -12453,7 +12462,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 66 + wave * 10,
       maxHealth: 66 + wave * 10,
-      speed: 2.32 + Math.random() * 0.34 + Math.min(wave * 0.03, 0.32),
+      speed: (2.32 + Math.random() * 0.34 + Math.min(wave * 0.03, 0.32)) * ENEMY_SPEED_MULTIPLIER,
       radius: 0.82 * scale,
       cooldown: 0.75 + Math.random() * 1.1,
       state: "chase",
@@ -12485,7 +12494,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       desiredRange: 8.8 + Math.random() * 2.2,
       health: 92 + wave * 19,
       maxHealth: 92 + wave * 19,
-      speed: 2.8 + Math.min(wave * 0.05, 0.6),
+      speed: (2.8 + Math.min(wave * 0.05, 0.6)) * ENEMY_SPEED_MULTIPLIER,
       damageMul: 1 + Math.min(wave * 0.04, 0.6),
       radius: 1.38 * scale,
       cooldown: 1.0 + Math.random() * 1.4,
@@ -12516,7 +12525,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 48 + wave * 7,
       maxHealth: 48 + wave * 7,
-      speed: 2.9 + Math.random() * 0.45,
+      speed: (2.9 + Math.random() * 0.45) * ENEMY_SPEED_MULTIPLIER,
       radius: 0.82 * scale,
       cooldown: 0.45 + Math.random() * 1.0,
       state: "patrol",
@@ -12545,7 +12554,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       scale,
       health: 40 + wave * 6,
       maxHealth: 40 + wave * 6,
-      speed: 2.5 + Math.random() * 0.34,
+      speed: (2.5 + Math.random() * 0.34) * ENEMY_SPEED_MULTIPLIER,
       radius: 0.62 * scale,
       cooldown: 0.8 + Math.random() * 1.2,
       state: "patrol",
