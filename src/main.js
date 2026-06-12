@@ -10241,27 +10241,6 @@ import {
   }
 
   function setupExplorationQuests() {
-    // TEMP T-028 debug hooks - REMOVE before finishing.
-    window.__dbgTeleport = (x, z, yaw) => {
-      player.position.copy(explorationToWorld(x, z));
-      player.group.position.copy(player.position);
-      if (Number.isFinite(yaw)) {
-        game.cameraYaw = yaw;
-      }
-    };
-    window.__dbgActivateQuest = id => {
-      const quest = getQuest(id);
-      if (quest) {
-        quest.state = "active";
-      }
-    };
-    window.__dbgQuestItems = id => game.questItems
-      .filter(item => !id || item.questId === id)
-      .map(item => ({
-        q: item.questId,
-        x: Math.round((item.position.x - game.exploration.origin.x) * 10) / 10,
-        z: Math.round((item.position.z - game.exploration.origin.z) * 10) / 10
-      }));
     game.quests.push(
       createQuest(
         "herbs",
@@ -11187,18 +11166,6 @@ import {
     game.npcs.push(steward);
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 19, game.exploration.origin.z + z + 8.5, random, 7.5, "Physicker Maud", null, "city"));
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 16.4, game.exploration.origin.z + z - 7.2, random, 7.5, "Quartermaster Pell", ROADWARDEN_TACK_QUEST_ID, "city"));
-
-    window.__dbgCR = {
-      x, z,
-      tp: (ox = 0, oz = 0, yaw) => {
-        player.position.x = game.exploration.origin.x + x + ox;
-        player.position.z = game.exploration.origin.z + z + oz;
-        player.group.position.copy(player.position);
-        if (Number.isFinite(yaw)) {
-          game.cameraYaw = yaw;
-        }
-      }
-    };
   }
 
   function isExplorationBlocked(localX, localZ) {
@@ -18303,7 +18270,6 @@ import {
     // center), not the camera axis.
     aimRayDir.set(0, RETICLE_NDC_Y, 0.5).unproject(camera).sub(aimRayOrigin).normalize();
     resolveReticleTarget(aimRayOrigin, aimRayDir, aimTargetVec);
-    window.__dbgLastAim = { target: aimTargetVec.toArray() }; // TEMP smoke-test hook
     // Direction FROM the character's muzzle TOWARD the aim point. The spawn
     // point stays on the weapon (the launch functions keep their localToWorld
     // hand/bow/staff offsets); only the direction comes from the reticle ray.
@@ -22443,29 +22409,6 @@ import {
         game.cameraPitch = clamp(game.cameraPitch - event.movementY * 0.0022, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX);
       }
     });
-
-    // TEMP smoke-test hooks (pointer-lock mousemove cannot be synthesized).
-    window.__dbgCam = (pitch, yaw) => {
-      if (Number.isFinite(pitch)) game.cameraPitch = pitch;
-      if (Number.isFinite(yaw)) game.cameraYaw = yaw;
-      return { pitch: game.cameraPitch, yaw: game.cameraYaw };
-    };
-    window.__dbgShoot = () => { startAttack(); return player.attackKind; };
-    window.__dbgInfo = () => ({
-      state: game.state,
-      pitch: game.cameraPitch,
-      yaw: game.cameraYaw,
-      cam: camera.position.toArray(),
-      playerPos: player.position.toArray(),
-      attackAim: { yaw: player.attackAimYaw, pitch: player.attackAimPitch },
-      focus: player.focus,
-      character: player.character,
-      projectiles: game.playerProjectiles.map(p => ({ pos: p.group.position.toArray(), vel: p.velocity.toArray() }))
-    });
-    window.__dbgProject = (x, y, z) => {
-      const v = new THREE.Vector3(x, y, z).project(camera);
-      return [v.x, v.y, v.z];
-    };
 
     document.addEventListener("pointerlockchange", () => {
       const wasPointerActive = game.pointerActive;

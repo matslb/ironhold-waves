@@ -682,17 +682,19 @@ Status: `[x] Done`
 Scope shipped:
 - Full mouse-look: `game.cameraPitch` driven by mouse Y under pointer lock (sensitivity 0.0022, invert-free), clamped to -1.05..0.61 rad on foot and -0.85..0.38 rad mounted (clamped at use, so dismounting restores the full range). Same gating as yaw (chat/dialog/pause/pointer-lock-drop freeze both). Pitch resets to the default -0.34 rad alongside every existing yaw reset (arena/dungeon enter+exit, resets).
 - Camera rig: pitch orbits the player at the legacy-equivalent distance (8.18 on foot / 9.69 mounted); existing terrain clearance preserved and extended - the camera footprint is clamped >= ground + 0.75 and, when clamped, the look target lifts by the same amount so the requested view direction survives slopes.
-- Over-the-shoulder framing: camera rig AND look target shift laterally to the player's right (`CAMERA_SHOULDER_X` 1.15, 1.45 mounted) so the character sits left of screen center with a clear sight line. Reticle raised to 44% viewport height (`.reticle` in styles/app.css) for a natural eye-line; `RETICLE_NDC_Y` in main.js keeps the aim ray in lockstep with the CSS position.
-- Aim integration (core deliverable): reticle convergence. At ranged attack start, `captureRangedAim()` raycasts from the camera through the reticle's actual screen point (analytic: enemy aim spheres + terrain-sampler march with bisection refine, flat y=0 floors in shared activities; no THREE.Raycaster) to a world aim point, then launches the projectile FROM the character's weapon (unchanged `localToWorld` muzzle offsets) TOWARD that point. Hits between camera and character are ignored (minT = camera-player distance - 1); degenerate aim points (behind/inside the player) fall back to muzzle-forward along the view ray. Applies to ranger arrow/pierce/heartseeker and wizard lightning/frostbind. Arrows orient to their 3D velocity (YXZ order); descending projectiles expire on ground impact.
-- Neutral band: with no enemy under the reticle and the camera at/above the default tilt, flat shots keep the legacy horizontal launch (prevents resting-camera shots stabbing the ground a few meters out). Enemy convergence and deliberate up/down aiming bypass it.
+- Over-the-shoulder framing: camera rig AND look target shift laterally to the player's right (`CAMERA_SHOULDER_X` 1.15, 1.45 mounted) so the character sits left of screen center with a clear sight line. Reticle raised to 38% viewport height for a natural eye-line. Single source of truth: `RETICLE_NDC_Y` (= 0.24) in main.js is authoritative - it sets the `.reticle` element's CSS `top` at startup (`top% = (1 - ndcY) * 50`) AND builds the aim ray, so the visual and the aim can never drift apart (the 38% in styles/app.css is a fallback that the JS overrides). User playtested and confirmed the framing/reticle/aim feel good.
+- Aim integration (core deliverable): reticle convergence. At ranged attack start, `captureRangedAim()` raycasts from the camera through the reticle's actual screen point (analytic: enemy aim spheres + terrain-sampler march with bisection refine, flat y=0 floors in shared activities; no THREE.Raycaster) to a world aim point, then launches the projectile FROM the character's weapon (unchanged `localToWorld` muzzle offsets) TOWARD that point - renormalized, not the camera ray reused. Hits between camera and character are ignored (minT = camera-player distance - 1); degenerate aim points (behind/inside the player) fall back to muzzle-forward along the view ray. ALL ranged launches converge: ranger arrow/pierce/heartseeker and wizard lightning/frostbind. Arrows orient to their 3D velocity (YXZ order); descending projectiles expire on ground impact. No neutral band - every ranged shot, including flat ones, converges exactly on the reticle (the earlier resting-camera neutral band was removed at user request so projectiles always match the reticle).
 - Replication (additive, no message-shape change): `serializePlayerState` carries `aimPitch` (the captured converged pitch, default 0). `applyRemoteAction` clamps it and feeds `spawnRemoteArrowVisual`/`spawnRemoteLightningVisual`, so remote clients render the same muzzle-origin elevated trajectory; older clients ignore the field and degrade to flat (yaw-only). Host hit approximation stays the existing horizontal yaw-cone (`pointInAttackCone`) - damage-neutral, tolerant of pitched shots.
 - Help panel mouse-look line updated (vertical look + ranged aim, Q/E note).
 
 Done evidence:
-- In-browser (Ranger, exploration): flat/neutral shot launches level from the bow (vel y = 0); pitched-up shot velocity pitch 0.572 == captured aim pitch; pitched-down shot converges on the terrain point and expires on ground impact; enemy-under-reticle shot (bandit archer at 10 m) converges on the enemy aim sphere and bypasses the neutral band. Converged world targets re-projected to screen land exactly on the reticle point (NDC y 0.120 vs reticle 0.12) for both ground and elevated targets.
+- In-browser per class, standing still: re-projecting each converged world target back to screen lands on the reticle point (NDC y 0.238-0.239 vs reticle 0.24) for ranger Quick Shot, Flaming Arrow, and Heartseeker, and wizard lightning and Frostbind Bolt - all five ranged launches use the muzzle-origin converged direction. Reticle element measured at 38.0% viewport height, horizontally centered.
+- Trajectory regimes (Ranger): flat shot launches level from the bow; pitched-up shot velocity pitch == captured aim pitch (e.g. 0.572 rad); pitched-down shot converges on the terrain point and expires on ground impact; enemy-under-reticle shot converges on the enemy aim sphere.
 - Over-the-shoulder: screenshots at default yaw and rotated 90 deg show the character left of center with a clear aim line over the right shoulder; offset rotates with yaw.
-- Terrain clearance re-verified on Dragonspine-facing slopes (camera >= ground + 0.75 with lookLift); `npm run check` + `git diff --check` green; `window.__errs` empty across all test sessions.
+- Terrain clearance re-verified on Dragonspine-facing slopes (camera >= ground + 0.75 with lookLift); `npm run check` + `git diff --check` green; `window.__errs` empty across all test sessions. All temp `__dbg*` hooks for this slice removed (`__dbgCam`/`__dbgShoot`/`__dbgInfo`/`__dbgProject`/`__dbgLastAim`); other sessions' hooks left untouched.
 - Performance: no per-frame allocation added (module-scoped scratch vectors); convergence raycast is analytic and runs once per ranged attack start, not per frame.
+
+Settled tuning values: camera pitch default -0.34 rad, range -1.05..0.61 (foot) / -0.85..0.38 (mounted); aim pitch clamp -1.15..1.0; mouse-Y sensitivity 0.0022; shoulder offset 1.15 (foot) / 1.45 (mounted); orbit distance 8.18 (foot) / 9.69 (mounted); reticle RETICLE_NDC_Y 0.24 (= 38% viewport height).
 
 Remaining work:
 - Structure/tree occlusion (camera clipping through walls/canopies when orbiting) remains out of scope, as briefed - height/distance clamps only.
@@ -751,6 +753,62 @@ Done evidence:
 Remaining work:
 - Sound agent follow-up: optional faint water-trickle ambience at the grate.
 - Dialogue check: only generic "cold lakes" herb-quest lines reference lakes (still valid with 5 lakes); no Bellwater-specific lake line exists in `src/content/dialogue.js`, nothing to flag.
+
+### T-031: Wizard Model Redesign (Slimmer Robe, Traveling Battle-Caster)
+
+Primary owner: Rendering / Performance Agent. Consult hats: Creative / Narrative (class identity), Gameplay Systems (animation contract). (Briefed as "T-029" then drafted as "T-030"; both numbers were already taken by the Bellwater and quest-collectible slices, so this shipped as T-031.)
+
+Status: `[~] Active` (user playtested the final model and accepted it - recommend `[x] Done`; Game Director to confirm.)
+
+User complaint: the wizard's robe skirt was far too wide (bell-tent silhouette, old hem ~2.04 world units across at 1.02 bottom radius). Redesigned `createWizard` and `createRemoteWizardDetails` toward the friendly-NPC/horse quality bar: lived-in practical fantasy, readable layered silhouette at third-person distance. User confirmed the slimmer robe + redesign look good.
+
+Design rationale ("traveling battle-caster"), final shipped numbers:
+- Hem diameter more than halved: robe skirt is now a real taper (`robeUpper` 0.36->0.46, `robeLower` 0.44->0.53) plus a 0.54->0.58 weighted hem band, vs the old 0.68/0.9 + 0.94/1.02 bell. The hem band sits at y=0.4 (raised from the old y=0.12 ground ring) and the skirt was shortened so the jointed boots/shins read beneath it while walking and riding.
+- Front slit implied by two hanging robe panels flanking the legs plus a longer riding-coat back panel - replaces the old hem "fold" boxes.
+- Practical magic kit at the waist: dark-leather belt with gold buckle, two pouches, a scroll case across the back, and a satchel strap across the chest (replaces the wide gold sash band).
+- Layered shoulder mantle (tapered cylinder + trim edge + clasp) replaces the 1.16-wide flat shoulder slab; cape narrowed 0.92->0.72.
+- Hat weathered: drooping asymmetric brim (0.3->0.5 taper, slight x/z tilt), stronger crown lean, bent tip kept; gold band + star emblem kept for class read.
+- Staff hand (right) got a leather grip wrap; rune trim strip + two gold studs down the chest, no neon.
+
+Contract preserved (call sites grepped before editing): `player.body` (robeUpper, cloned material for hurt emissive), `staffPivot` rest pose (0.64, 1.02, -0.08 / 0.08, 0, -0.16 - hardcoded in `updateWizardCastAnimation`/`resetWizardCastPose` and the remote cast mirror), `leftArm`/`rightArm` shoulder pivots (+-0.58, 1.69), `leftLeg`/`rightLeg` hip pivots (+-0.22, 0.5), `castGlow` rest (-0.52, 1.05, -0.18), `burstRing`, `hitFlash`, remote return object incl. `weaponPivot`/`nameTagY` 3.36. Frostbind/lightning launch offsets (`localToWorld(0.55, 1.55, -0.72)`) left unchanged because the staff pivot and hands did not move - confirmed in-browser that bolts still leave the staff head (sampled projectile spawn sat at the staff tip).
+
+Done evidence:
+- In-browser (god mode, third-person gameplay distance): idle, walk, lightning cast (bolt at staff tip), arcane burst (ring at feet), Frostbind, mounted on horse and Skyhatched Drake (legs astride, no robe clipping); `window.__errs` empty; `npm run check` + `git diff --check` green.
+- User playtested the final model and confirmed it looks good; no further changes requested.
+- Remote variant mirrors the redesign with palette materials (robe/hat/trim/cape preserved per-player).
+- Performance: cached primitives only (`makeBox`/`makeCylinder`/`makeSphere`), net +7 small meshes per wizard, removes 3 fold boxes and 1 sash cylinder; no new lights, particles, or textures (reuses `robe-cloth`/`hat-cloth`/leather material set).
+- No debug hooks added by this slice (grepped `__dbg` in the wizard regions; the camera agent's `__dbg*` hooks were used read-only for staging and left untouched).
+
+### T-030: Themed Quest Collectibles
+
+Primary owner: Rendering / Performance Agent. Support hats: World & Content (biome fit, gameplay-distance readability), Creative / Narrative (models match quest copy). (Briefed as "T-028" but that number was already taken by the camera slice.)
+
+Status: `[~] Active`
+
+Problem: every collectible quest pickup shared one generic stem-and-orb model with a color tint. `createQuestItem` now dispatches to a per-quest-type procedural model builder (`questItemModelBuilders`); signature, options (`groundOffset`, `ringRadius`, `pickupRadius`, `requiresMounted`, `oneShot`), pickup behavior, quest logic, ids, and counts are untouched. Unknown quest ids fall back to the original generic sprout.
+
+Per-quest models (each keeps the spinning quest-color glow ring, hover/bob, pulse, and the single per-item point light from the old model):
+- `herbs` (Greenfire Remedies, Mira): leafy five-cone sprig with glowing pale-green bloom and buds - "greenfire grows beside the cold lakes".
+- `horse` (Hooves for the Long Road, Rowan): leather-tied sheaf of wild-oat stalks with sun-gold glowing seed heads - "gather wild oats".
+- `roadwardenTack` (Shoes for the Long Road, Pell): posted waymark - wood post, slate cap, fingerboard, glowing route diamond; keeps the large 0.36 ride-through ring.
+- `bogRelics` (Relics Under Reed, Noll): moss-grown verdigris shrine bell on a stone plinth, glow spilling from the mouth - "shrine bells... still glowing".
+- `cityWrits` (The Beacon Writs, Marshal Vale): sealed parchment writ leaning on a stone plaque, glowing wax seal.
+- `citySanctuary` (Sanctuary Lamps, Sister Edda): gilt church lantern with pale glass and a cyan votive flame core.
+- `skyDrake` (The Skyhatched Brood, Brunna): pale drake egg (cached stretched-sphere geometry) in a dark-stone wind-shadow cradle with teal glow speckles; whole shell breathes with the pulse. Spawn placement code in `addMountainRoost` untouched (mounts agent's lane - eggs were generic-shaped, themed purely via the dispatcher).
+- `duneCourser` (The Well-Road Courser, Saffa): lashed pair of dark-leather waterskins with a glowing pale stopper.
+- No collectible pickups exist for Briarfall (`briarStalkers` is a hunt quest) or Crownring (`crownringTrial` is an arena quest); nothing to theme there.
+
+Performance:
+- All primitives go through the cached-geometry helpers (`makeBox`/`makeCylinder`/`makeCone`/`makeSphere` + two new cached entries: `quest-egg` stretched sphere, `torus` ring per radius - the ring geometry was previously rebuilt per item).
+- Glow materials are now pooled per quest color (`questItemGlowMaterial`, 8 total) instead of 2 `questGlow` clones per item (~40 clones before). One new shared material (`questBellBronzeMaterial`); everything else reuses the module `materials` object. No textures, no new lights (the per-item PointLight predates this slice and is unchanged, intensity-driven by distance as before).
+- Item yaw variety derives from position (no extra draw on the shared seeded random, so world layout is byte-identical).
+
+Done evidence:
+- In-browser at the per-session seed (god mode): screenshots at gameplay distance of greenfire sprig (lakeshore), bog bell (Mistfen), beacon writ + waystone plaza (Crownford), sanctuary lamp (church district), drake egg (Dragonspine shelf), waymark (road fork), oat sheaf (meadow), waterskin cache (Amber Dunes). Collected one greenfire herb: tracker ticked 1/6, impact burst + sfx fired. `window.__errs` empty throughout; temp `__dbgTeleport`/`__dbgActivateQuest`/`__dbgQuestItems` hooks removed (other sessions' `__dbg*` hooks left untouched).
+- `npm run check`, `git diff --check` green.
+
+Remaining work:
+- Optional: per-type pickup impact colors already follow `questColor`; a per-type pickup sfx variation could be a sound-agent follow-up.
 
 Primary owner: UI / UX Agent
 
