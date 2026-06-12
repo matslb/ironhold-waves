@@ -9110,7 +9110,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     const basics = helpSection("The Game");
     helpParagraph(basics, "Ironhold is an exploration RPG. Walk the valley, discover villages and Crownford, and take quests by talking to named NPCs. Quests reward XP, boons, perks, and weapon kits.");
-    helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you.");
+    helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you. In an online room, press Enter to chat with your party - recent messages appear in the upper left and fade during play.");
     helpParagraph(basics, "The minimap in the lower right shows discovered terrain, roads, quest areas, and a compass. Your arrow sits at the center of attention; online teammates appear as small colored dots, pinned to the rim when they roam far away.");
 
     const controls = helpSection("Movement & Controls");
