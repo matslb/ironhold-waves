@@ -1665,6 +1665,7 @@ import {
     cameraPitch: -0.22,
     pointerActive: false,
     startedOnce: false,
+    suppressControlLossUntil: 0,
     saveTimer: 0,
     menuPhase: "landing",
     pausedFromPlay: false,
@@ -3440,6 +3441,7 @@ import {
     }
     activity.localReturnPosition = { x: player.position.x, z: player.position.z };
     closeQuestDialog();
+    restoreGameplayControlAfterActivityEntry();
     parkHorseNear(player.position);
     clearPlayerProjectiles();
     setArenaVisible(true);
@@ -3507,6 +3509,7 @@ import {
     }
     activity.localReturnPosition = { x: player.position.x, z: player.position.z };
     closeQuestDialog();
+    restoreGameplayControlAfterActivityEntry();
     parkHorseNear(player.position);
     clearPlayerProjectiles();
     setDungeonVisible(true);
@@ -3810,6 +3813,7 @@ import {
       sendOnlineMessage({ kind: "arenaStartRequest", state: serializePlayerState() });
       showBanner("Ask the host to open the Crownring");
       closeQuestDialog();
+      restoreGameplayControlAfterActivityEntry();
       return false;
     }
 
@@ -3830,6 +3834,7 @@ import {
     });
 
     closeQuestDialog();
+    restoreGameplayControlAfterActivityEntry();
     parkHorseNear(returnPosition);
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
     clearPlayerProjectiles();
@@ -4001,6 +4006,7 @@ import {
       sendOnlineMessage({ kind: "dungeonStartRequest", dungeonId: def.id, state: serializePlayerState() });
       showBanner(def.requestCopy);
       closeQuestDialog();
+      restoreGameplayControlAfterActivityEntry();
       return false;
     }
 
@@ -4023,6 +4029,7 @@ import {
     });
 
     closeQuestDialog();
+    restoreGameplayControlAfterActivityEntry();
     parkHorseNear(returnPosition);
     clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
     clearPlayerProjectiles();
@@ -7634,6 +7641,20 @@ import {
     game.dialogVoiceKey = "";
     game.dialogTopics = [];
     updateDialogSelection(0);
+  }
+
+  function restoreGameplayControlAfterActivityEntry() {
+    keys.clear();
+    player.blockHeld = false;
+    player.blocking = false;
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement !== document.body && typeof activeElement.blur === "function") {
+      activeElement.blur();
+    }
+    if (game.state === "playing") {
+      game.suppressControlLossUntil = performance.now() + 1500;
+      requestGamePointerLock();
+    }
   }
 
   // ---- Player-input-driven dialogue (local deterministic responder) --------
@@ -11359,6 +11380,9 @@ import {
     }
     // Don't pause for the pointer-lock drop that chat typing/closing causes.
     if (chat.open || performance.now() < chat.suppressPauseUntil) {
+      return;
+    }
+    if (performance.now() < game.suppressControlLossUntil) {
       return;
     }
     openSessionMenu();
