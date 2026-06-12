@@ -10,7 +10,7 @@ import {
   progressStorageKey,
   xpForLevel
 } from "./content/rpg.js";
-import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js";
+import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, suggestedTopicsFor } from "./content/dialogue.js";
 
 (() => {
   "use strict";
@@ -83,6 +83,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   const questClaimButton = document.getElementById("questClaimButton");
   const questServiceButton = document.getElementById("questServiceButton");
   const questCloseButton = document.getElementById("questCloseButton");
+  const dialogueTopics = document.getElementById("dialogueTopics");
+  const dialogueInput = document.getElementById("dialogueInput");
+  const dialogueHint = document.getElementById("dialogueHint");
   const questLog = document.getElementById("questLog");
   const questLogItems = document.getElementById("questLogItems");
   const questMap = document.getElementById("questMap");
@@ -1468,6 +1471,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     dialogNpc: null,
     dialogVoiceKey: "",
     dialogActionIndex: 0,
+    dialogTopics: [],
+    dialogAskActive: false,
     questMapTimer: 0,
     exploration: {
       origin: new THREE.Vector3(180, 0, 0),
@@ -5593,6 +5598,10 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     game.dialogVoiceKey = "";
     keys.clear();
     player.blockHeld = false;
+    setDialogAskActive(false);
+    if (dialogueInput) {
+      dialogueInput.value = "";
+    }
     playSfx("ui", 0.7);
     refreshQuestDialog();
     questDialog.hidden = false;
@@ -5601,11 +5610,97 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   }
 
   function closeQuestDialog() {
+    setDialogAskActive(false);
+    if (dialogueInput) {
+      dialogueInput.value = "";
+    }
     questDialog.hidden = true;
     actionDock.hidden = false;
     game.dialogNpc = null;
     game.dialogVoiceKey = "";
+    game.dialogTopics = [];
     updateDialogSelection(0);
+  }
+
+  // ---- Player-input-driven dialogue (local deterministic responder) --------
+
+  function dialogContextForNpc(npc) {
+    const quest = npc && npc.questId ? getQuest(npc.questId) : null;
+    return {
+      npcName: npc ? npc.name : "",
+      questId: quest ? quest.id : null,
+      questState: quest ? quest.state : "generic",
+      biome: npc ? npc.biome : "meadow",
+      questLine: quest && questPrerequisiteMet(quest) ? questDialogueLine(quest) : null
+    };
+  }
+
+  function renderDialogTopics(npc) {
+    if (!dialogueTopics) {
+      return;
+    }
+    const context = dialogContextForNpc(npc);
+    game.dialogTopics = suggestedTopicsFor(context);
+    dialogueTopics.textContent = "";
+    game.dialogTopics.forEach((topic, index) => {
+      const chip = document.createElement("span");
+      chip.className = "ask-chip";
+      const key = document.createElement("span");
+      key.className = "ask-chip-key";
+      key.textContent = String(index + 1);
+      chip.appendChild(key);
+      chip.appendChild(document.createTextNode(topic.label));
+      chip.addEventListener("click", () => askDialogueQuestion(topic.query));
+      dialogueTopics.appendChild(chip);
+    });
+  }
+
+  function setDialogAskActive(active) {
+    game.dialogAskActive = !!active;
+    if (!dialogueInput) {
+      return;
+    }
+    if (active) {
+      dialogueInput.placeholder = "Type your question, then press Enter";
+      try {
+        dialogueInput.focus({ preventScroll: true });
+        dialogueInput.select();
+      } catch (error) {
+        dialogueInput.focus();
+      }
+      if (dialogueHint) {
+        dialogueHint.textContent = "Enter send \u00b7 Esc cancel typing";
+      }
+    } else {
+      dialogueInput.placeholder = "Press T to ask something";
+      if (document.activeElement === dialogueInput) {
+        dialogueInput.blur();
+      }
+      if (dialogueHint) {
+        dialogueHint.textContent = "1-4 ask a topic \u00b7 T type a question \u00b7 Enter send \u00b7 Esc back";
+      }
+    }
+  }
+
+  function askDialogueQuestion(rawText) {
+    const npc = game.dialogNpc;
+    if (!npc) {
+      return;
+    }
+    const text = String(rawText == null ? (dialogueInput ? dialogueInput.value : "") : rawText).trim();
+    if (!text) {
+      playSfx("uiBack", 0.8);
+      return;
+    }
+    const response = respondToPlayerInput(text, dialogContextForNpc(npc));
+    questDialogBody.textContent = response.text;
+    const echo = text.length > 90 ? text.slice(0, 87) + "\u2026" : text;
+    questDialogStatus.textContent = "You asked: \u201c" + echo + "\u201d";
+    game.dialogVoiceKey = "";
+    playDialogVoiceIfChanged();
+    if (dialogueInput) {
+      dialogueInput.value = "";
+    }
   }
 
   function dialogActionButtons() {
@@ -5656,6 +5751,39 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (questDialog.hidden) {
       return false;
     }
+    // Typing mode: the ask input is focused. Let characters/arrows/backspace
+    // edit the text normally; only intercept Enter (send) and Escape (cancel).
+    if (game.dialogAskActive || document.activeElement === dialogueInput) {
+      if (event.code === "Enter" || event.code === "NumpadEnter") {
+        event.preventDefault();
+        askDialogueQuestion();
+        return true;
+      }
+      if (event.code === "Escape") {
+        event.preventDefault();
+        playSfx("uiBack", 1);
+        setDialogAskActive(false);
+        return true;
+      }
+      return true;
+    }
+    // Open the free-text question box.
+    if (event.code === "KeyT") {
+      event.preventDefault();
+      setDialogAskActive(true);
+      playSfx("uiMove", 1);
+      return true;
+    }
+    // Quick-ask a suggested topic by number.
+    if (event.code.length === 6 && event.code.startsWith("Digit")) {
+      const topicIndex = Number(event.code.slice(5)) - 1;
+      if (topicIndex >= 0 && game.dialogTopics && game.dialogTopics[topicIndex]) {
+        event.preventDefault();
+        playSfx("uiMove", 1);
+        askDialogueQuestion(game.dialogTopics[topicIndex].query);
+        return true;
+      }
+    }
     if (event.code === "ArrowRight" || event.code === "ArrowDown") {
       event.preventDefault();
       moveDialogSelection(1);
@@ -5703,6 +5831,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function finishQuestDialogRefresh() {
     updateDialogSelection(0);
+    renderDialogTopics(game.dialogNpc);
     playDialogVoiceIfChanged();
   }
 
@@ -8891,6 +9020,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
   function openSessionMenu() {
     if (game.state !== "playing") {
       return;
+    }
+    if (!questDialog.hidden) {
+      closeQuestDialog();
     }
     saveProgress();
     game.state = "paused";

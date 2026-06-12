@@ -985,6 +985,75 @@ button[hidden] {
   line-height: 1.45;
 }
 
+.quest-ask {
+  display: grid;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.ask-topics {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(12, 18, 28, 0.55);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ask-chip .ask-chip-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(122, 232, 255, 0.22);
+  color: #cdeefb;
+  font-size: 10px;
+}
+
+.ask-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(8, 12, 20, 0.62);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.ask-input:focus {
+  outline: none;
+  border-color: rgba(122, 232, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(122, 232, 255, 0.22);
+}
+
+.ask-input::placeholder {
+  color: rgba(228, 233, 240, 0.45);
+}
+
+.ask-hint {
+  margin: 0;
+  color: rgba(228, 233, 240, 0.55) !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+}
+
 .quest-actions {
   display: flex;
   gap: 8px;

@@ -668,3 +668,246 @@ export function clearAssistedConversationLog() {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Local deterministic responder (player-input-driven dialogue)
+// ---------------------------------------------------------------------------
+// Routes free player input through the bounded lore packet + canon/mechanics
+// validation, then answers by SELECTING from already-approved canon: authored
+// quest lines, tagged ambient barks, public lore facts, and the voice sheet
+// role. It never invents new prose. When nothing matches confidently, it
+// returns the packet's deterministic fallback. This is the shipped default and
+// works fully offline with no backend, no API keys, and no network calls.
+
+// Optional, config-gated hook for a future real generator. Inert by default:
+// no generator is registered and the flag is off, so the local responder runs.
+// A future backend-backed slice can call setAssistedDialogueGenerator() and
+// flip enableExternalGenerator; any generated line still passes through
+// validateAssistedLine() and falls back deterministically on failure/throw.
+export const assistedDialogueConfig = {
+  enableExternalGenerator: false
+};
+
+let externalAssistedGenerator = null;
+
+export function setAssistedDialogueGenerator(generator) {
+  externalAssistedGenerator = typeof generator === "function" ? generator : null;
+}
+
+const responderStopWords = new Set([
+  "the", "a", "an", "is", "are", "am", "be", "do", "does", "did", "you", "i",
+  "me", "my", "we", "us", "to", "of", "and", "or", "so", "it", "its", "on",
+  "in", "at", "for", "with", "any", "have", "has", "had", "can", "could",
+  "would", "will", "shall", "please", "tell", "about", "this", "that", "these",
+  "those", "here", "there", "your", "yours", "but", "if", "then", "now", "get",
+  "got", "give", "want", "know", "say", "said", "more", "some", "go", "going",
+  // Question/filler words: kept out of lore-fact matching so generic words
+  // ("what", "who"...) that also appear inside fact text never trigger a match.
+  // Intent detection runs on raw tokens, so these still classify the question.
+  "what", "whats", "who", "whos", "where", "wheres", "when", "why", "how",
+  "which", "whom", "whose"
+]);
+
+const responderIntentTriggers = {
+  quest: ["quest", "task", "job", "work", "help", "need", "mission", "objective", "reward", "again", "errand", "deed"],
+  greeting: ["hello", "hi", "hey", "greetings", "morning", "evening", "afternoon", "day", "well", "fare", "luck"],
+  self: ["who", "name", "named", "yourself", "role", "stranger", "doing"],
+  danger: ["danger", "dangerous", "safe", "safety", "enemy", "enemies", "monster", "monsters", "beast", "beasts", "threat", "careful", "attack", "raider", "raiders", "spider", "spiders", "dragon", "dragons", "wisp", "wisps", "fight", "afraid", "scared"],
+  rumor: ["rumor", "rumors", "rumour", "rumours", "news", "heard", "gossip", "story", "stories", "tale", "talk", "happening", "new"],
+  place: ["where", "place", "area", "road", "roads", "city", "crownford", "town", "village", "villages", "valley", "desert", "dunes", "mountain", "mountains", "swamp", "mistfen", "forest", "woods", "briar", "biome", "lake", "lakes", "way", "around"],
+  advice: ["advice", "tip", "tips", "should", "how", "survive", "best", "wise"]
+};
+
+function responderTokens(text) {
+  return (String(text || "").toLowerCase().match(/[a-z']+/g) || []);
+}
+
+function responderKeywords(text) {
+  return responderTokens(text).filter(word => word.length > 2 && !responderStopWords.has(word));
+}
+
+function responderOverlap(inputKeywords, candidateWords) {
+  const pool = new Set(candidateWords);
+  let score = 0;
+  for (const word of inputKeywords) {
+    if (pool.has(word)) {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function responderBestFact(inputKeywords, packet) {
+  const allowed = new Set((packet && packet.allowedTopics) || []);
+  let best = null;
+  let bestScore = 0;
+  for (const fact of loreBible.facts) {
+    const words = responderKeywords(fact.text).concat(fact.tags);
+    let score = responderOverlap(inputKeywords, words);
+    if (score > 0 && fact.tags.some(tag => allowed.has(tag))) {
+      score += 0.5; // prefer facts that fit this NPC's topics on ties
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = fact;
+    }
+  }
+  return { fact: best, score: bestScore };
+}
+
+function responderBestIntent(inputKeywords) {
+  let bestIntent = null;
+  let bestScore = 0;
+  for (const intent of Object.keys(responderIntentTriggers)) {
+    const score = responderOverlap(inputKeywords, responderIntentTriggers[intent]);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIntent = intent;
+    }
+  }
+  return { intent: bestIntent, score: bestScore };
+}
+
+function responderQuestLine(context, packet) {
+  if (context && typeof context.questLine === "string" && context.questLine.trim()) {
+    return context.questLine.trim();
+  }
+  const state = context && context.questState ? context.questState : "generic";
+  const authored = packet && packet.questContext ? packet.questContext.authoredLines : null;
+  if (authored && typeof authored[state] === "string") {
+    return authored[state];
+  }
+  return fallbackLineFor(state, context && context.npcName ? context.npcName : "");
+}
+
+function responderRoleLine(context) {
+  const sheet = context && context.npcName ? npcVoiceSheets[context.npcName] : null;
+  if (sheet && sheet.role) {
+    return sheet.role + ".";
+  }
+  return null;
+}
+
+// Picks an unvalidated candidate line from approved canon for the given input.
+function selectCanonResponse(input, context, packet) {
+  const inputKeywords = responderKeywords(input);
+  const biome = (context && context.biome) || (packet && packet.npc && packet.npc.biome) || "meadow";
+  const seed = input;
+  const { intent, score: intentScore } = responderBestIntent(responderTokens(input));
+  const { fact, score: factScore } = responderBestFact(inputKeywords, packet);
+  const hasQuest = !!(context && (context.questLine || (packet && packet.questContext)));
+
+  // 1) Direct quest/task question wins when a quest is in play.
+  if (intent === "quest" && intentScore >= 1 && hasQuest) {
+    return { text: responderQuestLine(context, packet), matched: "quest" };
+  }
+  // 2) A specific lore noun (spiders, Crownford, roads, dragons...) → public fact.
+  if (factScore >= 1) {
+    return { text: fact.text, matched: "lore:" + fact.id };
+  }
+  // 3) Otherwise route by intent into the right approved bark / role line.
+  if (intentScore >= 1) {
+    if (intent === "greeting") {
+      return { text: ambientLineFor({ npcName: context.npcName, biome, mood: "greeting", seed }), matched: "bark:greeting" };
+    }
+    if (intent === "rumor") {
+      return { text: ambientLineFor({ npcName: context.npcName, biome, mood: "rumor", seed }), matched: "bark:rumor" };
+    }
+    if (intent === "danger" || intent === "advice") {
+      return { text: ambientLineFor({ npcName: context.npcName, biome, mood: "warning", seed }), matched: "bark:warning" };
+    }
+    if (intent === "place") {
+      return { text: (packet && packet.world) || loreBible.world, matched: "world" };
+    }
+    if (intent === "self") {
+      const role = responderRoleLine(context);
+      if (role) {
+        return { text: role, matched: "role" };
+      }
+    }
+    if (intent === "quest" && hasQuest) {
+      return { text: responderQuestLine(context, packet), matched: "quest" };
+    }
+  }
+  // 4) Nothing confident: deterministic fallback.
+  return { text: null, matched: "fallback" };
+}
+
+// Main entry point. Returns a validated, lore-safe response record for a free
+// player utterance directed at an NPC. `context`: { npcName, questId,
+// questState, biome, questLine }.
+export function respondToPlayerInput(input, context = {}) {
+  const packet = buildLorePacket({
+    npcName: context.npcName,
+    questId: context.questId,
+    questState: context.questState,
+    extraTags: context.extraTags
+  });
+  const requested = typeof input === "string" ? input.trim() : "";
+
+  let candidate = null;
+  let source = "local";
+  let matched = "fallback";
+
+  // Optional future generator path: config-gated, inert by default.
+  if (assistedDialogueConfig.enableExternalGenerator && externalAssistedGenerator) {
+    try {
+      const generated = externalAssistedGenerator(requested, packet, context);
+      if (typeof generated === "string" && generated.trim()) {
+        candidate = generated;
+        source = "generator";
+        matched = "generator";
+      }
+    } catch (error) {
+      candidate = null; // any failure falls through to the local responder
+    }
+  }
+
+  if (candidate === null) {
+    const local = selectCanonResponse(requested, context, packet);
+    candidate = local.text;
+    matched = local.matched;
+  }
+
+  // Empty/no-match candidates resolve to the deterministic fallback line, which
+  // is itself validated for consistency.
+  const toValidate = candidate && candidate.trim() ? candidate : packet.fallbackLine;
+  const result = validateAssistedLine(toValidate, packet);
+  const usedFallback = matched === "fallback" || !candidate || !result.ok;
+  const delivered = result.line;
+
+  const record = logAssistedConversation({
+    npcName: context.npcName,
+    questId: context.questId,
+    questState: context.questState,
+    requested,
+    delivered,
+    usedFallback,
+    reasons: result.ok ? [] : result.reasons
+  });
+
+  return {
+    text: delivered,
+    usedFallback,
+    matched,
+    source,
+    reasons: record.reasons,
+    packetVersion: packet.packetVersion
+  };
+}
+
+// Suggested intent topics for the dialogue UI. Deterministic, lore-safe labels
+// the player can pick instead of typing. Each maps to a natural-language query
+// the responder already understands.
+export function suggestedTopicsFor(context = {}) {
+  const topics = [];
+  if (context && (context.questId || context.questLine)) {
+    topics.push({ label: "The task", query: "what is the task you need" });
+  } else {
+    topics.push({ label: "This place", query: "where are we, tell me about this place" });
+  }
+  topics.push({ label: "Dangers", query: "what dangers are nearby, is it safe" });
+  topics.push({ label: "Any rumors?", query: "any rumors or news you have heard" });
+  topics.push({ label: "Who are you?", query: "who are you" });
+  return topics.slice(0, 4);
+}
