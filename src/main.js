@@ -1487,7 +1487,7 @@ import {
     adobe: new THREE.MeshStandardMaterial({ color: 0xc69b67, map: createMaterialDetailTexture("sun-adobe", "plaster", 1.2, 1.2), roughness: 0.92 }),
     mountainPlaster: new THREE.MeshStandardMaterial({ color: 0x91948a, map: createMaterialDetailTexture("mountain-plaster", "plaster", 1.15, 1.15), roughness: 0.9 }),
     swampGround: new THREE.MeshStandardMaterial({ color: 0x314f3a, roughness: 0.98 }),
-    bogWater: new THREE.MeshStandardMaterial({ color: 0x254f49, roughness: 0.34, metalness: 0.02, transparent: true, opacity: 0.68 }),
+    bogWater: new THREE.MeshStandardMaterial({ color: 0x254f49, roughness: 0.34, metalness: 0.02, transparent: true, opacity: 0.68, depthWrite: false }),
     reed: new THREE.MeshStandardMaterial({ color: 0x607747, roughness: 0.94 }),
     willowLeaf: new THREE.MeshStandardMaterial({ color: 0x2d5d3f, roughness: 0.9 }),
     swampPlank: new THREE.MeshStandardMaterial({ color: 0x5b4932, map: createMaterialDetailTexture("swamp-plank", "wood", 1, 1.4), roughness: 0.95 }),
@@ -1507,7 +1507,7 @@ import {
     drakeBelly: new THREE.MeshStandardMaterial({ color: 0xc9b083, map: createMaterialDetailTexture("drake-belly", "leather", 1.1, 1.1), roughness: 0.82 }),
     path: new THREE.MeshStandardMaterial({ color: 0x8f774f, map: createMaterialDetailTexture("travel-road", "path", 2.4, 1.2), roughness: 0.98 }),
     sand: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("arena-sand", "sand", 1.6, 1.6), roughness: 0.99 }),
-    water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
+    water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72, depthWrite: false }),
     pine: new THREE.MeshStandardMaterial({ color: 0x214f35, roughness: 0.9 }),
     pineDeep: new THREE.MeshStandardMaterial({ color: 0x17402a, roughness: 0.92 }),
     pineSnow: new THREE.MeshStandardMaterial({ color: 0xdfe7ec, roughness: 0.82 }),
@@ -4781,6 +4781,13 @@ import {
     }
   }
 
+  const BIOME_PATCH_LIFT = 0.032;
+  const LAKE_SURFACE_LIFT = 0.084;
+  const ROAD_SURFACE_LIFT = 0.112;
+  const BIOME_PATCH_RENDER_ORDER = 1;
+  const LAKE_SURFACE_RENDER_ORDER = 3;
+  const ROAD_SURFACE_RENDER_ORDER = 4;
+
   function createRoadStripGeometry(fromX, fromZ, toX, toZ, width) {
     const dx = toX - fromX;
     const dz = toZ - fromZ;
@@ -4810,8 +4817,8 @@ import {
       const rx = cx - nx * width * 0.5;
       const rz = cz - nz * width * 0.5;
       positions.push(
-        lx, explorationTerrainHeight(lx, lz) + 0.06, lz,
-        rx, explorationTerrainHeight(rx, rz) + 0.06, rz
+        lx, explorationTerrainHeight(lx, lz) + ROAD_SURFACE_LIFT, lz,
+        rx, explorationTerrainHeight(rx, rz) + ROAD_SURFACE_LIFT, rz
       );
       uvs.push(0, t * totalLength / 5, 1, t * totalLength / 5);
       if (i < segments) {
@@ -4901,8 +4908,8 @@ import {
       const rx = point.x - normalX * edge;
       const rz = point.z - normalZ * edge;
       positions.push(
-        lx, explorationTerrainHeight(lx, lz) + 0.074, lz,
-        rx, explorationTerrainHeight(rx, rz) + 0.074, rz
+        lx, explorationTerrainHeight(lx, lz) + ROAD_SURFACE_LIFT, lz,
+        rx, explorationTerrainHeight(rx, rz) + ROAD_SURFACE_LIFT, rz
       );
       uvs.push(0, distance / 5, 1, distance / 5);
       if (i < points.length - 1) {
@@ -4919,7 +4926,7 @@ import {
   }
 
   function createRoadJunctionGeometry(x, z, radius) {
-    const positions = [x, explorationTerrainHeight(x, z) + 0.062, z];
+    const positions = [x, explorationTerrainHeight(x, z) + ROAD_SURFACE_LIFT, z];
     const uvs = [0.5, 0.5];
     const indices = [];
     const steps = 28;
@@ -4927,7 +4934,7 @@ import {
       const angle = (i / steps) * TAU;
       const px = x + Math.cos(angle) * radius;
       const pz = z + Math.sin(angle) * radius;
-      positions.push(px, explorationTerrainHeight(px, pz) + 0.064, pz);
+      positions.push(px, explorationTerrainHeight(px, pz) + ROAD_SURFACE_LIFT, pz);
       uvs.push(0.5 + Math.cos(angle) * 0.5, 0.5 + Math.sin(angle) * 0.5);
       if (i > 0) {
         indices.push(0, i + 1, i);
@@ -4943,6 +4950,7 @@ import {
 
   function addExplorationPath(group, fromX, fromZ, toX, toZ, width) {
     const path = new THREE.Mesh(createRoadStripGeometry(fromX, fromZ, toX, toZ, width), materials.path);
+    path.renderOrder = ROAD_SURFACE_RENDER_ORDER;
     path.receiveShadow = true;
     group.add(path);
     game.exploration.roads.push({ fromX, fromZ, toX, toZ, width });
@@ -4954,6 +4962,7 @@ import {
       return null;
     }
     const path = new THREE.Mesh(createRoadRibbonGeometry(points, width), materials.path);
+    path.renderOrder = ROAD_SURFACE_RENDER_ORDER;
     path.receiveShadow = true;
     group.add(path);
     for (let i = 0; i < points.length - 1; i += 1) {
@@ -4977,6 +4986,7 @@ import {
       return existing.mesh;
     }
     const junction = new THREE.Mesh(createRoadJunctionGeometry(x, z, radius), materials.path);
+    junction.renderOrder = ROAD_SURFACE_RENDER_ORDER;
     junction.receiveShadow = true;
     group.add(junction);
     game.exploration.roadJunctions.push({ x, z, radius, mesh: junction });
@@ -5649,8 +5659,6 @@ import {
     return texture;
   }
 
-  const BIOME_PATCH_LIFT = 0.09;
-
   function createBiomePatchGeometry(biome, seed) {
     const random = seededRandom(seed + "-patch-" + biome.id);
     const phaseA = random() * TAU;
@@ -5716,12 +5724,13 @@ import {
     const baseMaterial = biome.id === "desert" ? materials.desert : biome.id === "swamp" ? materials.swampGround : biome.id === "briar" ? materials.briarGround : materials.mountainGround;
     const material = baseMaterial.clone();
     material.map = createBiomeTexture(seed, biome.id);
+    material.depthWrite = false;
     material.polygonOffset = true;
-    material.polygonOffsetFactor = -2;
-    material.polygonOffsetUnits = -6;
+    material.polygonOffsetFactor = -0.35;
+    material.polygonOffsetUnits = -1;
     const patch = new THREE.Mesh(createBiomePatchGeometry(biome, seed), material);
     patch.position.set(biome.x, 0, biome.z);
-    patch.renderOrder = 2;
+    patch.renderOrder = BIOME_PATCH_RENDER_ORDER;
     patch.receiveShadow = true;
     group.add(patch);
   }
@@ -6330,9 +6339,10 @@ import {
 
   function addBogPool(group, x, z, rx, rz, random) {
     const pool = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 36), materials.bogWater.clone());
-    setExplorationLocalGroundPosition(pool, x, z, 0.046);
+    setExplorationLocalGroundPosition(pool, x, z, LAKE_SURFACE_LIFT);
     pool.scale.set(rx, 1, rz);
     pool.rotation.y = random() * TAU;
+    pool.renderOrder = LAKE_SURFACE_RENDER_ORDER;
     pool.receiveShadow = true;
     group.add(pool);
     for (let i = 0; i < 7; i += 1) {
@@ -6661,8 +6671,9 @@ import {
   function addExplorationLake(group, x, z, rx, rz, random) {
     registerExplorationFlatZone(x, z, Math.max(rx, rz) + 2.5, 6.5, null, 0.82);
     const lake = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 48), materials.water.clone());
-    setExplorationLocalGroundPosition(lake, x, z, 0.04);
+    setExplorationLocalGroundPosition(lake, x, z, LAKE_SURFACE_LIFT);
     lake.scale.set(rx, 1, rz);
+    lake.renderOrder = LAKE_SURFACE_RENDER_ORDER;
     lake.receiveShadow = true;
     group.add(lake);
     for (let i = 0; i < 14; i += 1) {
@@ -9488,8 +9499,9 @@ import {
       group.add(ribA, ribB);
     }
     const oasis = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.045, 42), materials.water.clone());
-    setExplorationLocalGroundPosition(oasis, biome.x - 22, biome.z + 18, 0.045);
+    setExplorationLocalGroundPosition(oasis, biome.x - 22, biome.z + 18, LAKE_SURFACE_LIFT);
     oasis.scale.set(6.5, 1, 3.4);
+    oasis.renderOrder = LAKE_SURFACE_RENDER_ORDER;
     oasis.receiveShadow = true;
     group.add(oasis);
     game.exploration.lakes.push({
