@@ -1302,6 +1302,36 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
           }
         }
       }
+    } else if (style === "skin") {
+      ctx.fillStyle = "#f0ddc8";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 16; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(150, 92, 58, 0.05)" : "rgba(255, 242, 224, 0.07)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 7 + random() * 16, 0, TAU);
+        ctx.fill();
+      }
+      for (let i = 0; i < 520; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(148, 94, 60, 0.07)" : "rgba(255, 240, 222, 0.08)";
+        ctx.beginPath();
+        ctx.arc(random() * 256, random() * 256, 0.5 + random() * 1.8, 0, TAU);
+        ctx.fill();
+      }
+    } else if (style === "linen") {
+      ctx.fillStyle = "#efe6d2";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let y = 0; y < 256; y += 5) {
+        ctx.fillStyle = y % 10 ? "rgba(255,255,255,0.1)" : "rgba(70,58,44,0.13)";
+        ctx.fillRect(0, y, 256, 2);
+      }
+      for (let x = 0; x < 256; x += 5) {
+        ctx.fillStyle = x % 10 ? "rgba(255,255,255,0.06)" : "rgba(70,58,44,0.09)";
+        ctx.fillRect(x, 0, 2, 256);
+      }
+      for (let i = 0; i < 70; i += 1) {
+        ctx.fillStyle = "rgba(58,47,35,0.07)";
+        ctx.fillRect(random() * 256, random() * 256, 2 + random() * 6, 1 + random() * 3);
+      }
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -1428,6 +1458,78 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     spiderBase: 1.32,
     briarBeastBase: 1.18
   };
+
+  // Shared grassland/meadow cottage materials. Gated to the default house
+  // style only (mountain/desert/swamp/briar keep their own palettes), and
+  // reused across every meadow house so material/texture count stays bounded.
+  const meadowHouse = {
+    wallCream: new THREE.MeshStandardMaterial({ color: 0xe7d9b4, map: createMaterialDetailTexture("cottage-cream", "plaster", 1.3, 1.3), roughness: 0.9 }),
+    wallOchre: new THREE.MeshStandardMaterial({ color: 0xd6ad74, map: createMaterialDetailTexture("cottage-ochre", "plaster", 1.3, 1.3), roughness: 0.9 }),
+    wallSage: new THREE.MeshStandardMaterial({ color: 0xbfc09c, map: createMaterialDetailTexture("cottage-sage", "plaster", 1.3, 1.3), roughness: 0.9 }),
+    wallRose: new THREE.MeshStandardMaterial({ color: 0xd7b3a2, map: createMaterialDetailTexture("cottage-rose", "plaster", 1.3, 1.3), roughness: 0.9 }),
+    timber: new THREE.MeshStandardMaterial({ color: 0x49321f, map: createMaterialDetailTexture("cottage-timber", "wood", 1, 1.6), roughness: 0.9 }),
+    thatch: new THREE.MeshStandardMaterial({ color: 0xb8924f, map: createMaterialDetailTexture("cottage-thatch", "thatch", 1.5, 1.5), roughness: 0.95 }),
+    tileRed: new THREE.MeshStandardMaterial({ color: 0x8a3b2f, map: createMaterialDetailTexture("cottage-tile-red", "roof", 1.4, 1.4), roughness: 0.86 }),
+    tileSlate: new THREE.MeshStandardMaterial({ color: 0x55615f, map: createMaterialDetailTexture("cottage-tile-slate", "roof", 1.4, 1.4), roughness: 0.86 }),
+    foundation: new THREE.MeshStandardMaterial({ color: 0x7c746a, map: createMaterialDetailTexture("cottage-foundation", "stone", 1.6, 0.8), roughness: 0.92 }),
+    planter: new THREE.MeshStandardMaterial({ color: 0x6a4a2c, map: createMaterialDetailTexture("cottage-planter", "wood", 1, 1.2), roughness: 0.92 }),
+    leaf: new THREE.MeshStandardMaterial({ color: 0x4f7a3c, roughness: 0.9 }),
+    bloomA: new THREE.MeshBasicMaterial({ color: 0xff6f8a }),
+    bloomB: new THREE.MeshBasicMaterial({ color: 0xffd23f }),
+    bloomC: new THREE.MeshBasicMaterial({ color: 0xd17ce0 })
+  };
+
+  const meadowHouseStyles = [
+    { wall: meadowHouse.wallCream, roof: meadowHouse.thatch, thatch: true, porch: true, bloom: meadowHouse.bloomA },
+    { wall: meadowHouse.wallOchre, roof: meadowHouse.tileRed, thatch: false, porch: false, bloom: meadowHouse.bloomB },
+    { wall: meadowHouse.wallSage, roof: meadowHouse.tileSlate, thatch: false, porch: true, bloom: meadowHouse.bloomC },
+    { wall: meadowHouse.wallRose, roof: meadowHouse.thatch, thatch: true, porch: false, bloom: meadowHouse.bloomA }
+  ];
+
+  // Shared friendly-NPC appearance palettes. Each entry is one material reused
+  // across every NPC, so individuality comes from deterministic seed picks
+  // rather than per-NPC textures.
+  function npcCloth(seed, color) {
+    return new THREE.MeshStandardMaterial({ color, map: createMaterialDetailTexture(seed, "linen", 1.1, 1.3), roughness: 0.84 });
+  }
+  function npcLeather(seed, color) {
+    return new THREE.MeshStandardMaterial({ color, map: createMaterialDetailTexture(seed, "leather", 1.1, 1.1), roughness: 0.88 });
+  }
+  const npcSkinPalette = [
+    new THREE.MeshStandardMaterial({ color: 0xe5b48d, map: createMaterialDetailTexture("npc-skin-light", "skin", 1, 1), roughness: 0.74 }),
+    new THREE.MeshStandardMaterial({ color: 0xc78f63, map: createMaterialDetailTexture("npc-skin-tan", "skin", 1, 1), roughness: 0.74 }),
+    new THREE.MeshStandardMaterial({ color: 0x9c6a42, map: createMaterialDetailTexture("npc-skin-warm", "skin", 1, 1), roughness: 0.74 }),
+    new THREE.MeshStandardMaterial({ color: 0x6f4a30, map: createMaterialDetailTexture("npc-skin-deep", "skin", 1, 1), roughness: 0.74 })
+  ];
+  const npcHairPalette = [
+    new THREE.MeshStandardMaterial({ color: 0x2a1d14, map: createMaterialDetailTexture("npc-hair-black", "hide", 1, 1.3), roughness: 0.92 }),
+    new THREE.MeshStandardMaterial({ color: 0x5a3a22, map: createMaterialDetailTexture("npc-hair-brown", "hide", 1, 1.3), roughness: 0.92 }),
+    new THREE.MeshStandardMaterial({ color: 0x8a4b2a, map: createMaterialDetailTexture("npc-hair-auburn", "hide", 1, 1.3), roughness: 0.92 }),
+    new THREE.MeshStandardMaterial({ color: 0xb9a06a, map: createMaterialDetailTexture("npc-hair-blond", "hide", 1, 1.3), roughness: 0.92 }),
+    new THREE.MeshStandardMaterial({ color: 0xc9c4bb, map: createMaterialDetailTexture("npc-hair-grey", "hide", 1, 1.3), roughness: 0.92 })
+  ];
+  const npcTrimPalette = [
+    new THREE.MeshStandardMaterial({ color: 0xb89a52, roughness: 0.6, metalness: 0.12 }),
+    new THREE.MeshStandardMaterial({ color: 0x9a4738, roughness: 0.7 }),
+    new THREE.MeshStandardMaterial({ color: 0x3f6f6a, roughness: 0.7 }),
+    new THREE.MeshStandardMaterial({ color: 0xcfc4ad, roughness: 0.7 })
+  ];
+  const npcGarmentPalettes = {
+    meadow: [npcCloth("npc-mead-1", 0x7d6cb0), npcCloth("npc-mead-2", 0x9a4a3e), npcCloth("npc-mead-3", 0x4f7a52), npcCloth("npc-mead-4", 0xc79a52), npcCloth("npc-mead-5", 0x4c6b8a)],
+    desert: [npcCloth("npc-des-1", 0xc79a5a), npcCloth("npc-des-2", 0xb87f4a), npcCloth("npc-des-3", 0xa8693f), npcCloth("npc-des-4", 0xd8b06a)],
+    mountain: [npcCloth("npc-mtn-1", 0x59707c), npcCloth("npc-mtn-2", 0x6c6f73), npcCloth("npc-mtn-3", 0x4a5a64), npcCloth("npc-mtn-4", 0x7a6b58)],
+    city: [npcCloth("npc-city-1", 0x3f5370), npcCloth("npc-city-2", 0x6a3550), npcCloth("npc-city-3", 0x44606f), npcCloth("npc-city-4", 0x6f5f86)],
+    swamp: [npcCloth("npc-swp-1", 0x3a5f4a), npcCloth("npc-swp-2", 0x4f6240), npcCloth("npc-swp-3", 0x5b5a3a), npcCloth("npc-swp-4", 0x37544f)],
+    briar: [npcCloth("npc-bri-1", 0x4a6235), npcCloth("npc-bri-2", 0x5f6b34), npcCloth("npc-bri-3", 0x6a5a30), npcCloth("npc-bri-4", 0x3f5a3e)]
+  };
+  const npcLegPalette = [
+    npcLeather("npc-leg-1", 0x4a3526),
+    npcLeather("npc-leg-2", 0x5a4a36),
+    npcLeather("npc-leg-3", 0x3a2c20),
+    npcLeather("npc-leg-4", 0x6a5640)
+  ];
+  const npcApronMaterial = npcLeather("npc-apron", 0x8a6a44);
+  const npcBootMaterial = npcLeather("npc-boot", 0x33241a);
 
   const game = {
     state: "menu",
@@ -3083,6 +3185,26 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return addShadow(mesh);
   }
 
+  // Triangular gable end (isoceles), base on local X spanning `width`, apex up
+  // at `height`, extruded thin along Z by `depth`. Geometry is cached/shared by
+  // dimension so repeated houses reuse one buffer.
+  function makeGable(width, height, depth, material, x, y, z) {
+    const geometry = cachedPrimitiveGeometry("gable", [width, height, depth], () => {
+      const halfW = width / 2;
+      const shape = new THREE.Shape();
+      shape.moveTo(-halfW, 0);
+      shape.lineTo(halfW, 0);
+      shape.lineTo(0, height);
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+      geo.translate(0, 0, -depth / 2);
+      return geo;
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x || 0, y || 0, z || 0);
+    return addShadow(mesh);
+  }
+
   function biomeTerrainInfluence(biome, localX, localZ) {
     if (!biome) {
       return 0;
@@ -4397,31 +4519,176 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     if (biome === "briar") {
       return addBriarHouse(group, x, z, scale, variant);
     }
+    return addMeadowHouse(group, x, z, scale, variant);
+  }
+
+  // Grassland/meadow cottage: stone-founded, half-timbered plaster walls, a
+  // pitched gabled roof with eaves + filled gables + ridge, a capped chimney,
+  // framed shuttered windows with flower boxes, and either a front porch or a
+  // side lean-to for footprint variety. Footprint (5.2 x 4.6) and the
+  // scale*3.4 collider match the previous box house so collision is unchanged.
+  function addMeadowHouse(group, x, z, scale, variant) {
+    const style = meadowHouseStyles[variant % meadowHouseStyles.length];
+    const wallMat = style.wall;
+    const roofMat = style.roof;
+    const timber = meadowHouse.timber;
     const house = new THREE.Group();
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
-    const floor = makeBox(5.2, 0.12, 4.6, materials.paleWood, 0, 0.06, 0);
-    const back = makeBox(5.2, 2.25, 0.24, materials.plaster, 0, 1.18, 2.18);
-    const left = makeBox(0.24, 2.25, 4.6, materials.plaster, -2.48, 1.18, 0);
-    const right = makeBox(0.24, 2.25, 4.6, materials.plaster, 2.48, 1.18, 0);
-    const frontLeft = makeBox(1.8, 2.25, 0.24, materials.plaster, -1.7, 1.18, -2.18);
-    const frontRight = makeBox(1.8, 2.25, 0.24, materials.plaster, 1.7, 1.18, -2.18);
-    const lintel = makeBox(1.25, 0.34, 0.26, materials.plaster, 0, 2.13, -2.18);
-    const roofA = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 3.18, -0.92);
-    const roofB = makeBox(6.05, 0.36, 3.0, materials.roof, 0, 3.18, 0.92);
-    roofA.rotation.x = -0.5;
-    roofB.rotation.x = 0.5;
-    const chimney = makeBox(0.44, 0.92, 0.44, materials.darkStone, 1.42, 3.44, 0.65);
-    const door = makeBox(0.94, 1.86, 0.08, materials.wood, 0, 0.98, -2.34);
-    const windowMat = materials.lightningCore.clone();
-    windowMat.color.setHex(0xffd889);
-    windowMat.opacity = 0.72;
-    const windowA = makeBox(0.62, 0.48, 0.07, windowMat, -1.4, 1.42, -2.35);
-    const windowB = makeBox(0.62, 0.48, 0.07, windowMat.clone(), 1.4, 1.42, -2.35);
+    const parts = [];
+
+    const glassMat = materials.lightningCore.clone();
+    glassMat.color.setHex(0xffd889);
+    glassMat.opacity = 0.72;
+
+    // Stone base course + interior floor.
+    parts.push(makeBox(5.46, 0.5, 4.86, meadowHouse.foundation, 0, 0.25, 0));
+    parts.push(makeBox(5.2, 0.12, 4.6, materials.paleWood, 0, 0.52, 0));
+
+    // Plaster shell. Front (-z) is split for the doorway.
+    parts.push(makeBox(5.2, 2.25, 0.24, wallMat, 0, 1.18, 2.18));
+    parts.push(makeBox(0.24, 2.25, 4.6, wallMat, -2.48, 1.18, 0));
+    parts.push(makeBox(0.24, 2.25, 4.6, wallMat, 2.48, 1.18, 0));
+    parts.push(makeBox(1.8, 2.25, 0.24, wallMat, -1.7, 1.18, -2.18));
+    parts.push(makeBox(1.8, 2.25, 0.24, wallMat, 1.7, 1.18, -2.18));
+    parts.push(makeBox(1.25, 0.34, 0.26, wallMat, 0, 2.13, -2.18));
+
+    // Half-timber framing over the plaster: sill, top plate, corner posts,
+    // a mid rail and a few diagonal braces.
+    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, -2.2));
+    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, 2.2));
+    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, 2.28, -2.18));
+    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, 2.28, 2.18));
+    parts.push(makeBox(0.16, 0.16, 4.62, timber, -2.5, 0.45, 0));
+    parts.push(makeBox(0.16, 0.16, 4.62, timber, 2.5, 0.45, 0));
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, -2.5, 2.28, 0));
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, 2.5, 2.28, 0));
+    for (const cx of [-2.5, 2.5]) {
+      for (const cz of [-2.18, 2.18]) {
+        parts.push(makeBox(0.2, 2.3, 0.2, timber, cx, 1.2, cz));
+      }
+    }
+    // Diagonal braces on the side walls (tilt in the Z-Y plane).
+    for (const cx of [-2.51, 2.51]) {
+      for (const sign of [-1, 1]) {
+        const brace = makeBox(0.14, 1.55, 0.14, timber, cx, 1.3, sign * 1.2);
+        brace.rotation.x = sign * 0.62;
+        parts.push(brace);
+      }
+    }
+    // Diagonal braces flanking the doorway (tilt in the X-Y plane).
+    for (const sign of [-1, 1]) {
+      const brace = makeBox(0.14, 1.4, 0.16, timber, sign * 1.7, 1.2, -2.2);
+      brace.rotation.z = sign * 0.6;
+      parts.push(brace);
+    }
+
+    // Pitched, gabled roof. Ridge runs along X; slopes face +/-Z with eaves.
+    const wallTop = 2.305;
+    const gableH = 1.15;
+    const ridgeY = wallTop + gableH;
+    const eaveZ = 2.7;
+    const roofAngle = Math.atan2(gableH, eaveZ);
+    const roofLen = Math.hypot(eaveZ, gableH) + 0.12;
+    const roofA = makeBox(5.9, 0.22, roofLen, roofMat, 0, wallTop + gableH / 2, -eaveZ / 2);
+    const roofB = makeBox(5.9, 0.22, roofLen, roofMat, 0, wallTop + gableH / 2, eaveZ / 2);
+    roofA.rotation.x = -roofAngle;
+    roofB.rotation.x = roofAngle;
+    parts.push(roofA, roofB);
+    // Filled gable ends (so you can't see into the roof from the sides).
+    const gableFront = makeGable(4.6, gableH, 0.22, wallMat, -2.48, wallTop, 0);
+    gableFront.rotation.y = Math.PI / 2;
+    const gableBack = makeGable(4.6, gableH, 0.22, wallMat, 2.48, wallTop, 0);
+    gableBack.rotation.y = Math.PI / 2;
+    parts.push(gableFront, gableBack);
+    // Ridge beam.
+    parts.push(makeBox(6.0, 0.16, 0.24, timber, 0, ridgeY + 0.02, 0));
+
+    // Capped chimney rising through the back slope.
+    parts.push(makeBox(0.5, 2.0, 0.5, materials.darkStone, 1.55, 2.6, 1.45));
+    parts.push(makeBox(0.64, 0.18, 0.64, materials.darkStone, 1.55, 3.62, 1.45));
+    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.42, 3.78, 1.45));
+    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.68, 3.78, 1.45));
+
+    // Doorway: framed plank door with a stone threshold.
+    parts.push(makeBox(0.94, 1.86, 0.1, materials.wood, 0, 0.98, -2.34));
+    parts.push(makeBox(0.16, 1.94, 0.14, timber, -0.55, 1.02, -2.36));
+    parts.push(makeBox(0.16, 1.94, 0.14, timber, 0.55, 1.02, -2.36));
+    parts.push(makeBox(1.26, 0.16, 0.14, timber, 0, 1.99, -2.36));
+    parts.push(makeBox(1.1, 0.12, 0.42, meadowHouse.foundation, 0, 0.08, -2.55));
+    parts.push(makeSphere(0.05, materials.iron, 0.28, 0.98, -2.42));
+
+    // Framed, shuttered windows with flower boxes. makeWindow builds a panel
+    // facing -Z that gets rotated/placed onto each wall.
+    const makeWindow = () => {
+      const win = new THREE.Group();
+      win.add(makeBox(0.58, 0.46, 0.05, glassMat, 0, 0, -0.02));
+      win.add(makeBox(0.74, 0.1, 0.1, timber, 0, 0.27, -0.04));
+      win.add(makeBox(0.74, 0.1, 0.1, timber, 0, -0.27, -0.04));
+      win.add(makeBox(0.1, 0.64, 0.1, timber, -0.36, 0, -0.04));
+      win.add(makeBox(0.1, 0.64, 0.1, timber, 0.36, 0, -0.04));
+      win.add(makeBox(0.06, 0.52, 0.06, timber, 0, 0, -0.05));
+      win.add(makeBox(0.6, 0.06, 0.06, timber, 0, 0, -0.05));
+      win.add(makeBox(0.8, 0.08, 0.2, timber, 0, -0.32, -0.08));
+      const shutterL = makeBox(0.3, 0.56, 0.05, wallMat, -0.52, 0, -0.08);
+      shutterL.rotation.y = 0.5;
+      const shutterR = makeBox(0.3, 0.56, 0.05, wallMat, 0.52, 0, -0.08);
+      shutterR.rotation.y = -0.5;
+      win.add(shutterL, shutterR);
+      return win;
+    };
+    const makePlanter = (px, pz, rotY) => {
+      const planter = new THREE.Group();
+      planter.add(makeBox(0.78, 0.18, 0.2, meadowHouse.planter, 0, 0, 0));
+      planter.add(makeBox(0.74, 0.12, 0.16, meadowHouse.leaf, 0, 0.12, 0));
+      for (let i = 0; i < 4; i += 1) {
+        const bloom = makeSphere(0.045, style.bloom, -0.27 + i * 0.18, 0.2, 0);
+        bloom.castShadow = false;
+        planter.add(bloom);
+      }
+      planter.position.set(px, 0.66, pz);
+      planter.rotation.y = rotY;
+      return planter;
+    };
+
+    const winA = makeWindow();
+    winA.position.set(-1.4, 1.45, -2.32);
+    const winB = makeWindow();
+    winB.position.set(1.4, 1.45, -2.32);
+    parts.push(winA, winB);
+    parts.push(makePlanter(-1.4, -2.62, 0), makePlanter(1.4, -2.62, 0));
+    const winSide = makeWindow();
+    winSide.position.set(2.5, 1.5, 0.45);
+    winSide.rotation.y = Math.PI / 2;
+    parts.push(winSide);
+
+    if (style.porch) {
+      parts.push(makeBox(0.13, 1.72, 0.13, timber, -0.66, 0.86, -2.96));
+      parts.push(makeBox(0.13, 1.72, 0.13, timber, 0.66, 0.86, -2.96));
+      const awning = makeBox(1.78, 0.12, 1.05, roofMat, 0, 1.84, -2.86);
+      awning.rotation.x = 0.46;
+      parts.push(awning);
+      parts.push(makeBox(1.78, 0.12, 0.12, timber, 0, 1.62, -3.06));
+    } else {
+      // Side lean-to woodshed (kept inside the house collider radius).
+      parts.push(makeBox(0.13, 1.3, 0.13, timber, 3.32, 0.65, -0.95));
+      parts.push(makeBox(0.13, 1.3, 0.13, timber, 3.32, 0.65, 1.05));
+      const shedRoof = makeBox(1.2, 0.12, 2.5, roofMat, 2.96, 1.55, 0.05);
+      shedRoof.rotation.z = -0.46;
+      parts.push(shedRoof);
+      for (let i = 0; i < 4; i += 1) {
+        const log = makeCylinder(0.08, 0.09, 0.9, 7, materials.wood, 2.95, 0.18 + (i % 2) * 0.16, -0.55 + Math.floor(i / 2) * 0.34);
+        log.rotation.x = Math.PI / 2;
+        parts.push(log);
+      }
+    }
+
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
     }
-    house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, chimney, door, windowA, windowB);
+    for (const part of parts) {
+      house.add(part);
+    }
     group.add(house);
     addExplorationCollider(x, z, scale * 3.4, "structure");
     return house;
@@ -4720,48 +4987,144 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     });
   }
 
+  // Deterministic per-NPC appearance so a crowd reads as individuals rather
+  // than clones. Everything picks from the shared palettes (no per-NPC
+  // textures) and only body girth (x/z scale) varies on the geometry, so the
+  // cached primitive buffers stay shared across the whole population.
+  function npcAppearance(name, biome) {
+    const rand = seededRandom("npc-look::" + name + "::" + biome);
+    const pick = arr => arr[Math.floor(rand() * arr.length)];
+    const garments = npcGarmentPalettes[biome] || npcGarmentPalettes.meadow;
+    const headRoll = rand();
+    const headwear = headRoll > 0.8 ? "hat" : headRoll > 0.6 ? "hood" : "none";
+    const hairStyle = headwear === "none" ? pick(["short", "long", "bun", "short", "bald"]) : "short";
+    return {
+      garment: pick(garments),
+      leg: pick(npcLegPalette),
+      skin: pick(npcSkinPalette),
+      hair: pick(npcHairPalette),
+      trim: pick(npcTrimPalette),
+      girth: 0.9 + rand() * 0.28,
+      headwear,
+      hairStyle,
+      beard: rand() > 0.6,
+      apron: rand() > 0.62
+    };
+  }
+
   function createFriendlyNpc(x, z, random, homeRadius = 5.5, name = "Villager", questId = null, biome = "meadow") {
     const group = new THREE.Group();
     group.position.set(x, explorationGroundWorldY(x, z), z);
     group.scale.setScalar(modelScale.npc);
-    const cloth = materials.npcCloth.clone();
-    if (biome === "desert") {
-      cloth.color.setHex(0xb8894f);
-    } else if (biome === "mountain") {
-      cloth.color.setHex(0x596b77);
-    } else if (biome === "city") {
-      cloth.color.setHex(0x3f5370);
-    } else if (biome === "swamp") {
-      cloth.color.setHex(0x365f4a);
-    } else if (biome === "briar") {
-      cloth.color.setHex(0x486235);
+
+    const look = npcAppearance(name, biome);
+    const garment = look.garment;
+    const skin = look.skin;
+    const trim = look.trim;
+    // Body girth varies per NPC via the frame's x/z scale; geometry stays shared.
+    const frame = new THREE.Group();
+    frame.scale.set(look.girth, 1, look.girth);
+    group.add(frame);
+
+    // Legs as hip-pivoted groups (walk swing animates rotation.x).
+    const makeLeg = side => {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.12, 0.62, 0);
+      const thigh = makeBox(0.15, 0.52, 0.17, look.leg, 0, -0.28, 0);
+      const boot = makeBox(0.18, 0.15, 0.24, npcBootMaterial, 0, -0.58, -0.03);
+      leg.add(thigh, boot);
+      frame.add(leg);
+      return leg;
+    };
+    const leftLeg = makeLeg(-1);
+    const rightLeg = makeLeg(1);
+
+    // Torso, hips, flared tunic hem, belt, yoke.
+    const hips = makeCylinder(0.2, 0.24, 0.28, 12, garment, 0, 0.66, 0);
+    const skirt = makeCylinder(0.24, 0.31, 0.44, 12, garment, 0, 0.62, 0);
+    const torso = makeCylinder(0.19, 0.25, 0.58, 12, garment, 0, 1.02, 0);
+    const belt = makeCylinder(0.255, 0.27, 0.1, 12, materials.darkLeather, 0, 0.8, 0);
+    const buckle = makeBox(0.1, 0.08, 0.05, trim, 0, 0.8, -0.27);
+    const yoke = makeCylinder(0.2, 0.23, 0.14, 12, garment, 0, 1.3, 0);
+    frame.add(hips, skirt, torso, belt, buckle, yoke);
+    if (look.apron) {
+      frame.add(makeBox(0.34, 0.56, 0.06, npcApronMaterial, 0, 0.72, -0.23));
     }
+
+    // Arms as shoulder-pivoted groups (heal gesture animates rotation.z).
+    const makeArm = side => {
+      const arm = new THREE.Group();
+      arm.position.set(side * 0.26, 1.28, 0);
+      const upper = makeBox(0.11, 0.5, 0.12, garment, 0, -0.25, 0);
+      const cuff = makeBox(0.12, 0.08, 0.13, trim, 0, -0.46, 0);
+      const hand = makeSphere(0.07, skin, 0, -0.54, 0);
+      arm.add(upper, cuff, hand);
+      frame.add(arm);
+      return arm;
+    };
+    const leftArm = makeArm(-1);
+    const rightArm = makeArm(1);
+
+    // Head, face, ears.
+    const neck = makeCylinder(0.07, 0.08, 0.12, 8, skin, 0, 1.41, 0);
+    const head = makeSphere(0.17, skin, 0, 1.55, 0);
+    const earL = makeSphere(0.045, skin, -0.165, 1.55, 0.01);
+    const earR = makeSphere(0.045, skin, 0.165, 1.55, 0.01);
+    const eyeL = makeSphere(0.028, materials.charcoal, -0.07, 1.57, -0.15);
+    const eyeR = makeSphere(0.028, materials.charcoal, 0.07, 1.57, -0.15);
+    const browL = makeBox(0.07, 0.022, 0.03, look.hair, -0.07, 1.62, -0.155);
+    const browR = makeBox(0.07, 0.022, 0.03, look.hair, 0.07, 1.62, -0.155);
+    const nose = makeBox(0.05, 0.07, 0.06, skin, 0, 1.54, -0.18);
+    frame.add(neck, head, earL, earR, eyeL, eyeR, browL, browR, nose);
+    eyeL.castShadow = false;
+    eyeR.castShadow = false;
+
+    // Hair / beard.
+    if (look.hairStyle !== "bald" || look.headwear !== "none") {
+      const cap = makeSphere(0.185, look.hair, 0, 1.6, 0.02);
+      cap.scale.set(1.04, 0.82, 1.04);
+      frame.add(cap);
+    }
+    if (look.hairStyle === "long") {
+      frame.add(makeBox(0.3, 0.34, 0.13, look.hair, 0, 1.42, 0.14));
+    } else if (look.hairStyle === "bun") {
+      frame.add(makeSphere(0.075, look.hair, 0, 1.76, 0.07));
+    }
+    if (look.beard) {
+      const beard = makeBox(0.24, 0.18, 0.11, look.hair, 0, 1.43, -0.12);
+      frame.add(beard);
+    }
+
+    // Headwear.
     const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : biome === "briar" ? materials.mossRoof : materials.paleWood;
-    const body = makeCylinder(0.21, 0.26, 0.76, 12, cloth, 0, 0.76, 0);
-    const head = makeSphere(0.17, materials.skin, 0, 1.28, 0);
-    const hood = makeCone(0.23, 0.31, 12, hoodMat, 0, 1.49, 0);
-    const leftLeg = makeBox(0.11, 0.4, 0.13, materials.darkLeather, -0.1, 0.21, 0);
-    const rightLeg = makeBox(0.11, 0.4, 0.13, materials.darkLeather, 0.1, 0.21, 0);
-    const leftArm = makeBox(0.09, 0.48, 0.09, materials.skin, -0.25, 0.82, 0);
-    const rightArm = makeBox(0.09, 0.48, 0.09, materials.skin, 0.25, 0.82, 0);
-    if (biome === "desert") {
-      const scarf = makeCylinder(0.19, 0.22, 0.12, 12, materials.dryBrush, 0, 1.18, 0);
-      group.add(scarf);
-    } else if (biome === "city") {
-      const collar = makeCylinder(0.2, 0.24, 0.1, 12, materials.gold, 0, 1.18, 0);
-      group.add(collar);
-    } else if (biome === "swamp") {
-      const reedWrap = makeCylinder(0.19, 0.22, 0.1, 12, materials.reed, 0, 1.18, 0);
-      const satchel = makeBox(0.18, 0.24, 0.08, materials.darkLeather, -0.25, 0.78, -0.2);
-      group.add(reedWrap, satchel);
-    } else if (biome === "briar") {
-      const mossWrap = makeCylinder(0.19, 0.22, 0.1, 12, materials.mossRoof, 0, 1.18, 0);
-      const woodToken = makeBox(0.13, 0.18, 0.05, materials.rootwood, 0.24, 0.8, -0.2);
-      group.add(mossWrap, woodToken);
+    if (look.headwear === "hood") {
+      const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.68, 0.02);
+      const cowl = makeCylinder(0.22, 0.25, 0.18, 12, hoodMat, 0, 1.46, 0.04);
+      frame.add(hood, cowl);
+    } else if (look.headwear === "hat") {
+      const brim = makeCylinder(0.27, 0.27, 0.05, 14, materials.leather, 0, 1.72, 0);
+      const crown = makeCone(0.17, 0.24, 12, look.garment, 0, 1.86, 0);
+      const band = makeCylinder(0.155, 0.16, 0.06, 12, trim, 0, 1.76, 0);
+      frame.add(brim, crown, band);
     }
+
+    // Biome flavor accessories (retained from the original model).
+    if (biome === "desert") {
+      frame.add(makeCylinder(0.21, 0.24, 0.13, 12, materials.dryBrush, 0, 1.32, 0));
+    } else if (biome === "city") {
+      frame.add(makeCylinder(0.21, 0.25, 0.1, 12, materials.gold, 0, 1.32, 0));
+    } else if (biome === "swamp") {
+      frame.add(makeCylinder(0.21, 0.24, 0.1, 12, materials.reed, 0, 1.32, 0));
+      frame.add(makeBox(0.2, 0.26, 0.09, materials.darkLeather, -0.26, 0.86, -0.18));
+    } else if (biome === "briar") {
+      frame.add(makeCylinder(0.21, 0.24, 0.1, 12, materials.mossRoof, 0, 1.32, 0));
+      frame.add(makeBox(0.14, 0.19, 0.05, materials.rootwood, 0.26, 0.88, -0.18));
+    }
+
     const questMarker = makeSphere(0.11, materials.fullPotionLiquid.clone(), 0, 2.16, 0);
+    questMarker.castShadow = false;
     questMarker.visible = !!questId;
-    group.add(body, head, hood, leftLeg, rightLeg, leftArm, rightArm, questMarker);
+    group.add(questMarker);
     scene.add(group);
     return {
       group,
@@ -4772,6 +5135,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       rightLeg,
       leftArm,
       rightArm,
+      head,
       home: new THREE.Vector3(x, explorationGroundWorldY(x, z), z),
       target: new THREE.Vector3(x, explorationGroundWorldY(x, z), z),
       homeRadius,
