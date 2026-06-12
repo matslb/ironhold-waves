@@ -1,8 +1,8 @@
 export const knightBashGuardCost = 30;
-export const wizardLightningManaCost = 42;
-export const wizardBurstManaCost = 32;
-export const rangerArrowFocusCost = 16;
-export const rangerPierceFocusCost = 34;
+export const wizardLightningManaCost = 46;
+export const wizardBurstManaCost = 36;
+export const rangerArrowFocusCost = 18;
+export const rangerPierceFocusCost = 38;
 export const rangerRollFocusCost = 22;
 export const progressStorageKey = "ironholdProgressV2";
 
@@ -106,8 +106,8 @@ export const equipmentDefs = {
     // Sidegrade vs Ash Bow: harder-hitting, costlier arrows.
     tuning: {
       arrowDamageBonus: 5,
-      arrowFocusCost: 18,
-      pierceDamageMin: 44,
+      arrowFocusCost: 21,
+      pierceDamageMin: 38,
       kitManaBonus: 8,
       kitMoveSpeedMul: 0.97
     }
@@ -119,7 +119,7 @@ export const equipmentDefs = {
     tuning: {
       arrowDamageBonus: 2,
       arrowLife: 1.75,
-      pierceFocusCost: 30,
+      pierceFocusCost: 34,
       rollFocusCost: 20,
       kitManaRegenMul: 1.07
     }
@@ -132,9 +132,9 @@ export const equipmentDefs = {
     // casts and much weaker projectile homing.
     tuning: {
       lightningDamageBonus: 5,
-      lightningManaCost: 50,
+      lightningManaCost: 54,
       lightningTurnRate: 0.55,
-      burstDamageMin: 28,
+      burstDamageMin: 25,
       kitManaBonus: 10,
       kitMoveSpeedMul: 0.97
     }
@@ -146,8 +146,8 @@ export const perkDefs = {
     name: "Crownford Drill",
     tuning: {
       bashGuardCost: 25,
-      burstManaCost: 28,
-      pierceFocusCost: 31,
+      burstManaCost: 32,
+      pierceFocusCost: 35,
       partingFocusCost: 22
     }
   },
@@ -155,7 +155,7 @@ export const perkDefs = {
     name: "Briarfall Pathcraft",
     tuning: {
       bashGuardCost: 27,
-      burstManaCost: 29,
+      burstManaCost: 33,
       rollFocusCost: 20
     }
   }
@@ -174,7 +174,7 @@ export const defaultCombatTuning = {
   bashKnockback: 1.16,
   bashVelocity: 6.4,
   lightningManaCost: wizardLightningManaCost,
-  lightningDamageMin: 28,
+  lightningDamageMin: 25,
   lightningDamageSpread: 6,
   lightningDamageBonus: 0,
   lightningTurnRate: 0.7,
@@ -184,13 +184,13 @@ export const defaultCombatTuning = {
   burstDamageMin: 24,
   burstDamageSpread: 6,
   arrowFocusCost: rangerArrowFocusCost,
-  arrowDamageMin: 18,
+  arrowDamageMin: 14,
   arrowDamageSpread: 6,
   arrowDamageBonus: 0,
   arrowSpeed: 26,
   arrowLife: 1.5,
   pierceFocusCost: rangerPierceFocusCost,
-  pierceDamageMin: 38,
+  pierceDamageMin: 32,
   pierceDamageSpread: 8,
   rollFocusCost: rangerRollFocusCost,
   // Level 5-9 kit expansion. Utility slot (F key): resolve / frostbind / parting.
@@ -209,7 +209,7 @@ export const defaultCombatTuning = {
   frostbindDamageMin: 12,
   frostbindDamageSpread: 4,
   frostbindStun: 1.5,
-  stormcrownManaCost: 56,
+  stormcrownManaCost: 62,
   stormcrownCooldown: 9,
   stormcrownRadius: 5.2,
   stormcrownDamageMin: 36,
@@ -218,9 +218,9 @@ export const defaultCombatTuning = {
   partingCooldown: 5,
   partingDamageMin: 14,
   partingDamageSpread: 4,
-  heartseekerFocusCost: 40,
+  heartseekerFocusCost: 44,
   heartseekerCooldown: 4,
-  heartseekerDamageMin: 48,
+  heartseekerDamageMin: 44,
   heartseekerDamageSpread: 12,
   // Kit stat identity defaults (overridden per kit in equipmentDefs).
   kitHealthBonus: 0,
