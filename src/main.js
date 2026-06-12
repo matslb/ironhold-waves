@@ -1261,6 +1261,45 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         ctx.arc(random() * 256, random() * 256, 1 + random() * 1.6, 0, TAU);
         ctx.fill();
       }
+    } else if (style === "hide") {
+      ctx.fillStyle = "#ecdcc2";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 30; i += 1) {
+        ctx.fillStyle = random() > 0.5 ? "rgba(118, 78, 44, 0.08)" : "rgba(64, 40, 24, 0.07)";
+        ctx.beginPath();
+        ctx.ellipse(random() * 256, random() * 256, 12 + random() * 24, 8 + random() * 15, random() * Math.PI, 0, TAU);
+        ctx.fill();
+      }
+      for (let i = 0; i < 760; i += 1) {
+        ctx.strokeStyle = random() > 0.5 ? "rgba(92, 58, 32, 0.1)" : "rgba(255, 240, 212, 0.1)";
+        ctx.lineWidth = 0.9;
+        const x = random() * 256;
+        const y = random() * 256;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + 4 + random() * 7, y + (random() - 0.5) * 3.4);
+        ctx.stroke();
+      }
+    } else if (style === "scales") {
+      ctx.fillStyle = "#e7ebe2";
+      ctx.fillRect(0, 0, 256, 256);
+      const scaleSize = 22;
+      for (let row = 0; row < 14; row += 1) {
+        const offset = row % 2 ? scaleSize / 2 : 0;
+        for (let x = -scaleSize; x <= 256 + scaleSize; x += scaleSize) {
+          ctx.strokeStyle = "rgba(36, 58, 52, 0.26)";
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(x + offset, row * (scaleSize * 0.78), scaleSize * 0.55, 0.15, Math.PI - 0.15);
+          ctx.stroke();
+          if (random() > 0.62) {
+            ctx.fillStyle = random() > 0.5 ? "rgba(255, 255, 255, 0.08)" : "rgba(30, 52, 48, 0.08)";
+            ctx.beginPath();
+            ctx.arc(x + offset, row * (scaleSize * 0.78) - scaleSize * 0.2, scaleSize * 0.34, 0, TAU);
+            ctx.fill();
+          }
+        }
+      }
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -1347,9 +1386,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     cityWall: new THREE.MeshStandardMaterial({ color: 0xb8b7aa, map: createMaterialDetailTexture("crownford-stone", "stone", 1.5, 1.5), roughness: 0.88 }),
     cityRoof: new THREE.MeshStandardMaterial({ color: 0x435260, map: createMaterialDetailTexture("crownford-slate", "roof", 1.4, 1.4), roughness: 0.86 }),
     stainedGlass: new THREE.MeshBasicMaterial({ color: 0x7ae8ff, transparent: true, opacity: 0.72 }),
-    horseCoat: new THREE.MeshStandardMaterial({ color: 0x7b4a2a, roughness: 0.86 }),
-    horseMane: new THREE.MeshStandardMaterial({ color: 0x2f1b12, roughness: 0.9 }),
-    saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, roughness: 0.88 }),
+    horseCoat: new THREE.MeshStandardMaterial({ color: 0x7b4a2a, map: createMaterialDetailTexture("horse-hide", "hide", 1.35, 1.35), roughness: 0.86 }),
+    horseMane: new THREE.MeshStandardMaterial({ color: 0x2f1b12, map: createMaterialDetailTexture("horse-mane", "hide", 1, 1.6), roughness: 0.92 }),
+    horseSock: new THREE.MeshStandardMaterial({ color: 0x4a2d1a, map: createMaterialDetailTexture("horse-sock", "hide", 1, 1), roughness: 0.88 }),
+    saddle: new THREE.MeshStandardMaterial({ color: 0x49301f, map: createMaterialDetailTexture("saddle-leather", "leather", 1.1, 1.1), roughness: 0.88 }),
+    drakeScale: new THREE.MeshStandardMaterial({ color: 0x4d8b86, map: createMaterialDetailTexture("drake-scale", "scales", 1.2, 1.2), roughness: 0.7, metalness: 0.06 }),
+    drakeBelly: new THREE.MeshStandardMaterial({ color: 0xc9b083, map: createMaterialDetailTexture("drake-belly", "leather", 1.1, 1.1), roughness: 0.82 }),
     path: new THREE.MeshStandardMaterial({ color: 0x8f774f, map: createMaterialDetailTexture("travel-road", "path", 2.4, 1.2), roughness: 0.98 }),
     sand: new THREE.MeshStandardMaterial({ color: 0xb99158, map: createMaterialDetailTexture("arena-sand", "sand", 1.6, 1.6), roughness: 0.99 }),
     water: new THREE.MeshStandardMaterial({ color: 0x3f9ec5, roughness: 0.26, metalness: 0.02, transparent: true, opacity: 0.72 }),
@@ -1919,12 +1961,34 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     return currentMountTackId() === ROADWARDEN_TACK_ID;
   }
 
+  const mountDisplayNames = { horse: "Horse", drake: "Skyhatched Drake" };
+
+  function currentMountId() {
+    const exploration = progression && progression.exploration;
+    return exploration && exploration.activeMountId === "drake" && exploration.drakeUnlocked ? "drake" : "horse";
+  }
+
+  function ownedMountIds() {
+    const exploration = progression && progression.exploration;
+    const owned = [];
+    if (exploration && exploration.horseUnlocked) {
+      owned.push("horse");
+    }
+    if (exploration && exploration.drakeUnlocked) {
+      owned.push("drake");
+    }
+    return owned;
+  }
+
   function mountedMoveSpeed() {
+    if (currentMountId() === "drake") {
+      return 11.6;
+    }
     return hasRoadwardenTack() ? 11.2 : 10.4;
   }
 
   function mountedCollisionRadius() {
-    return hasRoadwardenTack() ? 1.02 : 1.08;
+    return currentMountId() === "drake" ? 1.08 : hasRoadwardenTack() ? 1.02 : 1.08;
   }
 
   function sanitizedCombatProfile(character, weaponId, perks = []) {
@@ -2074,6 +2138,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         discovered: [],
         completed: false,
         horseUnlocked: false,
+        drakeUnlocked: false,
+        activeMountId: "horse",
         mountTackId: "",
         boons: { health: 0, guard: 0, mana: 0 },
         potionCooldownBonus: 0,
@@ -2112,6 +2178,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       : [];
     base.exploration.completed = !!sourceExploration.completed;
     base.exploration.horseUnlocked = !!sourceExploration.horseUnlocked;
+    base.exploration.drakeUnlocked = !!sourceExploration.drakeUnlocked;
+    base.exploration.activeMountId = sourceExploration.activeMountId === "drake" ? "drake" : "horse";
     base.exploration.mountTackId = sourceExploration.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
     const sourceBoons = sourceExploration.boons && typeof sourceExploration.boons === "object" ? sourceExploration.boons : {};
     base.exploration.boons.health = Math.max(0, Math.floor(numberOrZero(sourceBoons.health)));
@@ -2376,7 +2444,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }
       exploration.discovered = Array.from(game.exploration.discovered || []);
       exploration.completed = !!game.exploration.completed;
-      exploration.horseUnlocked = exploration.horseUnlocked || !!game.exploration.horse;
+      exploration.horseUnlocked = exploration.horseUnlocked || (!!game.exploration.horse && game.exploration.horse.mountId !== "drake");
     }
     if (game.mode === "exploration" && game.state === "playing" && !localPlayerInArenaActivity()) {
       const local = explorationLocalPosition(player.position, new THREE.Vector3());
@@ -2420,6 +2488,9 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       }
       if (quest.id === "horse" && quest.state === "done") {
         saved.horseUnlocked = true;
+      }
+      if (quest.id === "skyDrake" && quest.state === "done") {
+        saved.drakeUnlocked = true;
       }
     }
     game.exploration.discovered = new Set(Array.isArray(saved.discovered) ? saved.discovered : []);
@@ -4879,59 +4950,200 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
 
   function createHorseModel(tackId = "") {
     const group = new THREE.Group();
-    const body = makeBox(0.86, 0.62, 1.62, materials.horseCoat, 0, 1.02, 0);
-    body.scale.set(1.05, 1, 1.08);
-    const chest = makeBox(0.76, 0.64, 0.72, materials.horseCoat.clone(), 0, 1.08, -0.58);
-    const neck = makeCylinder(0.16, 0.24, 0.78, 10, materials.horseCoat.clone(), 0, 1.38, -0.86);
-    neck.rotation.x = -0.66;
-    const head = makeBox(0.42, 0.36, 0.58, materials.horseCoat.clone(), 0, 1.58, -1.25);
-    head.rotation.x = -0.12;
-    const muzzle = makeBox(0.34, 0.22, 0.28, materials.paleWood, 0, 1.48, -1.55);
-    const leftEar = makeCone(0.07, 0.22, 8, materials.horseCoat.clone(), -0.13, 1.82, -1.28);
-    const rightEar = makeCone(0.07, 0.22, 8, materials.horseCoat.clone(), 0.13, 1.82, -1.28);
-    const leftEye = makeSphere(0.032, materials.emberEye, -0.16, 1.63, -1.52);
-    const rightEye = makeSphere(0.032, materials.emberEye.clone(), 0.16, 1.63, -1.52);
-    const mane = makeBox(0.12, 0.46, 0.78, materials.horseMane, 0, 1.5, -0.78);
-    mane.rotation.x = -0.36;
-    const saddle = makeBox(0.74, 0.18, 0.74, materials.saddle.clone(), 0, 1.38, 0.02);
-    const saddleBlanket = makeBox(0.9, 0.055, 0.96, materials.cityBannerRed.clone(), 0, 1.31, 0.05);
-    const saddleTrim = makeBox(0.82, 0.055, 0.82, materials.gold, 0, 1.5, 0.02);
+    // Rounded barrel instead of a single box: cylinder body plus shaped
+    // chest and hindquarters so the silhouette reads as a horse from the side.
+    const body = makeCylinder(0.4, 0.43, 1.32, 14, materials.horseCoat, 0, 1.04, 0.06);
+    body.rotation.x = Math.PI / 2;
+    body.scale.set(1.04, 1, 0.92);
+    const chest = makeSphere(0.4, materials.horseCoat.clone(), 0, 1.08, -0.62);
+    chest.scale.set(0.95, 0.98, 1.05);
+    const rump = makeSphere(0.41, materials.horseCoat.clone(), 0, 1.06, 0.68);
+    rump.scale.set(1.0, 0.96, 1.05);
+    const neck = makeCylinder(0.13, 0.23, 0.92, 12, materials.horseCoat.clone(), 0, 1.45, -0.88);
+    neck.rotation.x = -0.72;
+    const head = makeBox(0.26, 0.3, 0.46, materials.horseCoat.clone(), 0, 1.74, -1.28);
+    head.rotation.x = 0.22;
+    const muzzle = makeBox(0.2, 0.22, 0.34, materials.horseCoat.clone(), 0, 1.62, -1.6);
+    muzzle.rotation.x = 0.22;
+    const nose = makeBox(0.18, 0.14, 0.1, materials.horseSock, 0, 1.57, -1.74);
+    const blaze = makeBox(0.07, 0.2, 0.025, materials.bone, 0, 1.74, -1.51);
+    blaze.rotation.x = 0.32;
+    const jaw = makeBox(0.2, 0.16, 0.24, materials.horseCoat.clone(), 0, 1.58, -1.32);
+    const leftEar = makeCone(0.055, 0.2, 7, materials.horseCoat.clone(), -0.11, 1.96, -1.18);
+    const rightEar = makeCone(0.055, 0.2, 7, materials.horseCoat.clone(), 0.11, 1.96, -1.18);
+    leftEar.rotation.x = -0.25;
+    rightEar.rotation.x = -0.25;
+    const leftEye = makeSphere(0.035, materials.emberEye, -0.13, 1.79, -1.4);
+    const rightEye = makeSphere(0.035, materials.emberEye.clone(), 0.13, 1.79, -1.4);
+    // Mane: crest segments following the neck line plus a forelock.
+    const maneSegments = [
+      [0, 1.93, -1.07, -0.7, 0.3],
+      [0, 1.78, -0.86, -0.72, 0.34],
+      [0, 1.6, -0.66, -0.74, 0.36],
+      [0, 1.42, -0.47, -0.78, 0.34]
+    ].map(([x, y, z, tilt, height]) => {
+      const tuft = makeBox(0.1, height, 0.16, materials.horseMane, x, y, z);
+      tuft.rotation.x = tilt;
+      return tuft;
+    });
+    const forelock = makeBox(0.09, 0.2, 0.1, materials.horseMane, 0, 1.92, -1.32);
+    forelock.rotation.x = 0.5;
+    const saddle = makeBox(0.6, 0.13, 0.66, materials.saddle.clone(), 0, 1.43, 0.02);
+    const saddleRoll = makeCylinder(0.075, 0.075, 0.52, 8, materials.saddle.clone(), 0, 1.5, 0.32);
+    saddleRoll.rotation.z = Math.PI / 2;
+    const pommel = makeCylinder(0.06, 0.06, 0.48, 8, materials.saddle.clone(), 0, 1.5, -0.26);
+    pommel.rotation.z = Math.PI / 2;
+    const girth = makeBox(0.95, 0.07, 0.1, materials.darkLeather, 0, 1.02, 0.02);
+    girth.rotation.z = Math.PI / 2;
+    const saddleBlanket = makeBox(0.84, 0.045, 0.9, materials.cityBannerRed.clone(), 0, 1.36, 0.04);
+    const saddleTrim = makeBox(0.68, 0.05, 0.74, materials.gold, 0, 1.51, 0.02);
     const frontStrap = makeBox(0.08, 0.62, 0.12, materials.darkLeather, 0, 1.08, -0.55);
     frontStrap.rotation.z = Math.PI / 2;
     const rearStrap = makeBox(0.08, 0.58, 0.12, materials.darkLeather, 0, 1.06, 0.48);
     rearStrap.rotation.z = Math.PI / 2;
-    const leftTrim = makeBox(0.045, 0.13, 0.92, materials.gold, -0.47, 1.37, 0.04);
-    const rightTrim = makeBox(0.045, 0.13, 0.92, materials.gold, 0.47, 1.37, 0.04);
-    const bridle = makeBox(0.5, 0.045, 0.08, materials.gold, 0, 1.58, -1.52);
-    const tail = makeCylinder(0.06, 0.1, 0.78, 8, materials.horseMane, 0, 0.92, 0.95);
-    tail.rotation.x = 0.92;
+    const leftTrim = makeBox(0.045, 0.13, 0.86, materials.gold, -0.44, 1.41, 0.04);
+    const rightTrim = makeBox(0.045, 0.13, 0.86, materials.gold, 0.44, 1.41, 0.04);
+    const bridle = makeBox(0.3, 0.04, 0.36, materials.gold, 0, 1.66, -1.52);
+    bridle.rotation.x = 0.22;
+    // Tail: arched root with a longer falling skirt.
+    const tail = new THREE.Group();
+    tail.position.set(0, 1.28, 0.98);
+    const tailRoot = makeCylinder(0.05, 0.09, 0.36, 8, materials.horseMane, 0, -0.12, 0.08);
+    tailRoot.rotation.x = 0.78;
+    const tailSkirt = makeCylinder(0.085, 0.035, 0.62, 8, materials.horseMane, 0, -0.5, 0.26);
+    tailSkirt.rotation.x = 0.18;
+    tail.add(tailRoot, tailSkirt);
 
     const legs = [];
     const legData = [
-      [-0.28, 0.44, -0.52],
-      [0.28, 0.44, -0.52],
-      [-0.28, 0.44, 0.58],
-      [0.28, 0.44, 0.58]
+      [-0.26, -0.52],
+      [0.26, -0.52],
+      [-0.28, 0.62],
+      [0.28, 0.62]
     ];
-    for (const [x, y, z] of legData) {
+    for (const [x, z] of legData) {
       const leg = new THREE.Group();
-      leg.position.set(x, y + 0.33, z);
-      const upper = makeCylinder(0.07, 0.09, 0.72, 8, materials.horseCoat.clone(), 0, -0.36, 0);
-      const hoof = makeBox(0.18, 0.11, 0.2, materials.darkLeather, 0, -0.72, -0.02);
-      leg.add(upper, hoof);
+      leg.position.set(x, 0.82, z);
+      // Jointed leg: muscled upper, slim cannon, fetlock, and a hoof that
+      // reaches the ground (pivot sits at the hip).
+      const upper = makeCylinder(0.075, 0.105, 0.44, 8, materials.horseCoat.clone(), 0, -0.2, 0);
+      const knee = makeSphere(0.068, materials.horseCoat.clone(), 0, -0.42, 0.005);
+      const cannon = makeCylinder(0.048, 0.058, 0.34, 8, materials.horseSock.clone(), 0, -0.58, 0);
+      const fetlock = makeSphere(0.052, materials.horseSock.clone(), 0, -0.73, -0.005);
+      const hoof = makeCylinder(0.065, 0.075, 0.1, 8, materials.darkLeather, 0, -0.77, -0.01);
+      leg.add(upper, knee, cannon, fetlock, hoof);
       legs.push(leg);
       group.add(leg);
     }
 
     const tackDetails = [saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle];
-    group.add(body, chest, neck, head, muzzle, leftEar, rightEar, leftEye, rightEye, mane, saddle, saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle, tail);
+    group.add(
+      body, chest, rump, neck, head, muzzle, nose, blaze, jaw, leftEar, rightEar, leftEye, rightEye,
+      ...maneSegments, forelock, saddle, saddleRoll, pommel, girth,
+      saddleBlanket, saddleTrim, frontStrap, rearStrap, leftTrim, rightTrim, bridle, tail
+    );
     const model = { group, body, legs, tail, saddle, tackDetails, tackId: "" };
     setHorseTack(model, tackId);
     return model;
   }
 
+  function createDrakeMountModel() {
+    const group = new THREE.Group();
+    const scaleMat = materials.drakeScale;
+    const bellyMat = materials.drakeBelly;
+
+    const body = makeCylinder(0.36, 0.44, 1.55, 14, scaleMat, 0, 1.0, 0.05);
+    body.rotation.x = Math.PI / 2;
+    const chest = makeSphere(0.42, scaleMat.clone(), 0, 1.02, -0.6);
+    chest.scale.set(0.96, 0.95, 1.05);
+    const haunch = makeSphere(0.4, scaleMat.clone(), 0, 0.98, 0.66);
+    const belly = makeBox(0.52, 0.1, 1.2, bellyMat, 0, 0.66, 0);
+    const neck = makeCylinder(0.15, 0.27, 0.95, 12, scaleMat.clone(), 0, 1.42, -0.92);
+    neck.rotation.x = -0.66;
+    const head = makeSphere(0.26, scaleMat.clone(), 0, 1.74, -1.32);
+    head.scale.set(1.1, 0.86, 1.25);
+    const snout = makeBox(0.3, 0.17, 0.4, scaleMat.clone(), 0, 1.68, -1.62);
+    const lowerJaw = makeBox(0.26, 0.09, 0.32, bellyMat.clone(), 0, 1.57, -1.58);
+    const leftEye = makeSphere(0.045, materials.dragonEye, -0.14, 1.81, -1.45);
+    const rightEye = makeSphere(0.045, materials.dragonEye, 0.14, 1.81, -1.45);
+    const hornLeft = makeCylinder(0.018, 0.06, 0.4, 7, materials.bone, -0.13, 1.95, -1.16);
+    const hornRight = makeCylinder(0.018, 0.06, 0.4, 7, materials.bone, 0.13, 1.95, -1.16);
+    hornLeft.rotation.set(-0.85, -0.18, 0.14);
+    hornRight.rotation.set(-0.85, 0.18, -0.14);
+
+    // Folded wings flutter with speed; the drake runs like a horse rather
+    // than flying, so they stay tucked along the flanks.
+    const wings = [];
+    for (const side of [-1, 1]) {
+      const wing = new THREE.Group();
+      wing.position.set(side * 0.34, 1.32, -0.05);
+      const membrane = makeWing(side);
+      membrane.scale.setScalar(0.56);
+      wing.add(membrane);
+      wing.rotation.z = side * 0.46;
+      wing.rotation.x = 0.3;
+      wing.baseFold = side * 0.46;
+      wing.side = side;
+      wings.push(wing);
+      group.add(wing);
+    }
+
+    const spikeData = [
+      [1.62, -0.78, 0.2],
+      [1.52, -0.34, 0.22],
+      [1.46, 0.42, 0.2],
+      [1.36, 0.82, 0.17]
+    ];
+    const spikes = spikeData.map(([y, z, height]) => makeCone(0.045, height, 6, materials.bone, 0, y, z));
+
+    const saddle = makeBox(0.6, 0.13, 0.64, materials.saddle.clone(), 0, 1.42, 0.06);
+    const girthFront = makeBox(0.92, 0.07, 0.1, materials.darkLeather, 0, 0.98, -0.18);
+    girthFront.rotation.z = Math.PI / 2;
+    const girthRear = makeBox(0.9, 0.07, 0.1, materials.darkLeather, 0, 0.96, 0.34);
+    girthRear.rotation.z = Math.PI / 2;
+
+    const tail = new THREE.Group();
+    tail.position.set(0, 1.0, 0.95);
+    const tailRoot = makeCylinder(0.07, 0.17, 0.85, 10, scaleMat.clone(), 0, -0.1, 0.42);
+    tailRoot.rotation.x = Math.PI / 2 + 0.32;
+    const tailTip = makeCone(0.06, 0.3, 6, materials.bone, 0, -0.26, 0.85);
+    tailTip.rotation.x = Math.PI / 2 + 0.42;
+    tail.add(tailRoot, tailTip);
+
+    const legs = [];
+    const legData = [
+      [-0.3, -0.5],
+      [0.3, -0.5],
+      [-0.32, 0.6],
+      [0.32, 0.6]
+    ];
+    for (const [x, z] of legData) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.78, z);
+      const upper = makeCylinder(0.075, 0.115, 0.42, 8, scaleMat.clone(), 0, -0.18, 0);
+      const shin = makeCylinder(0.05, 0.062, 0.32, 8, scaleMat.clone(), 0, -0.54, 0);
+      const foot = makeBox(0.16, 0.09, 0.26, bellyMat.clone(), 0, -0.73, -0.05);
+      const talon = makeCone(0.035, 0.12, 5, materials.bone, 0, -0.74, -0.2);
+      talon.rotation.x = -Math.PI / 2;
+      leg.add(upper, shin, foot, talon);
+      legs.push(leg);
+      group.add(leg);
+    }
+
+    group.add(body, chest, haunch, belly, neck, head, snout, lowerJaw, leftEye, rightEye, hornLeft, hornRight, ...spikes, saddle, girthFront, girthRear, tail);
+    const model = { group, body, legs, tail, saddle, wings, tackDetails: [], tackId: "" };
+    return model;
+  }
+
+  function buildMountModel(mountId, tackId = "") {
+    return mountId === "drake" ? createDrakeMountModel() : createHorseModel(tackId);
+  }
+
   function createHorse(x, z) {
-    const model = createHorseModel(currentMountTackId());
+    const mountId = currentMountId();
+    const model = buildMountModel(mountId, currentMountTackId());
+    setHorseTack(model, currentMountTackId());
+    model.mountId = mountId;
     const hasTack = model.tackId === ROADWARDEN_TACK_ID;
     const horse = {
       ...model,
@@ -4967,11 +5179,54 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     const side = rightFromYaw(player.yaw, tmpVec).multiplyScalar(-2.2);
     const position = tmpVec2.copy(player.position).add(side);
     game.exploration.horse = createHorse(position.x, position.z);
-    progression.exploration.horseUnlocked = true;
+    if (game.exploration.horse.mountId === "drake") {
+      progression.exploration.drakeUnlocked = true;
+    } else {
+      progression.exploration.horseUnlocked = true;
+    }
     if (showEffects) {
       spawnImpact(position, 0xffd889, 24);
       saveProgress();
     }
+  }
+
+  function rebuildActiveMount() {
+    const previous = game.exploration.horse;
+    if (!previous) {
+      spawnHorseNearPlayer(false);
+      return;
+    }
+    scene.remove(previous.group);
+    const next = createHorse(previous.position.x, previous.position.z);
+    next.yaw = previous.yaw;
+    next.mounted = previous.mounted;
+    next.walkTime = previous.walkTime;
+    next.velocity.copy(previous.velocity);
+    game.exploration.horse = next;
+    updateHorseAnimation(next, 0);
+  }
+
+  function cycleActiveMount() {
+    if (game.mode !== "exploration" || game.state !== "playing") {
+      return false;
+    }
+    const owned = ownedMountIds();
+    if (owned.length === 0) {
+      return false;
+    }
+    if (owned.length === 1) {
+      showBanner("No other mount to switch to");
+      return true;
+    }
+    const next = owned[(owned.indexOf(currentMountId()) + 1) % owned.length];
+    progression.exploration.activeMountId = next;
+    rebuildActiveMount();
+    spawnImpact(game.exploration.horse.position, 0x9fffd1, 16);
+    showBanner("Mount: " + (mountDisplayNames[next] || next));
+    playSfx("quest", 0.8);
+    saveProgress();
+    sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+    return true;
   }
 
   function isPlayerMounted() {
@@ -5043,6 +5298,16 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     resolveExplorationPosition(horse.position, horse.velocity, 0.95);
   }
 
+  function animateMountWings(model, moving) {
+    if (!model.wings) {
+      return;
+    }
+    for (const wing of model.wings) {
+      const flutter = Math.sin(model.walkTime * 5.2 + (wing.side > 0 ? Math.PI : 0)) * 0.16 * moving;
+      wing.rotation.z = wing.baseFold + wing.side * (moving * 0.22) + wing.side * flutter;
+    }
+  }
+
   function updateHorseAnimation(horse, dt) {
     const speed = horse.velocity.length();
     horse.walkTime += dt * (1.4 + speed * 1.5);
@@ -5055,6 +5320,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       horse.legs[i].rotation.x = phase;
     }
     horse.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
+    animateMountWings(horse, moving);
   }
 
   function updateHorse(dt) {
@@ -5553,6 +5819,12 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       trimPotionDrops();
     } else if (quest.id === "horse") {
       spawnHorseNearPlayer();
+    } else if (quest.id === "skyDrake") {
+      progression.exploration.drakeUnlocked = true;
+      progression.exploration.activeMountId = "drake";
+      spawnHorseNearPlayer();
+      unlocks.push("Skyhatched Drake");
+      sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     } else if (quest.id === ROADWARDEN_TACK_QUEST_ID) {
       progression.exploration.mountTackId = ROADWARDEN_TACK_ID;
       applyMountTackToHorse();
@@ -5617,6 +5889,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       wisps: { hex: "#8affd2", fill: "rgba(138, 255, 210, 0.17)", stroke: "rgba(138, 255, 210, 0.78)" },
       briarStalkers: { hex: "#b9d678", fill: "rgba(185, 214, 120, 0.17)", stroke: "rgba(185, 214, 120, 0.78)" },
       bogRelics: { hex: "#b9ffd5", fill: "rgba(185, 255, 213, 0.17)", stroke: "rgba(185, 255, 213, 0.78)" },
+      skyDrake: { hex: "#7ad9c9", fill: "rgba(122, 217, 201, 0.17)", stroke: "rgba(122, 217, 201, 0.78)" },
       roadwardenTack: { hex: "#ffd889", fill: "rgba(255, 216, 137, 0.17)", stroke: "rgba(255, 216, 137, 0.8)" },
       cityWrits: { hex: "#f7df9a", fill: "rgba(247, 223, 154, 0.16)", stroke: "rgba(247, 223, 154, 0.76)" },
       citySanctuary: { hex: "#7ae8ff", fill: "rgba(122, 232, 255, 0.17)", stroke: "rgba(122, 232, 255, 0.78)" },
@@ -5639,6 +5912,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       wisps: "Mistfen",
       briarStalkers: "Briarfall Woods",
       bogRelics: "Mistfen pools",
+      skyDrake: "Dragonspine roost",
       roadwardenTack: "road waymarks",
       cityWrits: "Crownford beacon",
       citySanctuary: "church district",
@@ -5705,8 +5979,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         .filter(village => !game.exploration.discovered.has(village.id))
         .map(village => ({ x: village.x, z: village.z, radius: village.radius + 24, color }));
     }
-    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "wisps" || quest.id === "briarStalkers") {
-      const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" ? "mountain" : quest.id === "wisps" ? "swamp" : "briar";
+    if (quest.id === "spiders" || quest.id === "dragons" || quest.id === "skyDrake" || quest.id === "wisps" || quest.id === "briarStalkers") {
+      const biomeId = quest.id === "spiders" ? "desert" : quest.id === "dragons" || quest.id === "skyDrake" ? "mountain" : quest.id === "wisps" ? "swamp" : "briar";
       const biome = game.exploration.biomes.find(candidate => candidate.id === biomeId);
       return biome
         ? [{
@@ -6182,6 +6456,28 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
             readyStatus: "First bell answered",
             done: "Come back whenever you want a purse, a bruise, or both. The ring remembers regulars.",
             doneStatus: "Steward Bryn has marked you as Crownring proven."
+          }
+        }
+      ),
+      createQuest(
+        "skyDrake",
+        "The Skyhatched Brood",
+        "Brunna",
+        "A clutch hatched cold on the high shelves after the dread drakes drove the mothers off. Bring me three sun-warmed drake eggs from the roost rocks and the strongest hatchling will learn your saddle instead of the open sky.",
+        "Recover warm drake eggs",
+        "Skyhatched Drake mount and XP",
+        "collect",
+        3,
+        {
+          rewardXp: 80,
+          conversationTags: ["mountain", "dragons", "roost", "mount"],
+          dialogue: {
+            available: "Three eggs still hold their warmth out on the roost shelves. Carry them to my warming pit before the wind takes them, and one hatchling will take your saddle when it stands.",
+            active: "Look where the rock holds the sun between the spires. Warm eggs sit in the wind shadows - and so do the drakes that watch them.",
+            ready: "All three, still warm. You carried them like mountain-born. The gray one already turns its head when you walk past.",
+            readyStatus: "Clutch warming",
+            done: "The drake answers to your shadow now. Press M if you would rather keep your horse under saddle some days - it will not take offense.",
+            doneStatus: "Brunna's hatchling rides with you."
           }
         }
       )
@@ -6786,6 +7082,31 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     nest.add(ring, ember);
     group.add(nest);
     addExplorationCollider(biome.x + 8, biome.z - 6, 4.2, "structure");
+
+    // Roost-keeper and her cold clutch: the Skyhatched Brood quest. Eggs sit
+    // in wind shadows around the nest, outside the structure colliders.
+    game.npcs.push(createFriendlyNpc(
+      game.exploration.origin.x + biome.x + 14.5,
+      game.exploration.origin.z + biome.z - 1.5,
+      random,
+      6.5,
+      "Brunna",
+      "skyDrake",
+      "mountain"
+    ));
+    const eggSpots = [
+      [biome.x + 2, biome.z - 13.5],
+      [biome.x + 11, biome.z - 9],
+      [biome.x + 9, biome.z + 5]
+    ];
+    for (const [ex, ez] of eggSpots) {
+      createQuestItem(group, "skyDrake", ex + (random() - 0.5) * 2.0, ez + (random() - 0.5) * 2.0, random, {
+        color: 0x7ad9c9,
+        stemMaterial: materials.bone,
+        radius: 0.13,
+        groundOffset: 0.16
+      });
+    }
   }
 
   function addDesertMarkers(group, biome, random) {
@@ -8074,7 +8395,8 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       { keys: "W A S D", text: "Move. Click the game once to capture the mouse for camera look." },
       { keys: "Mouse / Q / E", text: "Turn the camera." },
       { keys: "E", label: "Talk", text: "speak to the nearest villager or quest giver." },
-      { keys: "R", label: "Mount", text: "mount or dismount your horse once Rowan's quest grants one." },
+      { keys: "R", label: "Mount", text: "mount or dismount your active mount once a quest grants one." },
+      { keys: "M", label: "Switch mount", text: "cycle between owned mounts - the horse from Rowan and the Skyhatched Drake from Brunna's roost quest." },
       { keys: "G", label: "Swap kit", text: "cycle between your unlocked weapon kits." },
       { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5-6)." },
       { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-9)." },
@@ -8619,6 +8941,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       yaw: player.yaw,
       hasHorse: !!horse,
       mountTackId: currentMountTackId(),
+      mountId: horse ? horse.mountId || "horse" : currentMountId(),
       mounted: !!horse && horse.mounted,
       horseX: horse ? horse.position.x : null,
       horseZ: horse ? horse.position.z : null,
@@ -9642,6 +9965,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       health: 100,
       maxHealth: 100,
       mountTackId: "",
+      renderedMountId: "horse",
       walkTime: 0
     };
   }
@@ -9711,6 +10035,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       model.legs[i].rotation.x = phase;
     }
     model.tail.rotation.z = Math.sin(clock.elapsedTime * 3.2) * 0.12;
+    animateMountWings(model, moving);
     return bob;
   }
 
@@ -9770,6 +10095,20 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     remote.targetYaw = state.yaw || 0;
     remote.hasHorse = !!state.hasHorse && game.mode === "exploration";
     remote.mountTackId = state.mountTackId === ROADWARDEN_TACK_ID ? ROADWARDEN_TACK_ID : "";
+    const nextMountId = state.mountId === "drake" ? "drake" : "horse";
+    if (remote.horse && remote.renderedMountId !== nextMountId) {
+      const mountPosition = remote.horse.group.position.clone();
+      const mountYaw = remote.horse.group.rotation.y;
+      const mountWalk = remote.horse.walkTime || 0;
+      scene.remove(remote.horse.group);
+      remote.horse = buildMountModel(nextMountId, remote.mountTackId);
+      remote.horse.walkTime = mountWalk;
+      remote.horse.group.position.copy(mountPosition);
+      remote.horse.group.rotation.y = mountYaw;
+      remote.horse.group.visible = !!remote.hasHorse;
+      scene.add(remote.horse.group);
+      remote.renderedMountId = nextMountId;
+    }
     setHorseTack(remote.horse, remote.mountTackId);
     remote.mounted = !!state.mounted && remote.hasHorse;
     if (!remote.horseTargetPosition) {
@@ -10718,7 +11057,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
     setPlayerCharacter(game.selectedCharacter, true);
     if (game.mode === "exploration") {
       restoreSavedResources();
-      if (progression.exploration.horseUnlocked) {
+      if (progression.exploration.horseUnlocked || progression.exploration.drakeUnlocked) {
         spawnHorseNearPlayer(false);
       }
     }
@@ -13163,6 +13502,11 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       if (event.code === "KeyG" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
         event.preventDefault();
         cycleEquippedWeapon();
+        return;
+      }
+      if (event.code === "KeyM" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
+        event.preventDefault();
+        cycleActiveMount();
         return;
       }
       if (event.code === "KeyR" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
