@@ -8303,22 +8303,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const desertBiome = game.exploration.biomes.find(biome => biome.id === "desert");
     const swampBiome = game.exploration.biomes.find(biome => biome.id === "swamp");
     const briarBiome = game.exploration.biomes.find(biome => biome.id === "briar");
-    // TEMP DEBUG (remove before finishing): console teleport for smoke tests.
-    window.__dbgTeleport = (x, z, yaw) => {
-      player.position.copy(explorationToWorld(x, z));
-      player.group.position.copy(player.position);
-      if (Number.isFinite(yaw)) {
-        game.cameraYaw = yaw;
-      }
-    };
-    window.__dbgBiomes = () => JSON.parse(JSON.stringify(game.exploration.biomes));
-    window.__dbgEnemies = () => game.enemies.filter(e => !e.dead).map(e => ({
-      type: e.type, state: e.state, x: Math.round(e.position.x - game.exploration.origin.x), z: Math.round(e.position.z - game.exploration.origin.z)
-    }));
-    window.__dbgGod = () => {
-      player.maxHealth = 1000000;
-      player.health = 1000000;
-    };
 
     const groundMaterial = materials.meadow.clone();
     groundMaterial.map = createExplorationTexture(seed);
