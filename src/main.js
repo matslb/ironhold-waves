@@ -2365,7 +2365,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         maxHealth: 48 + steps * 4 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 72 + steps * 8 + (boons.mana || 0),
-        manaRegen: 16.5 + steps * 0.65,
+        manaRegen: 14 + steps * 0.55,
         potionCooldownMax: Math.max(10, 18 - (progression.exploration.potionCooldownBonus || 0))
       };
     } else if (character === "ranger") {
@@ -2374,7 +2374,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
         maxHealth: 54 + steps * 4 + (boons.health || 0),
         maxGuard: 0,
         maxMana: 64 + steps * 6 + (boons.mana || 0),
-        manaRegen: 13.5 + steps * 0.5,
+        manaRegen: 11.5 + steps * 0.45,
         potionCooldownMax: 18
       };
     } else {
@@ -12009,7 +12009,7 @@ import { ambientLineFor, mergeQuestDialogueOptions } from "./content/dialogue.js
       player.mana -= cost;
       player.attackKind = "arrow";
       player.attackDuration = 0.34;
-      player.attackCooldown = 0.55;
+      player.attackCooldown = 0.65;
       playSfx("arrow", 0.95);
     } else {
       player.attackKind = "slash";
