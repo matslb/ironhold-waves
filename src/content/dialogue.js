@@ -59,6 +59,7 @@ export const loreBible = {
     { id: "infirmary", tags: ["city", "arena", "sanctuary"], text: "Fighters who fall in the Crownring wake in the Crownford infirmary beside the church. Nobody dies for sport in Crownford." },
     { id: "marshal", tags: ["city", "crownford", "arena"], text: "Marshal Rowan Vale, a former knight, keeps Crownford's roads and writs. He measures people by what they read and ride, not what they boast." },
     { id: "desert", tags: ["desert", "spiders"], text: "The southern dunes hold buried cisterns and well-stones. Man-sized dune spiders web the water paths shut when no one fights back." },
+    { id: "siltwell", tags: ["desert", "cistern", "siltwell", "dungeon"], text: "Siltwell Cistern sits at the northeast fringe of Amber Dunes, where a sealed wellstone chamber keeps the road's old waterwork from failing." },
     { id: "mountains", tags: ["mountain", "dragons", "dragonspine"], text: "The Dragonspine Peaks rise in ridges and passes. Dragons roost on the high shelves and circle the passes when their nests stir." },
     { id: "swamp", tags: ["swamp", "mistfen", "wisps"], text: "Mistfen is a plank-road swamp. Pale fen wisps drift against the wind and lure travelers off the boards into black water." },
     { id: "relics", tags: ["swamp", "relics", "shrines"], text: "Old shrine bells sank into Mistfen's pools long ago. Some still glow with leftover blessing when the mist is right." },
@@ -70,7 +71,7 @@ export const loreBible = {
   forbiddenTopics: [
     "coin, gold, prices, shops, buying, or selling (no economy is shipped)",
     "crafting, forging, or upgrade materials",
-    "dungeons or unannounced locations",
+    "unannounced dungeons or unauthored locations",
     "new rewards, items, weapons, or spells beyond authored quest rewards",
     "new factions, gods, kingdoms, or wars (canon additions require review)",
     "implementation details: servers, code, spawning, snapshots, saves, versions",
@@ -83,7 +84,7 @@ export const loreBible = {
 const forbiddenLinePatterns = [
   { reason: "economy is not shipped", pattern: /\b(gold|coins?|silver pieces|price|prices|shop|merchant stall|buy|sell|purchase)\b/i },
   { reason: "crafting is not shipped", pattern: /\b(craft|crafting|forge (you|it|one)|smith (you|it|one)|upgrade material)\b/i },
-  { reason: "dungeons are future content", pattern: /\bdungeons?\b/i },
+  { reason: "unannounced dungeons require review", pattern: /\b(secret|hidden|unannounced|future)\s+dungeons?\b/i },
   { reason: "implementation details are hidden", pattern: /\b(server|netcode|snapshot|spawn(?:ed|ing)?|respawn|hitbox|save file|localstorage|version \d|patch notes|prompt|token)\b/i },
   { reason: "meta game talk breaks character", pattern: /\b(player|game over|main menu|keyboard|press [a-z] to|fps|lag)\b/i },
   { reason: "unsupported promise of new rewards", pattern: /\b(new (?:reward|item|weapon|spell|mount))|(?:i (?:will|can) (?:give|grant) you (?:a|an|the) (?:legendary|unique|special) )/i }
@@ -159,6 +160,18 @@ export const npcVoiceSheets = {
     fears: "A webbed-over season turning her village into a ruin on Sella's map.",
     secret: "She keeps a spider's fang from the year the wells failed, as a reminder.",
     ties: ["Trades water rights news with passing Roadwardens"]
+  },
+  "Ilyas": {
+    name: "Ilyas",
+    role: "Siltwell cistern-keeper",
+    biome: "desert",
+    faction: "hearthfolk",
+    personality: ["spare", "watchful", "infrastructure-minded"],
+    speechPattern: "Counts water, shade, steps, and risk. Sentences are dry, practical, and a little anxious.",
+    motives: "Keep Siltwell open enough that road travelers and fringe wells do not fail together.",
+    fears: "The sealed chamber turning from a waterwork into a story people stop trying to fix.",
+    secret: "He sleeps badly when the well bell is quiet too long.",
+    ties: ["Respects Amara's village cistern work", "Warns road travelers before they mistake shade for safety"]
   },
   "Kael": {
     name: "Kael",
@@ -443,6 +456,126 @@ export const ambientBarks = [
 ];
 
 // ---------------------------------------------------------------------------
+// Local reward hints
+// ---------------------------------------------------------------------------
+// Authored, mechanics-safe hints for nearby kits, perks, mounts, and permanent
+// boons. These are intentionally prose-only: they point players toward shipped
+// quest sources without granting rewards or inventing unavailable systems.
+
+const genericRewardHint = "Most lasting advantages in Ironhold come from named work: take local tasks, finish the objective, then return to the giver for the kit, perk, mount, or boon they promised.";
+
+export const npcRewardHints = {
+  "Mira": {
+    text: "Greenfire by the cold lakes makes a sturdy health brew. Bring me enough and you will carry the benefit longer than any field potion lasts.",
+    ready: "Those herbs are enough for the health brew. Hand them over and let the remedy settle in.",
+    done: "You already carry my greenfire remedy. For sharper gear, Torren watches the trade road."
+  },
+  "Torren": {
+    text: "If you want travel gear, clear the raiders from the meadow roads. I can put a Roadwarden Blade in a knight's hand and a Wayfinder Focus in a wizard's pack.",
+    ready: "The roads are quiet enough. Come settle the work and I will pass over the road gear.",
+    done: "You have the road gear I can offer. Crownford and Briarfall hold the next lessons."
+  },
+  "Sella": {
+    text: "Map the hearth-villages and I can improve your field routine: a full recovery potion now, and faster wizard draught practice for later.",
+    ready: "Those route marks are clean. Bring them here and I will make the map work worth your while.",
+    done: "Your hearth-map is official. If you want weapons, ask Torren, Edda Thorn, or the Crownring steward."
+  },
+  "Rowan": {
+    text: "Gather wild oats if you want a horse that trusts you. After that, Quartermaster Pell in Crownring can fit proper Roadwarden Tack.",
+    ready: "The oats are right. Let me saddle the horse before she changes her mind about you.",
+    done: "You have a horse now. Take it to Pell near the Crownring if you want road-fit tack."
+  },
+  "Amara": {
+    text: "Clear the dune spiders from the cistern paths and the desert will repay you with a health boon and field medicine.",
+    ready: "The wells can breathe. Come claim the desert's thanks before the sand changes the subject.",
+    done: "You have the desert's health lesson. Other boons wait in Mistfen, the peaks, and Crownford."
+  },
+  "Kael": {
+    text: "Bring down the dragons over the passes and the mountain folk can teach steadier guard and stronger magica.",
+    ready: "The ridge is quiet. I have the mountain lesson ready for your hands.",
+    done: "The pass lesson is yours. Brunna's roost higher up holds a different prize: a skyhatched mount."
+  },
+  "Brunna": {
+    text: "Warm drake eggs sit in the roost wind-shadows. Bring three back and the strongest hatchling can learn your saddle.",
+    ready: "The clutch is warm. Stay close while I choose the hatchling that has already chosen you.",
+    done: "Your drake knows your shadow. Switch mounts as the road demands."
+  },
+  "Mirel": {
+    text: "Banish the fen wisps from the plank roads and Mistfen can teach you a hardier body and steadier focus.",
+    ready: "The dusk crossings are honest again. Come take the lesson while the mist is quiet.",
+    done: "Mistfen has already paid you in health and magica. Noll still watches the reed pools for old shrine medicine."
+  },
+  "Noll": {
+    text: "The bright shrine bells under the reeds buy our best field medicine: a full restore and a full recovery potion.",
+    ready: "Those bells still hum. Set them down and I will settle the debt.",
+    done: "You took the fen's old medicine already. If you want a perk, Briarfall and Crownford both teach better habits."
+  },
+  "Edda Thorn": {
+    text: "Break the rootmaw packs on the timber road and Briarfall opens its kit chest: hookblade, briar focus, briarstring bow, and the Pathcraft perk.",
+    ready: "The timber road breathed easier this morning. Come claim the Briarfall kits and Pathcraft lesson.",
+    done: "Briarfall gear favors control over swagger. Crownring gear favors risk, and Crownford drill trims ability costs."
+  },
+  "Marshal Rowan Vale": {
+    text: "Read Crownford's four waystones around the beacon. Do it properly and I will record you for Crownford Drill: cleaner bash, burst, pierce, and parting-shot habits.",
+    ready: "Four waystones, four oaths. Come be recorded and take the drill.",
+    done: "Crownford Drill is already in your stance. For weapons, see the Crownring or Briarfall."
+  },
+  "Sister Edda": {
+    text: "Relight the sanctuary lamps and the city will keep a bed ready for you, with a health boon and field potion for the road.",
+    ready: "The lamps are lit again. Come in from the wind and take the sanctuary's blessing.",
+    done: "The sanctuary bed is yours when you need it. The ring nearby teaches harsher lessons."
+  },
+  "Steward Bryn": {
+    text: "Clear the first Crownring wave and return upright. I can mark you Crownring-proven with class kits, a training boon, and a field potion.",
+    ready: "You answered the first bell. Come claim the Crownring mark before pride asks for another bruise.",
+    done: "Crownring kits hit harder and ask more of you. Keep using the yield bell when the lesson turns sour."
+  },
+  "Quartermaster Pell": {
+    text: "Bring a horse first, then ride the road waymarks from this gate. Prove the saddle and I will fit Roadwarden Tack for faster travel.",
+    ready: "The route is proven. Bring the horse close and I will fit the tack.",
+    done: "Roadwarden Tack is already fitted. Keep to the marked roads and it will earn its keep."
+  },
+  "Mason Vale": {
+    text: "The Bellwater Underworks are not a kit chest, but clearing a chamber teaches a small first-clear boon. Stone remembers careful parties.",
+    done: "If you want named gear, ask the people with named work: Bryn for the ring, Edda Thorn for Briarfall, and the marshal for drill."
+  },
+  "Bellwater Scout": {
+    text: "The Bellwater Underworks are not a kit chest, but clearing a chamber teaches a small first-clear boon. Stone remembers careful parties.",
+    done: "If you want named gear, ask the people with named work: Bryn for the ring, Edda Thorn for Briarfall, and the marshal for drill."
+  },
+  "Ilyas": {
+    text: "Siltwell is not a kit chest. Clear the cistern chamber for shared XP and a small once-per-player first-clear boon. The desert pays in endurance, not treasure.",
+    done: "Siltwell has taught you what it can. Amara still handles the village cistern paths, and the Crownring teaches different risks."
+  },
+  "Physicker Maud": {
+    text: "I mend what the Crownring breaks. Bryn handles the arena kits; Sister Edda handles sanctuary blessings; I handle keeping fools breathing long enough to enjoy either."
+  }
+};
+
+export const biomeRewardHints = {
+  meadow: "Meadow rewards start close: Mira brews a health boon, Sella improves potion practice, Rowan offers a horse, and Torren unlocks road gear for knights and wizards.",
+  desert: "The desert's lasting lessons come from waterwork: Amara's spider-clearing grants health and field medicine, while Siltwell Cistern grants shared XP and a small first-clear endurance boon.",
+  mountain: "The peaks hold two prizes: Kael's dragon hunt teaches guard and magica, while Brunna's roost can earn a Skyhatched Drake mount.",
+  swamp: "Mistfen pays in survival: Mirel's wisp work grants health and magica, and Noll's shrine bells bring a full restore and recovery potion.",
+  briar: "Briarfall is the clearest kit road: rootmaws unlock Briarfall kits for every class plus the Pathcraft perk and mixed boons.",
+  city: "Crownford rewards discipline: the marshal grants Crownford Drill, the sanctuary grants health, Pell fits Roadwarden Tack, and Bryn's Crownring trial unlocks arena kits."
+};
+
+export function rewardHintForContext(context = {}) {
+  const npcHint = context.npcName ? npcRewardHints[context.npcName] : null;
+  const biomeHint = biomeRewardHints[context.biome || ""] || genericRewardHint;
+  const hint = npcHint || { text: biomeHint };
+  const state = context.questState || "generic";
+  if (state === "ready" && hint.ready) {
+    return hint.ready;
+  }
+  if (state === "done" && hint.done) {
+    return hint.done;
+  }
+  return hint.text || biomeHint;
+}
+
+// ---------------------------------------------------------------------------
 // Deterministic fallbacks (required for every quest state)
 // ---------------------------------------------------------------------------
 
@@ -563,6 +696,7 @@ export function buildLorePacket(context = {}) {
           authoredLines: Object.assign({}, pack.dialogue)
         }
       : null,
+    rewardHint: rewardHintForContext(context),
     allowedTopics: tags.length > 0 ? Array.from(new Set(tags)) : ["travel", "weather", "roads"],
     forbiddenTopics: loreBible.forbiddenTopics.slice(),
     fallbackLine: fallbackLineFor(questState, context.npcName || ""),
@@ -709,12 +843,13 @@ const responderStopWords = new Set([
 ]);
 
 const responderIntentTriggers = {
+  reward: ["reward", "rewards", "kit", "kits", "weapon", "weapons", "gear", "buff", "buffs", "boon", "boons", "perk", "perks", "training", "upgrade", "upgrades", "stronger", "obtain", "earn", "find", "unlock", "unlocks", "mount", "tack"],
   quest: ["quest", "task", "job", "work", "help", "need", "mission", "objective", "reward", "again", "errand", "deed"],
   greeting: ["hello", "hi", "hey", "greetings", "morning", "evening", "afternoon", "day", "well", "fare", "luck"],
   self: ["who", "name", "named", "yourself", "role", "stranger", "doing"],
   danger: ["danger", "dangerous", "safe", "safety", "enemy", "enemies", "monster", "monsters", "beast", "beasts", "threat", "careful", "attack", "raider", "raiders", "spider", "spiders", "dragon", "dragons", "wisp", "wisps", "fight", "afraid", "scared"],
   rumor: ["rumor", "rumors", "rumour", "rumours", "news", "heard", "gossip", "story", "stories", "tale", "talk", "happening", "new"],
-  place: ["where", "place", "area", "road", "roads", "city", "crownford", "town", "village", "villages", "valley", "desert", "dunes", "mountain", "mountains", "swamp", "mistfen", "forest", "woods", "briar", "biome", "lake", "lakes", "way", "around"],
+  place: ["where", "place", "area", "road", "roads", "city", "crownford", "town", "village", "villages", "valley", "desert", "dunes", "siltwell", "cistern", "cisterns", "dungeon", "dungeons", "mountain", "mountains", "swamp", "mistfen", "forest", "woods", "briar", "biome", "lake", "lakes", "way", "around"],
   advice: ["advice", "tip", "tips", "should", "how", "survive", "best", "wise"]
 };
 
@@ -797,15 +932,20 @@ function selectCanonResponse(input, context, packet) {
   const { fact, score: factScore } = responderBestFact(inputKeywords, packet);
   const hasQuest = !!(context && (context.questLine || (packet && packet.questContext)));
 
-  // 1) Direct quest/task question wins when a quest is in play.
+  // 1) Kit / buff / perk / reward questions use authored local opportunity
+  // hints, not generic quest prose.
+  if (intent === "reward" && intentScore >= 1) {
+    return { text: rewardHintForContext(context), matched: "reward" };
+  }
+  // 2) Direct quest/task question wins when a quest is in play.
   if (intent === "quest" && intentScore >= 1 && hasQuest) {
     return { text: responderQuestLine(context, packet), matched: "quest" };
   }
-  // 2) A specific lore noun (spiders, Crownford, roads, dragons...) → public fact.
+  // 3) A specific lore noun (spiders, Crownford, roads, dragons...) → public fact.
   if (factScore >= 1) {
     return { text: fact.text, matched: "lore:" + fact.id };
   }
-  // 3) Otherwise route by intent into the right approved bark / role line.
+  // 4) Otherwise route by intent into the right approved bark / role line.
   if (intentScore >= 1) {
     if (intent === "greeting") {
       return { text: ambientLineFor({ npcName: context.npcName, biome, mood: "greeting", seed }), matched: "bark:greeting" };
@@ -829,7 +969,7 @@ function selectCanonResponse(input, context, packet) {
       return { text: responderQuestLine(context, packet), matched: "quest" };
     }
   }
-  // 4) Nothing confident: deterministic fallback.
+  // 5) Nothing confident: deterministic fallback.
   return { text: null, matched: "fallback" };
 }
 
@@ -906,8 +1046,8 @@ export function suggestedTopicsFor(context = {}) {
   } else {
     topics.push({ label: "This place", query: "where are we, tell me about this place" });
   }
+  topics.push({ label: "Rewards nearby", query: "what kits perks buffs or boons can I find nearby" });
   topics.push({ label: "Dangers", query: "what dangers are nearby, is it safe" });
   topics.push({ label: "Any rumors?", query: "any rumors or news you have heard" });
-  topics.push({ label: "Who are you?", query: "who are you" });
   return topics.slice(0, 4);
 }

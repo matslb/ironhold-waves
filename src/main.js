@@ -10,7 +10,66 @@ import {
   progressStorageKey,
   xpForLevel
 } from "./content/rpg.js";
+import {
+  AUDIO_AMBIENCE_VOLUME,
+  AUDIO_MASTER_VOLUME,
+  AUDIO_MUSIC_VOLUME,
+  AUDIO_SFX_VOLUME,
+  BELLWATER_DUNGEON_CLEAR_XP,
+  BELLWATER_DUNGEON_ID,
+  BELLWATER_DUNGEON_NAME,
+  DUNGEON_RADIUS,
+  ENEMY_SPEED_MULTIPLIER,
+  EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ,
+  EXPLORATION_ENEMY_SEPARATION_DISTANCE,
+  EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ,
+  EXPLORATION_NPC_UPDATE_DISTANCE_SQ,
+  EXPLORATION_NPC_VISIBLE_DISTANCE_SQ,
+  MINIMAP_DPR,
+  MINIMAP_LOGICAL_SIZE,
+  PLAYER_REGEN_DELAY,
+  PLAYER_REGEN_RATE,
+  PLAYER_REGEN_THREAT_RADIUS,
+  POTION_INVENTORY_CAPACITY,
+  POTION_SLOT_UNLOCK_LEVELS,
+  QUEST_MAP_UPDATE_INTERVAL,
+  ROADWARDEN_TACK_ID,
+  ROADWARDEN_TACK_NAME,
+  ROADWARDEN_TACK_QUEST_ID,
+  SILTWELL_DUNGEON_CLEAR_XP,
+  SILTWELL_DUNGEON_ID,
+  SILTWELL_DUNGEON_NAME,
+  TAU,
+  WILDS_AREA_CAP,
+  WILDS_AREA_RADIUS,
+  WILDS_CHECKS_PER_TICK,
+  WILDS_CLEARED_ZONE_BONUS,
+  WILDS_CLEARED_ZONE_MAX_BONUS,
+  WILDS_CLEARED_ZONE_RADIUS,
+  WILDS_DIRECTOR_INTERVAL,
+  WILDS_ENEMY_CAP,
+  WILDS_MIN_PLAYER_DISTANCE,
+  WILDS_RESPAWN_DELAY,
+  WILDS_RESPAWN_JITTER,
+  WILDS_SPAWNS_PER_TICK,
+  WILDS_TIER_DELAY_MUL,
+  arenaRadius
+} from "./config/gameplay.js";
+import {
+  formatTuningSummary,
+  helpClassGuide,
+  helpPermanentRewardItems,
+  helpSourceLabels
+} from "./content/help.js";
 import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, suggestedTopicsFor } from "./content/dialogue.js";
+import { clamp, hashString, lerp, lerpAngle, quantizeStep, seededRandom, smoothstep } from "./core/math.js";
+import {
+  currentExplorationRespawnPosition as currentTownRespawnPosition,
+  normalizeRespawnLocal,
+  restoreSavedTownRespawnPoint as restoreTownRespawnPoint,
+  setExplorationRespawnTown as setTownRespawnPoint,
+  villageDisplayName
+} from "./systems/townRespawn.js";
 
 (() => {
   "use strict";
@@ -36,6 +95,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   const kitReadout = document.getElementById("kitReadout");
   const kitText = document.getElementById("kitText");
   const kitStats = document.getElementById("kitStats");
+  const potionInventory = document.getElementById("potionInventory");
+  const potionSlots = document.getElementById("potionSlots");
   const buffsPanel = document.getElementById("buffsPanel");
   const buffsList = document.getElementById("buffsList");
   const saveHint = document.getElementById("saveHint");
@@ -103,50 +164,27 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return;
   }
 
-  const TAU = Math.PI * 2;
-  const arenaRadius = 25;
-  const ROADWARDEN_TACK_ID = "roadwarden_tack";
-  const ROADWARDEN_TACK_NAME = "Roadwarden Tack";
-  const ROADWARDEN_TACK_QUEST_ID = "roadwardenTack";
-  const EXPLORATION_NPC_UPDATE_DISTANCE_SQ = 70 * 70;
-  const EXPLORATION_NPC_VISIBLE_DISTANCE_SQ = 145 * 145;
-  const EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ = 92 * 92;
-  const EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ = 85 * 85;
-  const EXPLORATION_ENEMY_SEPARATION_DISTANCE = 46;
-  // Global tuning knob applied to every enemy's base speed at spawn. Bumping this
-  // scales chase, patrol, and kiting movement together. 1.0 = original speeds.
-  const ENEMY_SPEED_MULTIPLIER = 1.25;
-  // --- Wilds repopulation (Phase 1) ---
-  // Host-only "Wilds Director": every exploration seed point registers at world
-  // build; killed enemies schedule a timed refill at their seed point, applied
-  // by a budgeted round-robin tick that only spawns far from every player.
-  const WILDS_RESPAWN_DELAY = 300;        // s before an emptied seed point refills (5 min)
-  const WILDS_RESPAWN_JITTER = 90;        // + random 0..90s so refills never feel scheduled
-  const WILDS_TIER_DELAY_MUL = [1.5, 1.0, 0.8]; // tier 1/2/3 bands: calm near home, lively at the rim
-  const WILDS_CLEARED_ZONE_RADIUS = 42;   // m: each kill pushes back empty neighbors' timers
-  const WILDS_CLEARED_ZONE_BONUS = 90;    // s added per nearby kill...
-  const WILDS_CLEARED_ZONE_MAX_BONUS = 240; // ...capped, so a battlefield stays clear ~5-9 min total
-  const WILDS_MIN_PLAYER_DISTANCE = 80;   // m: never respawn within this range of ANY player
-                                          //    (max awareness is ~29; HP-bar detail radius is 85)
-  const WILDS_ENEMY_CAP = 96;             // total live exploration enemies (post-bump build is ~86)
-  const WILDS_AREA_CAP = 10;              // live enemies within WILDS_AREA_RADIUS of a candidate
-  const WILDS_AREA_RADIUS = 48;
-  const WILDS_DIRECTOR_INTERVAL = 1.25;   // s between director ticks
-  const WILDS_CHECKS_PER_TICK = 12;       // seed records examined per tick (~90 records -> full sweep ~10s)
-  const WILDS_SPAWNS_PER_TICK = 1;        // hard stagger: one factory call per tick, no hitches
-  const QUEST_MAP_UPDATE_INTERVAL = 0.16;
-  const MINIMAP_LOGICAL_SIZE = 176;
-  const MINIMAP_DPR = 2;
-  const AUDIO_MASTER_VOLUME = 1.0;
-  const AUDIO_SFX_VOLUME = 1.0;
-  const AUDIO_AMBIENCE_VOLUME = 0.22;
-  const AUDIO_MUSIC_VOLUME = 0.64;
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   const clock = new THREE.Clock();
   const keys = new Set();
   let progression = null;
+
+  function isLocalTestingHost() {
+    const { hostname, protocol } = window.location;
+    return protocol === "file:"
+      || hostname === "localhost"
+      || hostname === "127.0.0.1"
+      || hostname === "::1"
+      || hostname === "0.0.0.0";
+  }
+
+  const LOCAL_GOD_MODE = isLocalTestingHost();
+
+  function localGodModeEnabled() {
+    return LOCAL_GOD_MODE;
+  }
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -547,7 +585,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (isPlayerMounted()) {
       return "horse";
     }
-    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+    if (localPlayerInSharedActivity() || game.mode !== "exploration") {
       return "sand";
     }
     const local = explorationLocalPosition(player.position, tmpVec);
@@ -712,8 +750,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return MUSIC_THEME_DEFAULT_ID;
   }
 
-  function currentMusicThemeId(biome, inArena, danger) {
-    if (inArena) {
+  function currentMusicThemeId(biome, inSharedActivity, danger) {
+    if (inSharedActivity) {
       return "crownring";
     }
     if (danger) {
@@ -814,13 +852,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       audio.musicState.nextNoteAt = ctx.currentTime + 0.45;
       return;
     }
-    const inArena = localPlayerInArenaActivity() || (game.mode !== "exploration" && active);
+    const inSharedActivity = localPlayerInSharedActivity() || (game.mode !== "exploration" && active);
     let biome = "meadow";
     if (game.mode === "exploration") {
       const local = explorationLocalPosition(player.position, tmpVec);
       biome = biomeAt(local.x, local.z);
     }
-    if (active && game.mode === "exploration" && !inArena && ctx.currentTime >= audio.ambientState.nextBirdAt) {
+    if (active && game.mode === "exploration" && !inSharedActivity && ctx.currentTime >= audio.ambientState.nextBirdAt) {
       if (biome !== "desert" && Math.random() < (biome === "swamp" ? 0.38 : 0.72)) {
         playBirdChirp(biome);
       }
@@ -828,8 +866,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
 
     const music = audio.musicState;
-    const danger = inArena || game.enemies.some(enemy => !enemy.dead && enemy.position.distanceTo(player.position) < 18);
-    const themeId = currentMusicThemeId(biome, inArena, danger);
+    const danger = inSharedActivity || game.enemies.some(enemy => !enemy.dead && enemy.position.distanceTo(player.position) < 18);
+    const themeId = currentMusicThemeId(biome, inSharedActivity, danger);
     if (music.themeId !== themeId) {
       music.themeId = themeId;
       music.noteIndex = 0;
@@ -869,7 +907,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (enemy.type === "dragon" || enemy.type === "wisp") {
       return "";
     }
-    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+    if (localPlayerInSharedActivity() || game.mode !== "exploration") {
       return "sand";
     }
     const local = explorationLocalPosition(enemy.position, tmpVec);
@@ -926,7 +964,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (remote.mounted) {
       return "horse";
     }
-    if (localPlayerInArenaActivity() || game.mode !== "exploration") {
+    if (localPlayerInSharedActivity() || game.mode !== "exploration") {
       return "sand";
     }
     const local = explorationLocalPosition(remote.group.position, tmpVec);
@@ -1623,6 +1661,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     selectedCharacter: "knight",
     mode: "exploration",
     arenaGroup: null,
+    dungeonGroup: null,
     explorationGroup: null,
     npcs: [],
     questItems: [],
@@ -1649,10 +1688,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       terrainFlatZones: [],
       city: null,
       arenaCity: null,
+      dungeonPoi: null,
+      dungeonPois: [],
+      respawnTownId: "",
+      respawnLocal: null,
+      respawnPoint: null,
       horse: null,
       discovered: new Set(),
       completed: false,
       arenaActivity: defaultArenaActivity(),
+      dungeonActivity: defaultDungeonActivity(),
+      dungeonRewardClaimIds: [],
       // Wilds Director state: one record per original enemy seed point
       // (the world's "ecology map"), a tick countdown, and a round-robin
       // cursor into the records. Host-only; never persisted.
@@ -1777,6 +1823,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     blockHeld: false,
     rollTimer: 0,
     hurtTimer: 0,
+    combatRegenDelay: 0,
     walkTime: 0,
     bowPivot: null,
     quiver: null,
@@ -1806,23 +1853,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       // Storage can be unavailable in private or embedded browser contexts.
     }
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
-  }
-
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
-
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
-  }
-
-  function lerpAngle(a, b, t) {
-    return a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
-  }
-
-  function smoothstep(edge0, edge1, x) {
-    const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
-    return t * t * (3 - 2 * t);
   }
 
   function addShadow(mesh) {
@@ -1909,26 +1939,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(7, 7);
     return texture;
-  }
-
-  function hashString(value) {
-    let hash = 2166136261;
-    for (let i = 0; i < value.length; i += 1) {
-      hash ^= value.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    return hash >>> 0;
-  }
-
-  function seededRandom(seed) {
-    let state = hashString(seed || "ironhold");
-    return () => {
-      state += 0x6D2B79F5;
-      let t = state;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
   }
 
   function createExplorationTexture(seed) {
@@ -2075,6 +2085,22 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return !!definition && definition.character === key;
   }
 
+  function equipmentIdsForCharacter(character) {
+    const key = characterKey(character);
+    return Object.entries(equipmentDefs)
+      .filter(([, definition]) => definition.character === key)
+      .map(([id]) => id);
+  }
+
+  function availableEquipmentForCharacter(character) {
+    const key = characterKey(character);
+    if (localGodModeEnabled()) {
+      return equipmentIdsForCharacter(key);
+    }
+    const progress = getCharacterProgress(key);
+    return (progress.unlockedEquipment || []).filter(id => validEquipmentForCharacter(key, id));
+  }
+
   function normalizeCharacterProgress(source, character) {
     const normalized = defaultCharacterProgress(character);
     const entry = source && typeof source === "object" ? source : {};
@@ -2090,7 +2116,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const weapon = entry.equipment && validEquipmentForCharacter(character, entry.equipment.weapon)
       ? entry.equipment.weapon
       : normalized.equipment.weapon;
-    normalized.equipment.weapon = normalized.unlockedEquipment.includes(weapon) ? weapon : normalized.equipment.weapon;
+    normalized.equipment.weapon = normalized.unlockedEquipment.includes(weapon) || localGodModeEnabled()
+      ? weapon
+      : normalized.equipment.weapon;
     normalized.perks = Array.isArray(entry.perks)
       ? entry.perks.filter(id => !!perkDefs[id]).filter((id, index, values) => values.indexOf(id) === index)
       : [];
@@ -2124,13 +2152,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function cycleEquippedWeapon() {
     const key = characterKey(player.character);
     const progress = getCharacterProgress(key);
-    const unlocked = (progress.unlockedEquipment || []).filter(id => validEquipmentForCharacter(key, id));
-    if (unlocked.length < 2) {
-      showBanner("No other kit unlocked yet", 1.8);
+    const available = availableEquipmentForCharacter(key);
+    if (available.length < 2) {
+      showBanner(localGodModeEnabled() ? "No other kit available" : "No other kit unlocked yet", 1.8);
       return false;
     }
-    const index = unlocked.indexOf(equippedWeapon(key));
-    progress.equipment.weapon = unlocked[(index + 1) % unlocked.length];
+    const index = available.indexOf(equippedWeapon(key));
+    progress.equipment.weapon = available[(index + 1) % available.length];
     playSfx("ui", 1);
     showBanner("Kit: " + equipmentDefs[progress.equipment.weapon].name + " - G to swap", 2.2);
     applyProgressionStats(false);
@@ -2146,6 +2174,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function currentMountTackId() {
+    if (localGodModeEnabled()) {
+      return ROADWARDEN_TACK_ID;
+    }
     return progression && progression.exploration && progression.exploration.mountTackId === ROADWARDEN_TACK_ID
       ? ROADWARDEN_TACK_ID
       : "";
@@ -2159,10 +2190,13 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
   function currentMountId() {
     const exploration = progression && progression.exploration;
-    return exploration && exploration.activeMountId === "drake" && exploration.drakeUnlocked ? "drake" : "horse";
+    return exploration && exploration.activeMountId === "drake" && (exploration.drakeUnlocked || localGodModeEnabled()) ? "drake" : "horse";
   }
 
   function ownedMountIds() {
+    if (localGodModeEnabled()) {
+      return ["horse", "drake"];
+    }
     const exploration = progression && progression.exploration;
     const owned = [];
     if (exploration && exploration.horseUnlocked) {
@@ -2330,12 +2364,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       exploration: {
         quests: {},
         discovered: [],
+        respawnTownId: "",
+        respawnLocal: null,
         completed: false,
         horseUnlocked: false,
         drakeUnlocked: false,
         activeMountId: "horse",
         mountTackId: "",
         boons: { health: 0, guard: 0, mana: 0 },
+        dungeonClears: {},
+        potionInventory: [],
         potionCooldownBonus: 0,
         position: null,
         resources: null,
@@ -2347,6 +2385,28 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function numberOrZero(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : 0;
+  }
+
+  function normalizePotionInventoryItem(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const kind = value.kind === "full" ? "full" : "small";
+    if (kind === "full") {
+      return { kind };
+    }
+    const healAmount = clamp(Math.ceil(numberOrZero(value.healAmount)), 1, 999);
+    return { kind, healAmount };
+  }
+
+  function normalizePotionInventory(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map(normalizePotionInventoryItem)
+      .filter(Boolean)
+      .slice(0, POTION_INVENTORY_CAPACITY);
   }
 
   function normalizeProgression(raw) {
@@ -2370,6 +2430,19 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     base.exploration.discovered = Array.isArray(sourceExploration.discovered)
       ? sourceExploration.discovered.filter(value => typeof value === "string").slice(0, 20)
       : [];
+    base.exploration.respawnTownId = typeof sourceExploration.respawnTownId === "string"
+      ? sourceExploration.respawnTownId.slice(0, 64)
+      : "";
+    if (sourceExploration.respawnLocal && typeof sourceExploration.respawnLocal === "object") {
+      const x = Number(sourceExploration.respawnLocal.x);
+      const z = Number(sourceExploration.respawnLocal.z);
+      if (Number.isFinite(x) && Number.isFinite(z) && Math.hypot(x, z) <= 420) {
+        base.exploration.respawnLocal = {
+          x: Math.round(x * 100) / 100,
+          z: Math.round(z * 100) / 100
+        };
+      }
+    }
     base.exploration.completed = !!sourceExploration.completed;
     base.exploration.horseUnlocked = !!sourceExploration.horseUnlocked;
     base.exploration.drakeUnlocked = !!sourceExploration.drakeUnlocked;
@@ -2379,6 +2452,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     base.exploration.boons.health = Math.max(0, Math.floor(numberOrZero(sourceBoons.health)));
     base.exploration.boons.guard = Math.max(0, Math.floor(numberOrZero(sourceBoons.guard)));
     base.exploration.boons.mana = Math.max(0, Math.floor(numberOrZero(sourceBoons.mana)));
+    if (sourceExploration.dungeonClears && typeof sourceExploration.dungeonClears === "object") {
+      for (const [id, cleared] of Object.entries(sourceExploration.dungeonClears)) {
+        if (typeof id === "string" && cleared) {
+          base.exploration.dungeonClears[id] = true;
+        }
+      }
+    }
+    base.exploration.potionInventory = normalizePotionInventory(sourceExploration.potionInventory);
     base.exploration.potionCooldownBonus = clamp(Math.floor(numberOrZero(sourceExploration.potionCooldownBonus)), 0, 8);
     if (sourceExploration.position && typeof sourceExploration.position === "object") {
       const x = numberOrZero(sourceExploration.position.x);
@@ -2504,6 +2585,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function hasAbility(ability, character = player.character) {
+    if (localGodModeEnabled()) {
+      return true;
+    }
     return getCharacterLevel(character) >= abilityUnlockLevel(ability);
   }
 
@@ -2511,29 +2595,64 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     showBanner(abilityDisplayName(ability) + " unlocks at level " + abilityUnlockLevel(ability), 2.3);
   }
 
+  function potionSlotUnlockLevel(index) {
+    return POTION_SLOT_UNLOCK_LEVELS[index] || POTION_SLOT_UNLOCK_LEVELS[POTION_SLOT_UNLOCK_LEVELS.length - 1] || 1;
+  }
+
+  function potionSlotsUnlockedForLevel(level, { godMode = false } = {}) {
+    if (godMode) {
+      return POTION_INVENTORY_CAPACITY;
+    }
+    const safeLevel = Math.max(1, Math.floor(numberOrZero(level)));
+    return clamp(
+      POTION_SLOT_UNLOCK_LEVELS.filter(unlockLevel => safeLevel >= unlockLevel).length,
+      0,
+      POTION_INVENTORY_CAPACITY
+    );
+  }
+
+  function unlockedPotionSlotCount(character = player.character) {
+    return potionSlotsUnlockedForLevel(getCharacterLevel(character), { godMode: localGodModeEnabled() });
+  }
+
+  function potionSlotUnlocks() {
+    return POTION_SLOT_UNLOCK_LEVELS.slice(0, POTION_INVENTORY_CAPACITY).map((level, index) => ({
+      level,
+      name: "Potion pouch slot " + (index + 1)
+    }));
+  }
+
+  function sortUnlocks(unlocks) {
+    return unlocks.slice().sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  }
+
   function characterLevelUnlocks(character) {
+    const pouchSlots = potionSlotUnlocks();
     if (character === "wizard") {
-      return [
+      return sortUnlocks([
+        ...pouchSlots,
         { level: 1, name: "Healing Draught" },
         { level: 3, name: "Healing Draught II" },
         { level: 4, name: "Arcane burst" },
         { level: 5, name: "Frostbind Bolt (F)" },
         { level: 7, name: "Healing Draught III" },
         { level: 8, name: "Crown of Storms (C)" }
-      ];
+      ]);
     }
     if (character === "ranger") {
-      return [
+      return sortUnlocks([
+        ...pouchSlots,
         { level: 3, name: "Piercing shot" },
         { level: 5, name: "Parting Shot (F)" },
         { level: 7, name: "Heartseeker (C)" }
-      ];
+      ]);
     }
-    return [
+    return sortUnlocks([
+      ...pouchSlots,
       { level: 3, name: "Shield bash" },
       { level: 5, name: "Warden's Resolve (F)" },
       { level: 8, name: "Sweeping Cut (C)" }
-    ];
+    ]);
   }
 
   function nextUnlockText(character = player.character) {
@@ -2650,10 +2769,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         exploration.quests[quest.id] = { state: quest.state, progress: quest.progress };
       }
       exploration.discovered = Array.from(game.exploration.discovered || []);
+      exploration.respawnTownId = game.exploration.respawnTownId || "";
+      exploration.respawnLocal = game.exploration.respawnLocal
+        ? { x: game.exploration.respawnLocal.x, z: game.exploration.respawnLocal.z }
+        : null;
+      exploration.potionInventory = normalizePotionInventory(exploration.potionInventory);
       exploration.completed = !!game.exploration.completed;
-      exploration.horseUnlocked = exploration.horseUnlocked || (!!game.exploration.horse && game.exploration.horse.mountId !== "drake");
+      if (!localGodModeEnabled()) {
+        exploration.horseUnlocked = exploration.horseUnlocked || (!!game.exploration.horse && game.exploration.horse.mountId !== "drake");
+      }
     }
-    if (game.mode === "exploration" && game.state === "playing" && !localPlayerInArenaActivity()) {
+    if (game.mode === "exploration" && game.state === "playing" && !localPlayerInSharedActivity()) {
       const local = explorationLocalPosition(player.position, new THREE.Vector3());
       exploration.position = {
         x: Math.round(local.x * 100) / 100,
@@ -2701,6 +2827,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
     }
     game.exploration.discovered = new Set(Array.isArray(saved.discovered) ? saved.discovered : []);
+    game.exploration.respawnTownId = typeof saved.respawnTownId === "string" ? saved.respawnTownId : "";
+    game.exploration.respawnLocal = normalizeRespawnLocal(saved.respawnLocal, game.exploration.radius);
+    game.exploration.respawnPoint = null;
     game.exploration.completed = !!saved.completed;
   }
 
@@ -2727,8 +2856,198 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     player.mana = player.maxMana > 0 ? clamp(resources.mana, 0, player.maxMana) : 0;
   }
 
+  function storedPotions() {
+    if (!progression || !progression.exploration) {
+      return [];
+    }
+    progression.exploration.potionInventory = normalizePotionInventory(progression.exploration.potionInventory);
+    return progression.exploration.potionInventory;
+  }
+
+  function storedPotionFromDrop(potion) {
+    if (!potion || potion.kind === "wizard") {
+      return null;
+    }
+    return normalizePotionInventoryItem({
+      kind: potion.fullHeal || potion.kind === "full" ? "full" : "small",
+      healAmount: potion.healAmount
+    });
+  }
+
+  function storedPotionFromMessage(message) {
+    return normalizePotionInventoryItem({
+      kind: message.fullHeal || message.kind === "full" ? "full" : "small",
+      healAmount: message.healAmount
+    });
+  }
+
+  function storedPotionLabel(item) {
+    if (!item) {
+      return "-";
+    }
+    return item.kind === "full" ? "Full" : "+" + Math.ceil(item.healAmount || 0);
+  }
+
+  function storedPotionName(item) {
+    if (!item) {
+      return "Empty potion slot";
+    }
+    return item.kind === "full" ? "Full recovery potion" : "Health potion " + storedPotionLabel(item);
+  }
+
+  function canStorePotionDrop(potion) {
+    return !!storedPotionFromDrop(potion) && storedPotions().length < unlockedPotionSlotCount();
+  }
+
+  function potionPickupColor(potion) {
+    if (!potion) {
+      return 0xff7f96;
+    }
+    if (potion.kind === "wizard") {
+      return 0x7ae8ff;
+    }
+    return potion.fullHeal ? 0xffd56a : 0xff7f96;
+  }
+
+  function storePotionItem(item, { showMessage = true } = {}) {
+    const normalized = normalizePotionInventoryItem(item);
+    if (!normalized) {
+      return false;
+    }
+    const inventory = storedPotions();
+    const unlockedSlots = unlockedPotionSlotCount();
+    if (inventory.length >= unlockedSlots) {
+      if (showMessage) {
+        showBanner(unlockedSlots > 0 ? "Potion pouch full" : "Potion slot unlocks at level " + potionSlotUnlockLevel(0), 1.8);
+      }
+      return false;
+    }
+    inventory.push(normalized);
+    if (showMessage) {
+      showBanner("Stored " + storedPotionName(normalized) + " " + inventory.length + "/" + unlockedSlots, 2.2);
+      playSfx("ui", 0.75);
+    }
+    saveProgress();
+    updateHud();
+    return true;
+  }
+
+  function applyStoredPotion(item) {
+    const beforeHeal = player.health;
+    player.health = item.kind === "full"
+      ? player.maxHealth
+      : Math.min(player.maxHealth, player.health + (item.healAmount || 0));
+    const healed = Math.ceil(player.health - beforeHeal);
+    spawnImpact(player.position, item.kind === "full" ? 0xffd56a : 0xff7f96, 18);
+    playSfx("potion", item.kind === "full" ? 1.15 : 0.9);
+    showBanner(item.kind === "full" ? "Used full recovery potion" : "Used potion +" + healed);
+    sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+  }
+
+  function useStoredPotionAtIndex(index = 0) {
+    const inventory = storedPotions();
+    if (index >= unlockedPotionSlotCount()) {
+      showBanner("Potion slot unlocks at level " + potionSlotUnlockLevel(index), 1.8);
+      return false;
+    }
+    const item = inventory[index];
+    if (!item) {
+      showBanner("No stored potion", 1.6);
+      return false;
+    }
+    if (player.health >= player.maxHealth) {
+      showBanner("Health already full", 1.6);
+      return false;
+    }
+    inventory.splice(index, 1);
+    applyStoredPotion(item);
+    saveProgress();
+    updateHud();
+    return true;
+  }
+
+  function handlePotionHotkey() {
+    return useStoredPotionAtIndex(0);
+  }
+
+  const potionSlotButtons = [];
+
+  function ensurePotionSlotButtons() {
+    if (!potionSlots || potionSlotButtons.length === POTION_INVENTORY_CAPACITY) {
+      return;
+    }
+    potionSlots.replaceChildren();
+    potionSlotButtons.length = 0;
+    for (let i = 0; i < POTION_INVENTORY_CAPACITY; i += 1) {
+      const button = document.createElement("button");
+      button.className = "potion-slot";
+      button.type = "button";
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("class", "potion-slot-icon");
+      icon.setAttribute("viewBox", "0 0 32 32");
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = '<path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/>';
+      const label = document.createElement("span");
+      label.className = "potion-slot-label";
+      button.append(icon, label);
+      button.addEventListener("click", () => useStoredPotionAtIndex(i));
+      potionSlots.appendChild(button);
+      potionSlotButtons.push(button);
+    }
+  }
+
+  function updatePotionInventoryUi() {
+    if (!potionInventory || !potionSlots) {
+      return;
+    }
+    const visible = game.mode === "exploration" && !!progression && !!progression.exploration;
+    potionInventory.hidden = !visible;
+    if (!visible) {
+      return;
+    }
+    ensurePotionSlotButtons();
+    const inventory = storedPotions();
+    const unlockedSlots = unlockedPotionSlotCount();
+    for (let i = 0; i < POTION_INVENTORY_CAPACITY; i += 1) {
+      const item = inventory[i] || null;
+      const button = potionSlotButtons[i];
+      if (!button) {
+        continue;
+      }
+      const locked = i >= unlockedSlots;
+      const label = button.querySelector(".potion-slot-label");
+      if (label) {
+        label.textContent = locked ? "Lv " + potionSlotUnlockLevel(i) : storedPotionLabel(item);
+      }
+      button.classList.toggle("filled", !!item);
+      button.classList.toggle("full", item && item.kind === "full");
+      button.classList.toggle("empty", !item && !locked);
+      button.classList.toggle("locked", locked);
+      button.disabled = locked || !item;
+      button.title = locked
+        ? "Potion slot unlocks at level " + potionSlotUnlockLevel(i) + (item ? " - " + storedPotionName(item) + " waiting here" : "")
+        : item ? storedPotionName(item) + " - use when wounded" : "Empty potion slot";
+      button.setAttribute("aria-label", button.title);
+    }
+  }
+
+  function restoreSavedTownRespawnPoint() {
+    return restoreTownRespawnPoint(game.exploration, explorationToWorld);
+  }
+
+  function setExplorationRespawnTown(village) {
+    return setTownRespawnPoint(game.exploration, village, explorationToWorld);
+  }
+
+  function currentExplorationRespawnPosition() {
+    return currentTownRespawnPosition(game.exploration, explorationToWorld);
+  }
+
   function explorationGuidanceText() {
     const level = getCharacterLevel();
+    if (localGodModeEnabled()) {
+      return "Local god mode enabled: all kits, mounts, tack, and abilities are available for testing. Press G for kits and M for mounts.";
+    }
     if (!progression.exploration.guidanceSeen) {
       return "Talk to Sella by the homestead to start mapping the valley. Progress saves on this browser.";
     }
@@ -2765,8 +3084,96 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     };
   }
 
+  function defaultDungeonActivity() {
+    return {
+      active: false,
+      phase: "idle",
+      activityId: "",
+      dungeonId: "",
+      name: "",
+      center: { x: 0, z: 0 },
+      radius: DUNGEON_RADIUS,
+      participants: [],
+      pendingParticipants: [],
+      optedOutParticipants: [],
+      defeatedParticipants: [],
+      rewardedClaimIds: [],
+      startedBy: "",
+      endedReason: null,
+      returnPosition: null,
+      recoveryPosition: null,
+      localReturnPosition: null,
+      localOptOutActivityId: "",
+      localSpectatorActivityId: "",
+      localPendingActivityId: "",
+      localRewardClaimIds: []
+    };
+  }
+
+  const dungeonDefinitions = {
+    [BELLWATER_DUNGEON_ID]: {
+      id: BELLWATER_DUNGEON_ID,
+      name: BELLWATER_DUNGEON_NAME,
+      shortName: "Underworks",
+      serviceLabel: "Enter Underworks",
+      clearXp: BELLWATER_DUNGEON_CLEAR_XP,
+      firstClearBoon: { health: 3, guard: 3, mana: 3 },
+      recoveryFallback: { x: 63, z: 84 },
+      encounter: ["barbarian", "bonewarden", "briarBeast", "barbarian", "bogLurker", "barbarian"],
+      startCopy: BELLWATER_DUNGEON_NAME + " sealed - clear the chamber",
+      activeCopy: BELLWATER_DUNGEON_NAME + " already active",
+      requestCopy: "Ask the host to open the Underworks",
+      queuedCopy: "The Underworks are sealed - wait for the return bell",
+      readyCopy: "Bellwater return bell is open",
+      encounterCopy: "Bellwater chamber sealed - clear the sluice",
+      clearCopy: "Bellwater chamber cleared",
+      defeatCopy: "Recovered at the Bellwater grate",
+      completeCopy: "Returned from the Underworks",
+      yieldCopy: "Rang out from the Underworks",
+      serviceBody: "Crownford's wall has drains under it older than my better hammers. Storm silt jammed the sluices, then things with teeth found the dry ledges. Clear the bell chambers, keep to the stone, and come back with your boots full of water instead of blood.",
+      serviceStatusOpen: "The Bellwater grate is open. Clear the sealed chamber, or ring out before the room is clear.",
+      serviceStatusBlocked: "The Underworks are sealed until the current activity ends."
+    },
+    [SILTWELL_DUNGEON_ID]: {
+      id: SILTWELL_DUNGEON_ID,
+      name: SILTWELL_DUNGEON_NAME,
+      shortName: "Siltwell",
+      serviceLabel: "Enter Siltwell",
+      clearXp: SILTWELL_DUNGEON_CLEAR_XP,
+      firstClearBoon: { health: 4, guard: 2, mana: 2 },
+      recoveryFallback: { x: -96, z: -116 },
+      encounter: ["spider", "spider", "bonewarden", "barbarian", "spider", "bonewarden"],
+      startCopy: SILTWELL_DUNGEON_NAME + " sealed - clear the wellstone chamber",
+      activeCopy: SILTWELL_DUNGEON_NAME + " already active",
+      requestCopy: "Ask the host to open the cistern",
+      queuedCopy: "The cistern is sealed - wait by the well bell",
+      readyCopy: "Siltwell well bell is open",
+      encounterCopy: "Siltwell chamber sealed - clear the wellstone",
+      clearCopy: "Siltwell chamber cleared",
+      defeatCopy: "Recovered at the Siltwell shade post",
+      completeCopy: "Returned from Siltwell Cistern",
+      yieldCopy: "Rang out from Siltwell Cistern",
+      serviceBody: "The old cistern keeps the desert road alive when the wells run mean. Spiders webbed the rope slots, and bone-things woke where the water should be. If you go in, clear the chamber fast and pull the well bell before the sand changes its mind.",
+      serviceStatusOpen: "The Siltwell mouth is open. Clear the wellstone chamber, or ring out before the room is clear.",
+      serviceStatusBlocked: "Siltwell is sealed until the current activity ends."
+    }
+  };
+
+  function dungeonDefinition(dungeonId) {
+    return dungeonDefinitions[dungeonId] || dungeonDefinitions[BELLWATER_DUNGEON_ID];
+  }
+
+  function activeDungeonDefinition() {
+    const activity = game.exploration.dungeonActivity;
+    return dungeonDefinition(activity.dungeonId || BELLWATER_DUNGEON_ID);
+  }
+
   function arenaActivityActive() {
     return game.mode === "exploration" && !!game.exploration.arenaActivity.active;
+  }
+
+  function dungeonActivityActive() {
+    return game.mode === "exploration" && !!game.exploration.dungeonActivity.active;
   }
 
   function localPlayerInArenaActivity() {
@@ -2780,8 +3187,37 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return !activity.participants.length || activity.participants.includes(online.localId);
   }
 
+  function localPlayerInDungeonActivity() {
+    const activity = game.exploration.dungeonActivity;
+    if (!dungeonActivityActive()) {
+      return false;
+    }
+    if (activity.activityId && activity.localOptOutActivityId === activity.activityId) {
+      return false;
+    }
+    return !activity.participants.length || activity.participants.includes(online.localId);
+  }
+
+  function localPlayerInSharedActivity() {
+    return localPlayerInArenaActivity() || localPlayerInDungeonActivity();
+  }
+
+  function activeCombatActivity() {
+    if (arenaActivityActive()) {
+      return game.exploration.arenaActivity;
+    }
+    if (dungeonActivityActive()) {
+      return game.exploration.dungeonActivity;
+    }
+    return null;
+  }
+
   function resetArenaActivityState() {
     game.exploration.arenaActivity = defaultArenaActivity();
+  }
+
+  function resetDungeonActivityState() {
+    game.exploration.dungeonActivity = defaultDungeonActivity();
   }
 
   function serializeArenaActivityState() {
@@ -2802,6 +3238,25 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     };
   }
 
+  function serializeDungeonActivityState() {
+    const activity = game.exploration.dungeonActivity;
+    return {
+      active: !!activity.active,
+      phase: activity.phase,
+      activityId: activity.activityId,
+      dungeonId: activity.dungeonId,
+      name: activity.name,
+      center: activity.center,
+      radius: activity.radius,
+      participants: activity.participants.slice(0, 8),
+      pendingParticipants: activity.pendingParticipants.slice(0, 8),
+      defeatedParticipants: activity.defeatedParticipants.slice(0, 8),
+      rewardedClaimIds: activity.rewardedClaimIds.slice(0, 8),
+      startedBy: activity.startedBy,
+      endedReason: activity.endedReason || null
+    };
+  }
+
   function arenaParticipantsForRoom() {
     const participants = new Set([online.localId]);
     for (const [id, remote] of online.remotePlayers) {
@@ -2810,6 +3265,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
     }
     return Array.from(participants).slice(0, 8);
+  }
+
+  function activityParticipantsForRoom() {
+    return arenaParticipantsForRoom();
   }
 
   function arenaListIncludes(list, id) {
@@ -2825,6 +3284,21 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       kind: "arenaQueued",
       targetId,
       activityId: activity.activityId,
+      ready,
+      phase: activity.phase
+    });
+  }
+
+  function sendDungeonQueueNotice(targetId, ready = false) {
+    const activity = game.exploration.dungeonActivity;
+    if (online.role !== "host" || !targetId || !activity.active) {
+      return;
+    }
+    sendOnlineMessage({
+      kind: "dungeonQueued",
+      targetId,
+      activityId: activity.activityId,
+      dungeonId: activity.dungeonId,
       ready,
       phase: activity.phase
     });
@@ -2851,6 +3325,26 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (!arenaListIncludes(activity.pendingParticipants, id)) {
       activity.pendingParticipants = [...activity.pendingParticipants, id].slice(0, 8);
       sendArenaQueueNotice(id, false);
+      sendWorldSnapshot(true);
+      return true;
+    }
+    return false;
+  }
+
+  function maybeQueueDungeonLateParticipant(id, state) {
+    const activity = game.exploration.dungeonActivity;
+    if (online.role !== "host" || !activity.active || !id || id === online.localId) {
+      return false;
+    }
+    if (!state || state.playing !== true) {
+      return false;
+    }
+    if (arenaListIncludes(activity.participants, id) || arenaListIncludes(activity.optedOutParticipants, id)) {
+      return false;
+    }
+    if (!arenaListIncludes(activity.pendingParticipants, id)) {
+      activity.pendingParticipants = [...activity.pendingParticipants, id].slice(0, 8);
+      sendDungeonQueueNotice(id, false);
       sendWorldSnapshot(true);
       return true;
     }
@@ -2898,6 +3392,31 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     activity.optedOutParticipants = Array.from(new Set([...activity.optedOutParticipants, id])).slice(0, 8);
     if (activity.participants.length === 0 || (activity.participants.length === 1 && activity.participants[0] === online.localId && online.role !== "host")) {
       endCrownringArenaActivity("yield");
+      return true;
+    }
+    sendWorldSnapshot(true);
+    return true;
+  }
+
+  function removeDungeonParticipant(id) {
+    const activity = game.exploration.dungeonActivity;
+    if (!activity.active || !id) {
+      return false;
+    }
+    const pendingBefore = activity.pendingParticipants.length;
+    activity.pendingParticipants = activity.pendingParticipants.filter(participant => participant !== id);
+    const nextParticipants = activity.participants.filter(participant => participant !== id);
+    if (nextParticipants.length === activity.participants.length) {
+      if (pendingBefore !== activity.pendingParticipants.length) {
+        sendWorldSnapshot(true);
+        return true;
+      }
+      return false;
+    }
+    activity.participants = nextParticipants;
+    activity.optedOutParticipants = Array.from(new Set([...activity.optedOutParticipants, id])).slice(0, 8);
+    if (activity.participants.length === 0 || (activity.participants.length === 1 && activity.participants[0] === online.localId && online.role !== "host")) {
+      endDungeonActivity("yield");
       return true;
     }
     sendWorldSnapshot(true);
@@ -2971,6 +3490,74 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     updateHud();
   }
 
+  function enterLocalDungeonActivity() {
+    const activity = game.exploration.dungeonActivity;
+    if (!activity.active) {
+      return;
+    }
+    activity.localReturnPosition = { x: player.position.x, z: player.position.z };
+    closeQuestDialog();
+    parkHorseNear(player.position);
+    clearPlayerProjectiles();
+    setDungeonVisible(true);
+    scene.fog.density = 0.026;
+    player.position.set(activity.center?.x || 0, 0, activity.center?.z || 0);
+    player.velocity.set(0, 0, 0);
+    player.yaw = 0;
+    player.group.position.copy(player.position);
+    player.group.rotation.y = 0;
+    game.cameraYaw = 0;
+    playSfx("arenaStart", 0.72);
+    showBanner(activeDungeonDefinition().startCopy, 3);
+    updateHud();
+  }
+
+  function moveLocalDungeonSpectatorToEntrance() {
+    if (game.state !== "playing") {
+      return;
+    }
+    const recovery = dungeonRecoveryPosition(game.exploration.dungeonActivity.dungeonId || BELLWATER_DUNGEON_ID);
+    setDungeonVisible(false);
+    scene.fog.density = 0.0065;
+    parkHorseNear(recovery);
+    player.position.copy(recovery);
+    player.velocity.set(0, 0, 0);
+    if (player.group) {
+      player.group.position.copy(player.position);
+    }
+    game.cameraYaw = Math.PI;
+    updateHud();
+  }
+
+  function exitLocalDungeonActivity(reason = "yield") {
+    const activity = game.exploration.dungeonActivity;
+    const defeated = reason === "defeat";
+    const completed = reason === "complete";
+    const def = activeDungeonDefinition();
+    const fallback = dungeonRecoveryPosition(def.id);
+    const returnPosition = defeated
+      ? fallback
+      : new THREE.Vector3(activity.localReturnPosition?.x ?? activity.returnPosition?.x ?? fallback.x, 0, activity.localReturnPosition?.z ?? activity.returnPosition?.z ?? fallback.z);
+    setDungeonVisible(false);
+    scene.fog.density = 0.0065;
+    player.position.copy(returnPosition);
+    player.velocity.set(0, 0, 0);
+    player.hurtTimer = 0;
+    if (defeated || completed) {
+      player.health = player.maxHealth;
+      player.guard = player.maxGuard;
+      player.mana = player.maxMana;
+    }
+    player.group.position.copy(player.position);
+    player.group.rotation.y = player.yaw;
+    parkHorseNear(player.position);
+    spawnImpact(player.position, defeated ? 0xffd889 : 0x7ae8ff, 20);
+    playSfx(defeated ? "arenaDefeat" : completed ? "arenaMilestone" : "arenaYield", 0.95);
+    showBanner(defeated ? def.defeatCopy : completed ? def.completeCopy : def.yieldCopy, 2.6);
+    saveProgress();
+    updateHud();
+  }
+
   function applyArenaActivitySnapshot(snapshot) {
     if (!snapshot || online.role !== "join") {
       return;
@@ -3024,6 +3611,60 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
   }
 
+  function applyDungeonActivitySnapshot(snapshot) {
+    if (!snapshot || online.role !== "join") {
+      return;
+    }
+    const activity = game.exploration.dungeonActivity;
+    const wasLocal = localPlayerInDungeonActivity();
+    const previousActivityId = activity.activityId;
+    const nextActivityId = snapshot.activityId || "";
+    const sameActivity = previousActivityId === nextActivityId;
+    const localReturnPosition = activity.localReturnPosition;
+    const localOptOutActivityId = activity.localOptOutActivityId;
+    const localSpectatorActivityId = activity.localSpectatorActivityId;
+    const localPendingActivityId = activity.localPendingActivityId;
+    const localRewardClaimIds = activity.localRewardClaimIds;
+    activity.active = !!snapshot.active;
+    activity.phase = activity.active ? (snapshot.phase || "active") : (snapshot.phase || "idle");
+    activity.activityId = nextActivityId;
+    activity.dungeonId = snapshot.dungeonId || BELLWATER_DUNGEON_ID;
+    const def = dungeonDefinition(activity.dungeonId);
+    activity.name = snapshot.name || def.name;
+    activity.localReturnPosition = sameActivity ? localReturnPosition : null;
+    activity.localOptOutActivityId = sameActivity ? localOptOutActivityId : "";
+    activity.localSpectatorActivityId = sameActivity ? localSpectatorActivityId : "";
+    activity.localPendingActivityId = sameActivity ? localPendingActivityId : "";
+    activity.localRewardClaimIds = sameActivity ? localRewardClaimIds : [];
+    activity.center = snapshot.center || { x: 0, z: 0 };
+    activity.radius = Math.max(8, numberOrZero(snapshot.radius) || DUNGEON_RADIUS);
+    activity.participants = Array.isArray(snapshot.participants) ? snapshot.participants.slice(0, 8) : [];
+    activity.pendingParticipants = Array.isArray(snapshot.pendingParticipants) ? snapshot.pendingParticipants.slice(0, 8) : [];
+    activity.defeatedParticipants = Array.isArray(snapshot.defeatedParticipants) ? snapshot.defeatedParticipants.slice(0, 8) : [];
+    activity.rewardedClaimIds = Array.isArray(snapshot.rewardedClaimIds) ? snapshot.rewardedClaimIds.slice(0, 8) : [];
+    activity.startedBy = snapshot.startedBy || "";
+    activity.endedReason = snapshot.endedReason || null;
+    const nowLocal = localPlayerInDungeonActivity();
+    const pendingLocal = arenaListIncludes(activity.pendingParticipants, online.localId);
+    if (nowLocal && !wasLocal) {
+      enterLocalDungeonActivity();
+    } else if (!nowLocal && wasLocal) {
+      exitLocalDungeonActivity(activity.phase === "completed" ? "complete" : activity.endedReason || "yield");
+    } else {
+      setDungeonVisible(nowLocal);
+    }
+    if (!nowLocal && activity.active) {
+      if (game.state === "playing" && activity.localSpectatorActivityId !== activity.activityId && activity.localOptOutActivityId !== activity.activityId) {
+        moveLocalDungeonSpectatorToEntrance();
+        activity.localSpectatorActivityId = activity.activityId;
+      }
+      if (pendingLocal && activity.localPendingActivityId !== activity.activityId) {
+        activity.localPendingActivityId = activity.activityId;
+        showBanner(def.queuedCopy, 2.6);
+      }
+    }
+  }
+
   function tagArenaActor(actor) {
     const activity = game.exploration.arenaActivity;
     if (!activity.active || !actor) {
@@ -3032,6 +3673,31 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     actor.activityType = "arena";
     actor.activityId = activity.activityId;
     return actor;
+  }
+
+  function tagDungeonActor(actor) {
+    const activity = game.exploration.dungeonActivity;
+    if (!activity.active || !actor) {
+      return actor;
+    }
+    actor.activityType = "dungeon";
+    actor.activityId = activity.activityId;
+    return actor;
+  }
+
+  function tagActiveCombatActor(actor) {
+    const activity = activeCombatActivity();
+    if (!activity || !actor) {
+      return actor;
+    }
+    actor.activityType = activity === game.exploration.dungeonActivity ? "dungeon" : "arena";
+    actor.activityId = activity.activityId;
+    return actor;
+  }
+
+  function enemyMatchesActiveCombat(enemy) {
+    const activity = activeCombatActivity();
+    return !activity || (enemy && enemy.activityId === activity.activityId);
   }
 
   function clearPlayerProjectiles() {
@@ -3076,6 +3742,36 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return explorationToWorld(city.localX + 25, city.localZ - 12, new THREE.Vector3());
   }
 
+  function registerDungeonPoi(poi) {
+    if (!poi || !poi.id) {
+      return null;
+    }
+    game.exploration.dungeonPois = (game.exploration.dungeonPois || []).filter(existing => existing.id !== poi.id);
+    game.exploration.dungeonPois.push(poi);
+    if (poi.id === BELLWATER_DUNGEON_ID) {
+      game.exploration.dungeonPoi = poi;
+    }
+    return poi;
+  }
+
+  function dungeonPoiById(dungeonId) {
+    const pois = game.exploration.dungeonPois || [];
+    return pois.find(poi => poi.id === dungeonId) || (game.exploration.dungeonPoi?.id === dungeonId ? game.exploration.dungeonPoi : null);
+  }
+
+  function dungeonRecoveryPosition(dungeonId = BELLWATER_DUNGEON_ID) {
+    const def = dungeonDefinition(dungeonId);
+    const poi = dungeonPoiById(def.id);
+    if (poi && poi.returnLocal) {
+      return explorationToWorld(poi.returnLocal.x, poi.returnLocal.z, new THREE.Vector3());
+    }
+    return explorationToWorld(def.recoveryFallback.x, def.recoveryFallback.z, new THREE.Vector3());
+  }
+
+  function bellwaterDungeonRecoveryPosition() {
+    return dungeonRecoveryPosition(BELLWATER_DUNGEON_ID);
+  }
+
   function parkHorseNear(position) {
     const horse = game.exploration.horse;
     if (!horse) {
@@ -3094,6 +3790,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (arenaActivityActive()) {
       showBanner("Crownring already active");
+      return false;
+    }
+    if (dungeonActivityActive()) {
+      showBanner(activeDungeonDefinition().activeCopy);
       return false;
     }
     if (isJoinedClient()) {
@@ -3139,6 +3839,248 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     sendWorldSnapshot(true);
     updateHud();
+    return true;
+  }
+
+  function dungeonRewardClaimId(activity) {
+    const def = dungeonDefinition(activity?.dungeonId || BELLWATER_DUNGEON_ID);
+    const id = activity && activity.activityId ? activity.activityId : "local";
+    return def.id + ":" + id + ":clear";
+  }
+
+  function applyDungeonFirstClearBoon(dungeonId) {
+    const def = dungeonDefinition(dungeonId);
+    const dungeonClears = progression.exploration.dungeonClears || (progression.exploration.dungeonClears = {});
+    if (dungeonClears[def.id]) {
+      return false;
+    }
+    dungeonClears[def.id] = true;
+    addProgressionBoon(def.firstClearBoon);
+    player.health = player.maxHealth;
+    player.guard = player.maxGuard;
+    player.mana = player.maxMana;
+    return true;
+  }
+
+  function applyDungeonReward(message) {
+    if (!message || game.mode !== "exploration") {
+      return false;
+    }
+    if (online.role === "join" && !messageFromKnownHost(message)) {
+      return false;
+    }
+    const activity = game.exploration.dungeonActivity;
+    const dungeonId = message.dungeonId || activity.dungeonId || BELLWATER_DUNGEON_ID;
+    const def = dungeonDefinitions[dungeonId];
+    if (!def) {
+      return false;
+    }
+    if (!message.activityId || !activity.activityId || message.activityId !== activity.activityId) {
+      return false;
+    }
+    if (activity.dungeonId && activity.dungeonId !== def.id) {
+      return false;
+    }
+    const participants = Array.isArray(message.participants) ? message.participants : [];
+    if (!participants.includes(online.localId)) {
+      return false;
+    }
+    if (arenaListIncludes(activity.defeatedParticipants, online.localId) || arenaListIncludes(activity.optedOutParticipants, online.localId)) {
+      return false;
+    }
+    const claimId = message.claimId || dungeonRewardClaimId(activity);
+    const sessionClaims = game.exploration.dungeonRewardClaimIds || (game.exploration.dungeonRewardClaimIds = []);
+    if (activity.localRewardClaimIds.includes(claimId) || sessionClaims.includes(claimId)) {
+      return false;
+    }
+    game.exploration.dungeonRewardClaimIds = [...sessionClaims, claimId].slice(-16);
+    activity.localRewardClaimIds = [...activity.localRewardClaimIds, claimId].slice(-8);
+    const xp = Math.max(0, Math.floor(numberOrZero(message.xp) || def.clearXp));
+    awardExplorationXp(xp);
+    const firstClear = message.firstClearBoon !== false && applyDungeonFirstClearBoon(def.id);
+    playSfx("arenaMilestone", 0.95);
+    showBanner(def.clearCopy + " +" + xp + " XP" + (firstClear ? " + first-clear boon" : ""), 3);
+    saveProgress();
+    updateHud();
+    return true;
+  }
+
+  function grantDungeonReward() {
+    if (!dungeonActivityActive()) {
+      return 0;
+    }
+    const activity = game.exploration.dungeonActivity;
+    const def = activeDungeonDefinition();
+    const claimId = dungeonRewardClaimId(activity);
+    if (activity.rewardedClaimIds.includes(claimId)) {
+      return 0;
+    }
+    activity.rewardedClaimIds = [...activity.rewardedClaimIds, claimId].slice(-8);
+    const rewardMessage = {
+      kind: "dungeonReward",
+      claimId,
+      activityId: activity.activityId,
+      dungeonId: def.id,
+      participants: activity.participants.slice(0, 8),
+      xp: def.clearXp,
+      firstClearBoon: true
+    };
+    applyDungeonReward(rewardMessage);
+    if (online.connected) {
+      sendOnlineMessage(rewardMessage);
+    }
+    return def.clearXp;
+  }
+
+  function dungeonEntrance(index) {
+    const angles = [-Math.PI / 2, Math.PI * 0.68, Math.PI * 0.18, -Math.PI * 0.82, Math.PI * 0.94, -Math.PI * 0.26];
+    const angle = angles[index % angles.length];
+    const lane = Math.floor(index / angles.length);
+    const startRadius = DUNGEON_RADIUS + 2.8 + lane * 0.6;
+    const targetRadius = DUNGEON_RADIUS - 5.5 - lane * 0.25;
+    return {
+      startX: Math.cos(angle) * startRadius,
+      startZ: Math.sin(angle) * startRadius,
+      targetX: Math.cos(angle) * targetRadius,
+      targetZ: Math.sin(angle) * targetRadius
+    };
+  }
+
+  function spawnDungeonEncounter() {
+    if (!dungeonActivityActive()) {
+      return;
+    }
+    const def = activeDungeonDefinition();
+    game.enemies = game.enemies.filter(enemy => {
+      if (enemy.activityId === game.exploration.dungeonActivity.activityId) {
+        scene.remove(enemy.group);
+        return false;
+      }
+      return true;
+    });
+    const types = def.encounter;
+    for (let i = 0; i < types.length; i += 1) {
+      const entrance = dungeonEntrance(i);
+      const enemy = createEnemyOfType(types[i], entrance.startX, entrance.startZ, i < 2 ? 2 : 3);
+      tagDungeonActor(enemy);
+      setEnemyEntrance(enemy, entrance, i * 0.16);
+      game.enemies.push(enemy);
+    }
+    playSfx("waveStart", 0.9);
+    showBanner(def.encounterCopy, 3);
+  }
+
+  function startDungeonActivity(dungeonId = BELLWATER_DUNGEON_ID) {
+    if (game.mode !== "exploration" || game.state !== "playing") {
+      return false;
+    }
+    const def = dungeonDefinitions[dungeonId];
+    if (!def) {
+      showBanner("Unknown dungeon entrance");
+      return false;
+    }
+    if (dungeonActivityActive()) {
+      showBanner(activeDungeonDefinition().activeCopy);
+      return false;
+    }
+    if (arenaActivityActive()) {
+      showBanner("Crownring already active");
+      return false;
+    }
+    if (isJoinedClient()) {
+      sendOnlineMessage({ kind: "dungeonStartRequest", dungeonId: def.id, state: serializePlayerState() });
+      showBanner(def.requestCopy);
+      closeQuestDialog();
+      return false;
+    }
+
+    saveProgress();
+    const returnPosition = player.position.clone();
+    const recoveryPosition = dungeonRecoveryPosition(def.id);
+    const activity = game.exploration.dungeonActivity;
+    Object.assign(activity, defaultDungeonActivity(), {
+      active: true,
+      phase: "active",
+      activityId: "dungeon-" + Date.now().toString(36),
+      dungeonId: def.id,
+      name: def.name,
+      center: { x: 0, z: 0 },
+      radius: DUNGEON_RADIUS,
+      participants: activityParticipantsForRoom(),
+      startedBy: online.localId,
+      returnPosition: { x: returnPosition.x, z: returnPosition.z },
+      recoveryPosition: { x: recoveryPosition.x, z: recoveryPosition.z }
+    });
+
+    closeQuestDialog();
+    parkHorseNear(returnPosition);
+    clearSharedWorldActors({ enemies: true, fireballs: true, potions: true });
+    clearPlayerProjectiles();
+    setDungeonVisible(true);
+    scene.fog.density = 0.026;
+    player.position.set(0, 0, 0);
+    player.velocity.set(0, 0, 0);
+    player.yaw = 0;
+    player.group.position.copy(player.position);
+    player.group.rotation.y = 0;
+    game.cameraYaw = 0;
+    spawnDungeonEncounter();
+    playSfx("arenaStart", 0.72);
+    sendOnlineMessage({ kind: "state", state: serializePlayerState() });
+    sendWorldSnapshot(true);
+    updateHud();
+    return true;
+  }
+
+  function startBellwaterDungeonActivity() {
+    return startDungeonActivity(BELLWATER_DUNGEON_ID);
+  }
+
+  function completeDungeonActivity() {
+    const activity = game.exploration.dungeonActivity;
+    if (!dungeonActivityActive()) {
+      return false;
+    }
+    const activityId = activity.activityId;
+    const def = activeDungeonDefinition();
+    grantDungeonReward();
+    clearArenaActivityActors(activityId);
+    activity.phase = "completed";
+    activity.endedReason = "complete";
+    exitLocalDungeonActivity("complete");
+    resetDungeonActivityState();
+    game.exploration.dungeonActivity.activityId = activityId;
+    game.exploration.dungeonActivity.dungeonId = def.id;
+    game.exploration.dungeonActivity.name = def.name;
+    game.exploration.dungeonActivity.phase = "completed";
+    game.exploration.dungeonActivity.endedReason = "complete";
+    sendWorldSnapshot(true);
+    return true;
+  }
+
+  function endDungeonActivity(reason = "yield") {
+    const activity = game.exploration.dungeonActivity;
+    if (!dungeonActivityActive()) {
+      return false;
+    }
+    const defeated = reason === "defeat";
+    const activityId = activity.activityId;
+    const def = activeDungeonDefinition();
+    if (defeated) {
+      activity.defeatedParticipants = Array.from(new Set([...activity.defeatedParticipants, online.localId])).slice(0, 8);
+    }
+    clearArenaActivityActors(activityId);
+    exitLocalDungeonActivity(reason);
+    resetDungeonActivityState();
+    game.exploration.dungeonActivity.activityId = activityId;
+    game.exploration.dungeonActivity.dungeonId = def.id;
+    game.exploration.dungeonActivity.name = def.name;
+    game.exploration.dungeonActivity.endedReason = reason;
+    if (isJoinedClient()) {
+      game.exploration.dungeonActivity.localOptOutActivityId = activityId;
+    }
+    sendOnlineMessage({ kind: defeated ? "dungeonDefeated" : "dungeonLeaveRequest", state: serializePlayerState() });
+    sendWorldSnapshot(true);
     return true;
   }
 
@@ -3242,8 +4184,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.exploration.terrainFlatZones.length = 0;
     game.exploration.city = null;
     game.exploration.arenaCity = null;
+    game.exploration.dungeonPoi = null;
+    game.exploration.dungeonPois = [];
+    game.exploration.respawnTownId = "";
+    game.exploration.respawnLocal = null;
+    game.exploration.respawnPoint = null;
     game.exploration.discovered = new Set();
     game.exploration.completed = false;
+    game.exploration.dungeonActivity = defaultDungeonActivity();
     game.exploration.wilds.seedPoints.length = 0;
     game.exploration.wilds.timer = 0;
     game.exploration.wilds.cursor = 0;
@@ -3276,19 +4224,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     updateHud();
   }
 
-  // Death penalty: dying costs one level. XP falls back to the previous
-  // level's threshold (xpForLevel), so the level must be re-earned; at level 1
-  // only progress into the level is lost. Stats, ability locks, and the wizard
-  // potion tier all derive from level, so applyProgressionStats/updateHud
-  // re-clamp vitals and HUD to the lower caps. Returns null when nothing was
-  // lost (level 1 with 0 XP, or outside exploration progression).
+  // Death penalty: dying wipes XP earned inside the current level only. XP
+  // falls back to the current level's threshold, so levels and unlocks remain
+  // stable. Returns null when nothing was lost (already at the current level
+  // floor, or outside exploration progression).
   function applyDeathLevelPenalty() {
     if (game.mode !== "exploration") {
       return null;
     }
     const characterProgress = getCharacterProgress();
     const beforeLevel = levelFromXp(characterProgress.xp);
-    const targetXp = xpForLevel(Math.max(1, beforeLevel - 1));
+    const targetXp = xpForLevel(beforeLevel);
     if (characterProgress.xp <= targetXp) {
       return null;
     }
@@ -3296,7 +4242,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.exploration.xp = characterProgress.xp;
     applyProgressionStats(false);
     updateHud();
-    return { lostLevel: beforeLevel > 1, level: levelFromXp(characterProgress.xp) };
+    return { level: beforeLevel };
   }
 
   function makeCone(radius, height, segments, material, x, y, z) {
@@ -3331,13 +4277,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(x || 0, y || 0, z || 0);
     return addShadow(mesh);
-  }
-
-  // Rounds a value to a small step so procedurally varied geometry still reuses
-  // a bounded set of cached buffers. Used by trees/rocks so per-instance size
-  // variety does not explode the primitive geometry cache or draw-call budget.
-  function quantizeStep(value, step) {
-    return Math.max(step, Math.round(value / step) * step);
   }
 
   // A row of merlons (crenellations) running along local +X, centered on the
@@ -3689,6 +4628,15 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function explorationGroundWorldY(worldX, worldZ, offset = 0) {
+    const activity = activeCombatActivity();
+    if (activity) {
+      const centerX = activity.center?.x || 0;
+      const centerZ = activity.center?.z || 0;
+      const radius = (activity.radius || arenaRadius) + 24;
+      if (Math.hypot(worldX - centerX, worldZ - centerZ) <= radius) {
+        return offset;
+      }
+    }
     if (localPlayerInArenaActivity() && Math.hypot(worldX, worldZ) <= arenaRadius + 24) {
       return offset;
     }
@@ -3724,7 +4672,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       { x: 158, z: 48, radius: 46, blend: 16, strength: 0.98 },
       { x: 125, z: -92, radius: 32, blend: 14, strength: 0.92 },
       { x: -133, z: 96, radius: 32, blend: 14, strength: 0.92 },
-      { x: 63, z: 81, radius: 21, blend: 10, strength: 0.82 },
+      { x: 63, z: 81, radius: 22, blend: 10, strength: 0.84 },
       { x: -104, z: -78, radius: 18, blend: 9, strength: 0.82 },
       { x: 155, z: -134, radius: 19, blend: 9, strength: 0.82 },
       { x: -209, z: 90, radius: 19, blend: 9, strength: 0.82 },
@@ -3758,16 +4706,20 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const desertFork = { x: -58, z: -74 };
     const swampFork = { x: -92, z: 128 };
     const briarFork = { x: 98, z: -72 };
+    const desert = game.exploration.biomes.find(biome => biome.id === "desert");
     addPathZones([homeDoor, homeJunction, { x: -7, z: 18 }, { x: 4, z: 43 }, { x: -5, z: 66 }, northFork], 5.8, 7.5, 0.58);
     addPathZones([northFork, { x: -4, z: 104 }, { x: 2, z: 132 }], 6.2, 8, 0.62);
     addPathZones([northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: 124, z: 30 }], 5.8, 7.5, 0.58);
+    addPathZones([{ x: 72, z: 91 }, { x: 67, z: 87 }, { x: 63, z: 81 }], 4.7, 6.8, 0.55);
     addPathZones([homeJunction, { x: 18, z: -31 }, { x: 43, z: -58 }, meadowEastFork, { x: 118, z: -86 }], 5.2, 7, 0.54);
     addPathZones([homeJunction, { x: -22, z: 3 }, { x: -46, z: 30 }, meadowWestFork, { x: -126, z: 90 }], 5.2, 7, 0.54);
     if (mountain) {
       addPathZones([northFork, { x: 24, z: 99 }, { x: 56, z: 122 }, mountainFork, { x: mountain.x + 18, z: mountain.z - 24 }], 5.2, 7.5, 0.5);
     }
     if (desert) {
+      const siltwell = { x: desert.x + 115, z: desert.z + 45 };
       addPathZones([homeJunction, { x: -18, z: -42 }, { x: -48, z: -58 }, desertFork, { x: desert.x + 10, z: desert.z + 2 }], 5.2, 7.5, 0.5);
+      addPathZones([desertFork, { x: -82, z: -92 }, siltwell], 4.6, 7, 0.5);
     }
     if (swamp) {
       addPathZones([northFork, { x: -28, z: 104 }, { x: -66, z: 124 }, swampFork, { x: swamp.x + 7, z: swamp.z - 7 }], 5.2, 7.5, 0.5);
@@ -3784,9 +4736,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       );
     }
     if (desert) {
+      const siltwell = { x: desert.x + 115, z: desert.z + 45 };
       zones.push(
         { x: desert.x + 14, z: desert.z + 6, radius: 34, blend: 16, strength: 0.9 },
         { x: desert.x - 22, z: desert.z + 18, radius: 12, blend: 8, strength: 0.86 },
+        { x: siltwell.x, z: siltwell.z, radius: 19, blend: 9, strength: 0.84 },
+        { x: -82, z: -92, radius: 6, blend: 7, strength: 0.66 },
         { x: -58, z: -74, radius: 7, blend: 8, strength: 0.72 }
       );
     }
@@ -4229,6 +5184,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (arenaCity) {
       const arenaGate = arenaCity.roadAnchor || { x: arenaCity.localX - 34, z: arenaCity.localZ - 18 };
       addExplorationRoad(group, [northFork, { x: 34, z: 100 }, { x: 72, z: 91 }, { x: arenaGate.x - 18, z: arenaGate.z - 9 }, { ...arenaGate, junction: true, major: true }], 3.05, "formal");
+    }
+    addExplorationRoad(group, [{ x: 72, z: 91, junction: true }, { x: 67, z: 87 }, { x: 63, z: 81, junction: true }], 2.15, "lane");
+    if (desert) {
+      const siltwell = { x: desert.x + 115, z: desert.z + 45 };
+      addExplorationRoad(group, [desertFork, { x: -82, z: -92 }, { ...siltwell, junction: true }], 2.15, "desert");
     }
 
     for (const village of game.exploration.villages) {
@@ -5405,6 +6365,235 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     addExplorationCollider(x, z, large ? mainRadius * 1.08 : Math.max(0.42, mainRadius * 0.82), "rock");
   }
 
+  function addBellwaterUnderworksPoi(group, random) {
+    const x = 63;
+    const z = 81;
+    const rotation = -2.42;
+    registerDungeonPoi({
+      id: BELLWATER_DUNGEON_ID,
+      name: BELLWATER_DUNGEON_NAME,
+      localX: x,
+      localZ: z,
+      entranceLocal: { x, z },
+      returnLocal: { x: x - 2.8, z: z + 4.2 },
+      radius: 9,
+      biome: "city"
+    });
+    const poi = makeDecorGroup(group, x, z, rotation, 1);
+    const interiorMaterial = materials.charcoal.clone();
+    interiorMaterial.roughness = 1;
+
+    const apron = makeBox(8.8, 0.14, 7.2, materials.darkStone, 0, 0.07, 0.15);
+    const pathLip = makeBox(3.6, 0.12, 3.2, materials.path, 0, 0.14, -2.55);
+    apron.receiveShadow = true;
+    pathLip.receiveShadow = true;
+    poi.add(apron, pathLip);
+
+    const leftPier = makeBox(1.05, 2.65, 1.12, materials.rubble, -1.55, 1.36, -1.55);
+    const rightPier = makeBox(1.05, 2.65, 1.12, materials.rubble, 1.55, 1.36, -1.55);
+    leftPier.rotation.z = -0.08;
+    rightPier.rotation.z = 0.08;
+    const lintel = makeBox(3.75, 0.72, 1.08, materials.rubble, 0, 2.72, -1.55);
+    const reveal = makeBox(2.25, 2.28, 0.16, interiorMaterial, 0, 1.22, -2.16);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.13, 8, 24, Math.PI), materials.cityWall);
+    arch.position.set(0, 1.82, -2.28);
+    addShadow(arch);
+    poi.add(leftPier, rightPier, lintel, reveal, arch);
+
+    const capA = makeSphere(1.55, materials.darkStone, -1.85, 2.0, 0.05);
+    capA.scale.set(1.45, 0.7, 1.08);
+    const capB = makeSphere(1.68, materials.rubble, 1.55, 1.85, 0.22);
+    capB.scale.set(1.52, 0.78, 1.18);
+    const capC = makeSphere(1.35, materials.stone, 0.05, 2.45, 0.52);
+    capC.scale.set(1.8, 0.58, 1.0);
+    poi.add(capA, capB, capC);
+
+    const tower = new THREE.Group();
+    tower.position.set(-3.15, 0, 0.7);
+    tower.rotation.y = 0.16;
+    tower.add(makeCylinder(1.08, 1.32, 4.05, 14, materials.rubble, 0, 2.02, 0));
+    tower.add(makeCylinder(1.28, 1.08, 0.32, 14, materials.rubble, 0, 4.2, 0));
+    addCrenelRing(tower, 1.12, { y: 4.36, count: 7, merlonW: 0.36, height: 0.42, depth: 0.22, material: materials.rubble });
+    tower.add(makeBox(0.12, 0.95, 0.08, interiorMaterial, 0, 2.65, -1.08));
+    tower.add(makeBox(0.95, 0.2, 0.52, materials.cityBannerRed, 0.9, 3.28, -0.2));
+    poi.add(tower);
+
+    const landing = makeBox(2.7, 0.18, 1.45, materials.cityWall, 1.9, 0.2, 1.18);
+    landing.rotation.y = -0.2;
+    const beamA = makeBox(1.8, 0.16, 0.16, materials.wood, 2.55, 0.44, -1.35);
+    beamA.rotation.y = 0.42;
+    const beamB = makeBox(1.45, 0.14, 0.14, materials.wood, -2.42, 0.48, -1.65);
+    beamB.rotation.y = -0.52;
+    poi.add(landing, beamA, beamB);
+
+    const lampLeft = offsetFromFacing(x, z, rotation, 3.65, -2.3);
+    const lampRight = offsetFromFacing(x, z, rotation, 3.25, 2.2);
+    const sign = offsetFromFacing(x, z, rotation, 5.25, -1.05);
+    addLanternPost(group, lampLeft.x, lampLeft.z, rotation + 0.4, 0.82);
+    addLanternPost(group, lampRight.x, lampRight.z, rotation - 0.4, 0.78);
+    addSignpost(group, sign.x, sign.z, rotation + 0.18, 0.9, materials.cityRoof);
+    addCrateStack(group, sign.x - 1.25, sign.z + 0.7, rotation - 0.2, 0.76);
+    addBarrel(group, sign.x + 1.2, sign.z - 0.55, rotation + 0.32, 0.74);
+
+    const rubbleSpots = [
+      [-3.8, -1.7, true],
+      [3.4, -1.9, false],
+      [-2.4, 2.9, false],
+      [2.8, 2.6, true]
+    ];
+    const worldFromPoi = (localX, localZ) => ({
+      x: x + localX * Math.cos(rotation) + localZ * Math.sin(rotation),
+      z: z - localX * Math.sin(rotation) + localZ * Math.cos(rotation)
+    });
+    for (const [rx, rz, large] of rubbleSpots) {
+      const point = worldFromPoi(rx, rz);
+      addExplorationRock(group, point.x, point.z, random, large);
+    }
+
+    const scoutSpot = offsetFromFacing(x, z, rotation, 6.0, 2.7);
+    const scout = createFriendlyNpc(
+      game.exploration.origin.x + scoutSpot.x,
+      game.exploration.origin.z + scoutSpot.z,
+      random,
+      5.5,
+      "Bellwater Scout",
+      null,
+      "city"
+    );
+    scout.serviceType = "dungeon";
+    scout.dungeonId = BELLWATER_DUNGEON_ID;
+    game.npcs.push(scout);
+
+    const wallLeft = offsetFromFacing(x, z, rotation, 0.25, -2.3);
+    const wallRight = offsetFromFacing(x, z, rotation, 0.25, 2.3);
+    const back = offsetFromFacing(x, z, rotation, -1.45, 0);
+    const towerCollider = offsetFromFacing(x, z, rotation, -0.7, -3.15);
+    addExplorationCollider(wallLeft.x, wallLeft.z, 1.7, "structure");
+    addExplorationCollider(wallRight.x, wallRight.z, 1.7, "structure");
+    addExplorationCollider(back.x, back.z, 2.2, "structure");
+    addExplorationCollider(towerCollider.x, towerCollider.z, 1.7, "structure");
+  }
+
+  function addSiltwellCisternPoi(group, desertBiome, random) {
+    if (!desertBiome) {
+      return;
+    }
+    const x = desertBiome.x + 115;
+    const z = desertBiome.z + 45;
+    const rotation = -2.36;
+    const returnLocal = offsetFromFacing(x, z, rotation, 6.7, 2.15);
+    registerDungeonPoi({
+      id: SILTWELL_DUNGEON_ID,
+      name: SILTWELL_DUNGEON_NAME,
+      localX: x,
+      localZ: z,
+      entranceLocal: { x, z },
+      returnLocal,
+      radius: 10,
+      biome: "desert"
+    });
+
+    const poi = makeDecorGroup(group, x, z, rotation, 1);
+    const darkMaterial = materials.charcoal.clone();
+    darkMaterial.roughness = 1;
+
+    const apron = makeBox(8.4, 0.12, 6.2, materials.desert, 0, 0.07, 0.28);
+    const pathLip = makeBox(3.15, 0.12, 3.35, materials.path, 0, 0.14, -2.5);
+    const buriedSlab = makeBox(5.8, 0.18, 2.1, materials.sandstone, 0.1, 0.21, 1.95);
+    buriedSlab.rotation.y = 0.08;
+    apron.receiveShadow = true;
+    pathLip.receiveShadow = true;
+    buriedSlab.receiveShadow = true;
+    poi.add(apron, pathLip, buriedSlab);
+
+    const leftPylon = makeBox(0.95, 2.8, 1.0, materials.sandstone, -1.45, 1.4, -1.48);
+    const rightPylon = makeBox(0.95, 2.55, 1.0, materials.sandstone, 1.45, 1.28, -1.48);
+    leftPylon.rotation.z = -0.05;
+    rightPylon.rotation.z = 0.07;
+    const lintel = makeBox(3.55, 0.62, 0.98, materials.adobe, 0, 2.58, -1.5);
+    const reveal = makeBox(2.1, 2.05, 0.16, darkMaterial, 0, 1.1, -2.1);
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(1.02, 0.12, 8, 24, Math.PI), materials.sandstone);
+    arch.position.set(0, 1.76, -2.2);
+    addShadow(arch);
+    poi.add(leftPylon, rightPylon, lintel, reveal, arch);
+
+    const wellBase = makeCylinder(1.08, 1.28, 0.34, 18, materials.sandstone, -2.82, 0.24, 1.38);
+    const wellDark = makeCylinder(0.78, 0.84, 0.055, 18, darkMaterial, -2.82, 0.44, 1.38);
+    const wellPostA = makeCylinder(0.06, 0.08, 1.75, 7, materials.wood, -3.52, 1.22, 1.38);
+    const wellPostB = makeCylinder(0.06, 0.08, 1.75, 7, materials.wood, -2.12, 1.22, 1.38);
+    const crossbar = makeBox(1.65, 0.13, 0.16, materials.wood, -2.82, 2.08, 1.38);
+    const rope = makeCylinder(0.022, 0.022, 1.04, 6, materials.rope, -2.82, 1.5, 1.38);
+    const bell = makeCone(0.15, 0.32, 9, materials.bronze || materials.gold, -2.82, 0.92, 1.38);
+    bell.rotation.x = Math.PI;
+    poi.add(wellBase, wellDark, wellPostA, wellPostB, crossbar, rope, bell);
+
+    const shadePostA = makeCylinder(0.055, 0.07, 1.8, 6, materials.wood, 2.28, 0.98, 1.0);
+    const shadePostB = makeCylinder(0.055, 0.07, 1.55, 6, materials.wood, 3.68, 0.86, 0.72);
+    const shade = makeBox(2.15, 0.07, 1.24, materials.cloth, 2.98, 1.82, 0.88);
+    shade.rotation.z = -0.08;
+    shade.rotation.x = 0.08;
+    poi.add(shadePostA, shadePostB, shade);
+
+    const jarA = makeCylinder(0.28, 0.34, 0.72, 10, materials.clay, 2.35, 0.46, 2.2);
+    const jarNeckA = makeCylinder(0.12, 0.18, 0.18, 10, materials.clay, 2.35, 0.91, 2.2);
+    const jarB = makeCylinder(0.2, 0.28, 0.55, 10, materials.clay, 3.05, 0.36, 2.02);
+    const webA = makeBox(0.035, 0.035, 2.35, materials.spiderMarking, -1.08, 1.86, -1.92);
+    webA.rotation.y = 0.75;
+    webA.rotation.z = 0.2;
+    const webB = makeBox(0.035, 0.035, 2.0, materials.spiderMarking, 1.12, 1.78, -1.88);
+    webB.rotation.y = -0.65;
+    webB.rotation.z = -0.16;
+    poi.add(jarA, jarNeckA, jarB, webA, webB);
+
+    const ribA = makeCylinder(0.035, 0.055, 1.28, 7, materials.bone, -3.25, 0.55, -0.9);
+    const ribB = makeCylinder(0.035, 0.055, 1.05, 7, materials.bone, -3.0, 0.5, -0.56);
+    ribA.rotation.z = 0.72;
+    ribB.rotation.z = -0.64;
+    const stoneA = makeSphere(0.82, materials.sandstone, 2.65, 0.62, -1.46);
+    stoneA.scale.set(1.4, 0.52, 0.8);
+    const stoneB = makeSphere(0.7, materials.adobe, -2.18, 0.45, -2.4);
+    stoneB.scale.set(1.2, 0.48, 0.7);
+    poi.add(ribA, ribB, stoneA, stoneB);
+
+    const cactusSpot = offsetFromFacing(x, z, rotation, 5.0, 4.0);
+    const bushSpot = offsetFromFacing(x, z, rotation, 4.5, -4.1);
+    const crateSpot = offsetFromFacing(x, z, rotation, 5.6, 1.05);
+    addDesertCactus(group, cactusSpot.x, cactusSpot.z, random);
+    addDryBush(group, bushSpot.x, bushSpot.z, random);
+    addCrateStack(group, crateSpot.x, crateSpot.z, rotation + 0.25, 0.64);
+
+    const keeperSpot = offsetFromFacing(x, z, rotation, 6.8, -2.15);
+    const keeper = createFriendlyNpc(
+      game.exploration.origin.x + keeperSpot.x,
+      game.exploration.origin.z + keeperSpot.z,
+      random,
+      5.8,
+      "Ilyas",
+      null,
+      "desert"
+    );
+    keeper.serviceType = "dungeon";
+    keeper.dungeonId = SILTWELL_DUNGEON_ID;
+    game.npcs.push(keeper);
+
+    const worldFromPoi = (localX, localZ) => ({
+      x: x + localX * Math.cos(rotation) + localZ * Math.sin(rotation),
+      z: z - localX * Math.sin(rotation) + localZ * Math.cos(rotation)
+    });
+    const colliders = [
+      [-1.45, -1.48, 1.18],
+      [1.45, -1.48, 1.18],
+      [0, -0.55, 1.45],
+      [-2.82, 1.38, 1.18],
+      [2.95, 0.86, 0.92],
+      [2.65, -1.46, 0.9]
+    ];
+    for (const [cx, cz, radius] of colliders) {
+      const point = worldFromPoi(cx, cz);
+      addExplorationCollider(point.x, point.z, radius, "structure");
+    }
+  }
+
   function addExplorationFlowers(group, random, count) {
     const geometry = new THREE.SphereGeometry(0.09, 8, 6);
     const material = materials.flower.clone();
@@ -5662,7 +6851,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       return true;
     }
     if (quest.prerequisite === "horseUnlocked") {
-      return !!(progression && progression.exploration && progression.exploration.horseUnlocked) || !!game.exploration.horse;
+      return localGodModeEnabled() || !!(progression && progression.exploration && progression.exploration.horseUnlocked) || !!game.exploration.horse;
     }
     return true;
   }
@@ -6031,10 +7220,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const side = rightFromYaw(player.yaw, tmpVec).multiplyScalar(-2.2);
     const position = tmpVec2.copy(player.position).add(side);
     game.exploration.horse = createHorse(position.x, position.z);
-    if (game.exploration.horse.mountId === "drake") {
-      progression.exploration.drakeUnlocked = true;
-    } else {
-      progression.exploration.horseUnlocked = true;
+    if (showEffects || !localGodModeEnabled()) {
+      if (game.exploration.horse.mountId === "drake") {
+        progression.exploration.drakeUnlocked = true;
+      } else {
+        progression.exploration.horseUnlocked = true;
+      }
     }
     if (showEffects) {
       spawnImpact(position, 0xffd889, 24);
@@ -6361,8 +7552,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function updateQuestMarkers() {
     for (const npc of game.npcs) {
       if (!npc.questMarker || !npc.questId) {
-        if (npc.questMarker && npcOffersCrownringService(npc)) {
-          npc.questMarker.visible = !arenaActivityActive();
+        if (npc.questMarker && npcServiceType(npc)) {
+          npc.questMarker.visible = !serviceUnavailable(npcServiceType(npc));
           npc.questMarker.scale.setScalar(1.22);
           npc.questMarker.material.color.setHex(0xffd889);
         }
@@ -6378,7 +7569,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function updateTalkPrompt() {
-    if (game.mode !== "exploration" || game.state !== "playing" || !questDialog.hidden) {
+    if (game.mode !== "exploration" || game.state !== "playing" || !questDialog.hidden || localPlayerInSharedActivity()) {
       talkPrompt.hidden = true;
       game.activeNpc = null;
       return;
@@ -6533,7 +7724,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     } else if (button === questClaimButton) {
       claimCurrentQuest();
     } else if (button === questServiceButton) {
-      startCrownringArenaActivity();
+      activateCurrentNpcService();
     } else {
       playSfx("uiBack", 1);
       closeQuestDialog();
@@ -6625,23 +7816,82 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return !!npc && npc.serviceType === "crownring";
   }
 
+  function npcOffersDungeonService(npc) {
+    return !!npc && npc.serviceType === "dungeon";
+  }
+
+  function npcServiceType(npc) {
+    if (npcOffersCrownringService(npc)) {
+      return "crownring";
+    }
+    if (npcOffersDungeonService(npc)) {
+      return "dungeon";
+    }
+    return "";
+  }
+
+  function serviceUnavailable(serviceType) {
+    if (serviceType === "crownring") {
+      return arenaActivityActive() || dungeonActivityActive();
+    }
+    if (serviceType === "dungeon") {
+      return dungeonActivityActive() || arenaActivityActive();
+    }
+    return true;
+  }
+
+  function serviceButtonLabel(serviceType, npc = game.dialogNpc) {
+    if (serviceType === "dungeon") {
+      return dungeonDefinition(npc?.dungeonId || BELLWATER_DUNGEON_ID).serviceLabel;
+    }
+    return "Enter Crownring";
+  }
+
+  function activateCurrentNpcService() {
+    const serviceType = npcServiceType(game.dialogNpc);
+    if (serviceType === "dungeon") {
+      return startDungeonActivity(game.dialogNpc?.dungeonId || BELLWATER_DUNGEON_ID);
+    }
+    if (serviceType === "crownring") {
+      return startCrownringArenaActivity();
+    }
+    return false;
+  }
+
   function refreshQuestDialog() {
     const npc = game.dialogNpc;
     if (!npc) {
       return;
     }
     const quest = npc.questId ? getQuest(npc.questId) : null;
+    const serviceType = npcServiceType(npc);
+    const serviceBlocked = serviceUnavailable(serviceType);
     questDialogTitle.textContent = npc.name;
     questAcceptButton.hidden = true;
     questClaimButton.hidden = true;
-    questServiceButton.hidden = !npcOffersCrownringService(npc) || arenaActivityActive();
+    questServiceButton.hidden = !serviceType || serviceBlocked;
+    questServiceButton.textContent = serviceButtonLabel(serviceType, npc);
 
     if (!quest) {
-      if (npcOffersCrownringService(npc)) {
+      if (serviceType === "crownring") {
         questDialogBody.textContent = "The Crownring is open to any sworn traveler. Step through the steward's gate, fight as many waves as you dare, then yield before pride empties your flask.";
-        questDialogStatus.textContent = arenaActivityActive() ? "The Crownring is already active." : "Press Enter on the service button to enter the Crownring.";
-        questServiceButton.hidden = arenaActivityActive();
-        questServiceButton.textContent = "Enter Crownring";
+        questDialogStatus.textContent = serviceBlocked ? "Another shared activity is already active." : "Press Enter on the service button to enter the Crownring.";
+        finishQuestDialogRefresh();
+        return;
+      }
+      if (serviceType === "dungeon") {
+        const def = dungeonDefinition(npc.dungeonId || BELLWATER_DUNGEON_ID);
+        const activeDef = dungeonActivityActive() ? activeDungeonDefinition() : null;
+        questDialogBody.textContent = def.serviceBody;
+        questDialogStatus.textContent = serviceBlocked
+          ? activeDef
+            ? activeDef.id === def.id
+              ? def.serviceStatusBlocked
+              : activeDef.name + " is active; finish it before opening " + def.shortName + "."
+            : "Another shared activity is already active."
+          : def.serviceStatusOpen;
+        finishQuestDialogRefresh();
+        return;
       } else {
         questDialogBody.textContent = ambientLineFor({ npcName: npc.name, biome: npc.biome });
       }
@@ -6665,9 +7915,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     } else if (quest.state === "ready") {
       questClaimButton.hidden = false;
     }
-    if (npcOffersCrownringService(npc) && !arenaActivityActive()) {
+    if (serviceType && !serviceBlocked) {
       questServiceButton.hidden = false;
-      questServiceButton.textContent = "Enter Crownring";
+      questServiceButton.textContent = serviceButtonLabel(serviceType, npc);
     }
     finishQuestDialogRefresh();
   }
@@ -6984,7 +8234,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   const minimapBase = { key: "", canvas: null };
 
   function minimapWorldKey() {
-    return game.exploration.seed + ":" + game.exploration.biomes.length + ":" + game.exploration.roads.length + ":" + game.exploration.villages.length + ":" + game.exploration.discovered.size;
+    return game.exploration.seed + ":" + game.exploration.biomes.length + ":" + game.exploration.roads.length + ":" + game.exploration.villages.length + ":" + (game.exploration.dungeonPois || []).length + ":" + game.exploration.discovered.size;
   }
 
   // Static world layer (terrain, lakes, roads, discovered settlements) cached
@@ -7068,6 +8318,25 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         ctx.fill();
         ctx.stroke();
       }
+    }
+    for (const poi of game.exploration.dungeonPois || []) {
+      const point = localPoint(poi.localX, poi.localZ);
+      ctx.fillStyle = poi.biome === "desert" ? "#f2c76a" : "#9fffd1";
+      ctx.strokeStyle = "rgba(5, 9, 10, 0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(point.x, point.y - 4.2);
+      ctx.lineTo(point.x + 3.6, point.y);
+      ctx.lineTo(point.x, point.y + 4.2);
+      ctx.lineTo(point.x - 3.6, point.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(point.x, point.y + 0.7, 1.7, Math.PI, TAU);
+      ctx.strokeStyle = "rgba(5, 9, 10, 0.72)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
     const home = localPoint(game.exploration.spawn.x - originX, game.exploration.spawn.z - originZ);
     ctx.fillStyle = "#9fffd1";
@@ -7220,7 +8489,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         "Torren",
         "The tracks are full of raiders and worse things now. Thin them out and the villages can trade again without carrying axes in both hands.",
         "Defeat roaming threats",
-        "Class travel kit, guard and magica boons plus XP",
+        "Roadwarden Blade, Wayfinder Focus, guard and magica boons plus XP",
         "hunt",
         8
       ),
@@ -7368,7 +8637,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         "Steward Bryn",
         "Every traveler wants the purse. Fewer learn when to yield. Clear the first Crownring wave and come back with your name still attached to you.",
         "Clear one Crownring wave",
-        "Training boon, XP, and a field potion",
+        "Crownring class kits, training boon, XP, and a field potion",
         "arena",
         1,
         {
@@ -7830,7 +9099,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 9, game.exploration.origin.z + z - 12, random, 9.5, "Marshal Rowan Vale", "cityWrits", "city"));
     game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x + 25, game.exploration.origin.z + z - 10, random, 8.5, "Sister Edda", "citySanctuary", "city"));
-    game.npcs.push(createFriendlyNpc(game.exploration.origin.x + x - 23, game.exploration.origin.z + z + 8, random, 9.5, "Mason Vale", null, "city"));
+    const mason = createFriendlyNpc(game.exploration.origin.x + x - 23, game.exploration.origin.z + z + 8, random, 9.5, "Mason Vale", null, "city");
+    mason.serviceType = "dungeon";
+    mason.dungeonId = BELLWATER_DUNGEON_ID;
+    game.npcs.push(mason);
   }
 
   function addCrownringCity(group, x, z, random) {
@@ -8346,6 +9618,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     addExplorationVillage(group, briarBiome.x - 8 + random() * 7, briarBiome.z + 8 + random() * 7, random, 5, "briar");
     addCrownfordCity(group, 12 + random() * 5, 132 + random() * 6, random);
     addCrownringCity(group, 158 + random() * 7, 48 + random() * 6, random);
+    restoreSavedTownRespawnPoint();
     addRoadwardenTackWaymarks(group, random);
     syncVillageQuestProgress({ silent: true });
     addSwampQuestItems(group, swampBiome, random);
@@ -8371,6 +9644,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     addSwampMarkers(group, swampBiome, random);
     addBriarMarkers(group, briarBiome, random);
     addExplorationRoadNetwork(group);
+    addBellwaterUnderworksPoi(group, random);
+    addSiltwellCisternPoi(group, desertBiome, random);
 
     for (let i = 0; i < 260; i += 1) {
       const point = randomExplorationPoint(random, 16, game.exploration.radius - 28, (x, z) => biomeAt(x, z) === "meadow");
@@ -8607,12 +9882,124 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     return object;
   }
 
+  function addDungeonObject(object) {
+    if (!game.dungeonGroup) {
+      game.dungeonGroup = new THREE.Group();
+      game.dungeonGroup.visible = false;
+      scene.add(game.dungeonGroup);
+    }
+    game.dungeonGroup.add(object);
+    return object;
+  }
+
   function setArenaVisible(visible) {
     if (game.arenaGroup) {
       game.arenaGroup.visible = visible;
     }
+    if (game.dungeonGroup && visible) {
+      game.dungeonGroup.visible = false;
+    }
     if (game.explorationGroup) {
-      game.explorationGroup.visible = !visible;
+      game.explorationGroup.visible = !visible && !localPlayerInDungeonActivity();
+    }
+  }
+
+  function setDungeonVisible(visible) {
+    if (game.dungeonGroup) {
+      game.dungeonGroup.visible = visible;
+    }
+    if (game.arenaGroup && visible) {
+      game.arenaGroup.visible = false;
+    }
+    if (game.explorationGroup) {
+      game.explorationGroup.visible = !visible && !localPlayerInArenaActivity();
+    }
+  }
+
+  function setupDungeonInterior() {
+    const floorMaterial = materials.darkStone.clone();
+    floorMaterial.roughness = 1;
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(DUNGEON_RADIUS + 2.2, 72), floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.025;
+    floor.receiveShadow = true;
+    addDungeonObject(floor);
+
+    const wetCenter = new THREE.Mesh(new THREE.CircleGeometry(4.8, 48), materials.bogWater.clone());
+    wetCenter.rotation.x = -Math.PI / 2;
+    wetCenter.position.y = 0.005;
+    wetCenter.scale.set(1.35, 0.78, 1);
+    wetCenter.receiveShadow = true;
+    addDungeonObject(wetCenter);
+
+    for (let i = 0; i < 18; i += 1) {
+      const angle = (i / 18) * TAU;
+      const wall = makeBox(
+        3.8,
+        3.0 + (i % 3) * 0.35,
+        0.72,
+        i % 4 === 0 ? materials.rubble : materials.stone,
+        Math.cos(angle) * (DUNGEON_RADIUS + 0.8),
+        1.5,
+        Math.sin(angle) * (DUNGEON_RADIUS + 0.8)
+      );
+      wall.rotation.y = -angle + Math.PI / 2;
+      addDungeonObject(wall);
+    }
+
+    const grates = [
+      [0, -DUNGEON_RADIUS - 0.2, 0],
+      [DUNGEON_RADIUS * 0.78, 5.5, Math.PI / 2],
+      [-DUNGEON_RADIUS * 0.78, 5.2, -Math.PI / 2]
+    ];
+    for (const [x, z, rotation] of grates) {
+      const frame = makeBox(4.8, 0.18, 1.45, materials.iron, x, 0.1, z);
+      frame.rotation.y = rotation;
+      addDungeonObject(frame);
+      for (let bar = 0; bar < 5; bar += 1) {
+        const rail = makeBox(0.08, 0.78, 1.32, materials.steel.clone(), x - 1.6 + bar * 0.8, 0.46, z);
+        rail.rotation.y = rotation;
+        addDungeonObject(rail);
+      }
+    }
+
+    const columns = [
+      [-8.4, -5.2],
+      [8.0, -5.5],
+      [-7.2, 6.8],
+      [7.8, 6.4]
+    ];
+    for (const [x, z] of columns) {
+      addDungeonObject(makeCylinder(0.55, 0.74, 3.15, 12, materials.rubble, x, 1.56, z));
+      addDungeonObject(makeCylinder(0.82, 0.62, 0.34, 12, materials.cityWall, x, 3.28, z));
+    }
+
+    const torchPositions = [
+      [-12.2, -1.5],
+      [12.2, -1.5],
+      [-9.2, 10.0],
+      [9.2, 10.0]
+    ];
+    for (const [x, z] of torchPositions) {
+      const post = makeCylinder(0.08, 0.1, 1.45, 8, materials.wood, x, 1.12, z);
+      post.rotation.z = Math.PI / 2;
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.44, 10), materials.fireCore.clone());
+      flame.position.set(x, 1.95, z);
+      const light = new THREE.PointLight(0xff9f4a, 0.95, 9, 1.9);
+      light.position.copy(flame.position);
+      addDungeonObject(post);
+      addDungeonObject(flame);
+      addDungeonObject(light);
+    }
+
+    for (let i = 0; i < 10; i += 1) {
+      const angle = (i / 10) * TAU + 0.22;
+      const radius = 7.5 + (i % 3) * 1.8;
+      const debris = i % 2
+        ? makeBox(0.92, 0.32, 1.35, materials.wood, Math.cos(angle) * radius, 0.18, Math.sin(angle) * radius)
+        : makeBox(1.15, 0.46, 0.78, materials.rubble, Math.cos(angle) * radius, 0.24, Math.sin(angle) * radius);
+      debris.rotation.y = -angle + (i % 2 ? 0.7 : -0.35);
+      addDungeonObject(debris);
     }
   }
 
@@ -9454,7 +10841,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       : ranger
       ? '<svg viewBox="0 0 32 32"><path d="M4 16h20M24 16l-5-4M24 16l-5 4"/><path d="M8 10l4 6-4 6M14 10l4 6-4 6"/></svg>'
       : '<svg viewBox="0 0 32 32"><path d="M15 3l9 4v7c0 6-3.5 10.5-9 13-5.5-2.5-9-7-9-13V7z"/><path d="M15 8v14M9.5 15h11M24 12l5 4-5 4"/></svg>',
-      wizard ? "MMB / H" : "J / MMB");
+      wizard ? "MMB / L" : "J / MMB");
     potionIcon.hidden = false;
     if (secondaryTouchButton) {
       secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : "Block");
@@ -9490,6 +10877,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       "exploration",
       "arena-active",
       "arena-intermission",
+      "dungeon-active",
       "closing",
       "abandoned"
     ].includes(phase) ? phase : "lobby";
@@ -9501,6 +10889,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (arenaActivityActive()) {
       return game.exploration.arenaActivity.phase === "intermission" ? "arena-intermission" : "arena-active";
+    }
+    if (dungeonActivityActive()) {
+      return "dungeon-active";
     }
     if (game.state === "playing" || game.state === "paused") {
       return "exploration";
@@ -9515,6 +10906,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const safePhase = sanitizeRoomPhase(phase);
     if (safePhase === "arena-active") return "Arena active";
     if (safePhase === "arena-intermission") return "Arena intermission";
+    if (safePhase === "dungeon-active") return "Dungeon active";
     if (safePhase === "exploration") return "Exploration";
     if (safePhase === "loading") return "Loading";
     if (safePhase === "closing") return "Closing";
@@ -9530,42 +10922,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     sessionNote.textContent = text || "";
     sessionNote.hidden = !text;
   }
-
-  const helpClassGuide = [
-    {
-      character: "knight",
-      tagline: "Frontline duelist with sword and shield. Guard absorbs hits while blocking and recovers between fights.",
-      abilities: [
-        { id: "slash", keys: "LMB / Space" },
-        { id: "block", keys: "Hold RMB / K" },
-        { id: "bash", keys: "MMB / J" },
-        { id: "resolve", keys: "F" },
-        { id: "sweep", keys: "C" }
-      ]
-    },
-    {
-      character: "wizard",
-      tagline: "Healer-support caster. Drops a shared Healing Draught the whole party can grab - it heals more, recharges faster, and reaches farther as you level. Backs it with light magic and crowd control. Lightly built - support from the back line.",
-      abilities: [
-        { id: "potion", keys: "MMB / H" },
-        { id: "lightning", keys: "LMB / Space / J" },
-        { id: "burst", keys: "RMB / K" },
-        { id: "frostbind", keys: "F" },
-        { id: "stormcrown", keys: "C" }
-      ]
-    },
-    {
-      character: "ranger",
-      tagline: "Skirmisher with bow and tumble roll. Focus powers shots and rolls. Lightly armored - stay mobile.",
-      abilities: [
-        { id: "arrow", keys: "LMB / Space" },
-        { id: "roll", keys: "RMB / K" },
-        { id: "pierce", keys: "MMB / J" },
-        { id: "parting", keys: "F" },
-        { id: "heartseeker", keys: "C" }
-      ]
-    }
-  ];
 
   function helpSection(title) {
     const section = document.createElement("section");
@@ -9605,146 +10961,6 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     section.appendChild(list);
   }
 
-  const helpTuningLabels = {
-    slashRange: "Slash reach",
-    slashDamageMin: "Slash base damage",
-    slashDamageSpread: "Slash damage spread",
-    slashDamageBonus: "Slash damage bonus",
-    slashKnockback: "Slash knockback",
-    guardOnSlashHit: "Guard on slash hit",
-    bashGuardCost: "Shield bash guard cost",
-    bashDamageMin: "Shield bash base damage",
-    bashDamageSpread: "Shield bash damage spread",
-    bashKnockback: "Shield bash knockback",
-    bashVelocity: "Shield bash lunge",
-    lightningManaCost: "Lightning magica cost",
-    lightningDamageMin: "Lightning base damage",
-    lightningDamageSpread: "Lightning damage spread",
-    lightningDamageBonus: "Lightning damage bonus",
-    lightningTurnRate: "Lightning homing",
-    lightningLife: "Lightning duration",
-    remoteLightningRange: "Remote lightning range",
-    burstManaCost: "Arcane burst magica cost",
-    burstDamageMin: "Arcane burst base damage",
-    burstDamageSpread: "Arcane burst damage spread",
-    arrowFocusCost: "Arrow focus cost",
-    arrowDamageMin: "Arrow base damage",
-    arrowDamageSpread: "Arrow damage spread",
-    arrowDamageBonus: "Arrow damage bonus",
-    arrowSpeed: "Arrow speed",
-    arrowLife: "Arrow duration",
-    pierceFocusCost: "Piercing shot focus cost",
-    pierceDamageMin: "Piercing shot base damage",
-    pierceDamageSpread: "Piercing shot damage spread",
-    rollFocusCost: "Roll focus cost",
-    resolveCooldown: "Resolve cooldown",
-    resolveDuration: "Resolve duration",
-    resolveDamageTaken: "Resolve damage taken",
-    sweepGuardCost: "Sweeping Cut guard cost",
-    sweepCooldown: "Sweeping Cut cooldown",
-    sweepRange: "Sweeping Cut range",
-    sweepDamageMin: "Sweeping Cut base damage",
-    sweepDamageSpread: "Sweeping Cut damage spread",
-    sweepStun: "Sweeping Cut stun",
-    frostbindManaCost: "Frostbind magica cost",
-    frostbindCooldown: "Frostbind cooldown",
-    frostbindDamageMin: "Frostbind base damage",
-    frostbindDamageSpread: "Frostbind damage spread",
-    frostbindStun: "Frostbind bind time",
-    stormcrownManaCost: "Crown of Storms magica cost",
-    stormcrownCooldown: "Crown of Storms cooldown",
-    stormcrownRadius: "Crown of Storms radius",
-    stormcrownDamageMin: "Crown of Storms base damage",
-    stormcrownDamageSpread: "Crown of Storms damage spread",
-    partingFocusCost: "Parting Shot focus cost",
-    partingCooldown: "Parting Shot cooldown",
-    partingDamageMin: "Parting Shot base damage",
-    partingDamageSpread: "Parting Shot damage spread",
-    heartseekerFocusCost: "Heartseeker focus cost",
-    heartseekerCooldown: "Heartseeker cooldown",
-    heartseekerDamageMin: "Heartseeker base damage",
-    heartseekerDamageSpread: "Heartseeker damage spread",
-    kitHealthBonus: "Max health",
-    kitGuardBonus: "Max guard",
-    kitManaBonus: "Max magica/focus",
-    kitManaRegenMul: "Magica/focus regen",
-    kitMoveSpeedMul: "Move speed"
-  };
-
-  const helpSourceLabels = {
-    knight_arming_sword: "starting kit",
-    wizard_oak_staff: "starting kit",
-    ranger_ash_bow: "starting kit",
-    knight_roadwarden_blade: "Quiet the Road",
-    wizard_wayfinder_focus: "Quiet the Road",
-    knight_crownring_maul: "First Bell of the Crownring",
-    wizard_stormcall_rod: "First Bell of the Crownring",
-    ranger_crownring_recurve: "First Bell of the Crownring",
-    knight_briarfall_hookblade: "Rootmaws on the Timber Road",
-    wizard_briar_focus: "Rootmaws on the Timber Road",
-    ranger_briarstring_bow: "Rootmaws on the Timber Road",
-    crownford_drill: "The Beacon Writs",
-    briarfall_pathcraft: "Rootmaws on the Timber Road"
-  };
-
-  const helpPermanentRewardItems = [
-    { label: "Greenfire Remedies", text: "+12 max health, full heal, and XP." },
-    { label: "Quiet the Road", text: "Roadwarden Blade for knights, Wayfinder Focus for wizards, +8 max guard, +8 max magica/focus, and XP." },
-    { label: "Map the Hearths", text: "Full recovery potion, -4s wizard potion-drop cooldown, and XP." },
-    { label: "Silk in the Sand", text: "+6 max health, field potion, and XP." },
-    { label: "Smoke on the Peaks", text: "+10 max magica/focus, +6 max guard, and XP." },
-    { label: "Lights in the Mist", text: "+8 max magica/focus, +5 max health, and XP." },
-    { label: "Rootmaws on the Timber Road", text: "Briarfall kits for all classes, Briarfall Pathcraft perk, +4 max health, +5 max guard, +5 max magica/focus, field potion, and XP." },
-    { label: "Relics Under Reed", text: "Full recovery potion, full restore, and XP." },
-    { label: "Hooves for the Long Road", text: "Loyal horse mount and XP." },
-    { label: "Shoes for the Long Road", text: "Roadwarden Tack, faster mounted travel, and XP." },
-    { label: "The Beacon Writs", text: "Crownford Drill perk, +6 max guard, +6 max magica/focus, and XP." },
-    { label: "Sanctuary Lamps", text: "+8 max health, field potion, and XP." },
-    { label: "First Bell of the Crownring", text: "Crownring kits for all classes, +5 max health, +5 max guard, +5 max magica/focus, field potion, and XP." }
-  ];
-
-  function formatHelpNumber(value) {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return String(value);
-    }
-    if (Math.abs(value - Math.round(value)) < 0.001) {
-      return String(Math.round(value));
-    }
-    return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-  }
-
-  function formatTuningValue(key, value) {
-    const amount = formatHelpNumber(value);
-    if (key.endsWith("Mul")) {
-      return "x" + amount;
-    }
-    if (key.endsWith("Cooldown") || key.endsWith("Duration") || key.endsWith("Stun") || key.endsWith("Life")) {
-      return amount + "s";
-    }
-    if (key.endsWith("Range") || key.endsWith("Radius")) {
-      return amount + "m";
-    }
-    return amount;
-  }
-
-  function formatTuningLine(key, value) {
-    const label = helpTuningLabels[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, char => char.toUpperCase());
-    const base = defaultCombatTuning[key];
-    const valueText = formatTuningValue(key, value);
-    if (base !== undefined && base !== value) {
-      return label + " " + valueText + " (base " + formatTuningValue(key, base) + ")";
-    }
-    return label + " " + valueText;
-  }
-
-  function formatTuningSummary(tuning) {
-    const entries = Object.entries(tuning || {});
-    if (!entries.length) {
-      return "standard tuning";
-    }
-    return entries.map(([key, value]) => formatTuningLine(key, value)).join("; ");
-  }
-
   function buildHelpContent() {
     helpBody.replaceChildren();
 
@@ -9763,7 +10979,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       { keys: "G", label: "Swap kit", text: "cycle between your unlocked weapon kits." },
       { keys: "F", label: "Utility", text: "class utility ability (unlocks level 5)." },
       { keys: "C", label: "Payoff", text: "class payoff ability (unlocks level 7-8)." },
-      { keys: "H", label: "Healing Draught", text: "wizards drop a shared healing draught for the party; it grows stronger as the wizard levels." },
+      { keys: "H", label: "Stored potion", text: "drink the leftmost stored potion when wounded. Slots unlock at levels " + POTION_SLOT_UNLOCK_LEVELS.join(", ") + "; full-health pickups are stored if a slot is open." },
+      { keys: "L / MMB", label: "Healing Draught", text: "wizards drop a shared healing draught that the caster or any wounded player can pick up; it grows stronger as the wizard levels." },
       { keys: "V", text: "Mute or unmute audio." },
       { keys: "Enter", label: "Chat", text: "in an online room, open the one-line chat to message your party. Enter sends, Esc cancels. Movement and attacks are paused while you type." },
       { keys: "Esc", text: "Pause, resume, or close dialogue." },
@@ -9790,7 +11007,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       { label: "Knight growth", text: "+6 max health and +7 max guard per level after level 1." },
       { label: "Wizard growth", text: "+4 max health, +8 max magica, and +0.65 magica regen per level after level 1." },
       { label: "Ranger growth", text: "+4 max health, +6 focus, and +0.5 focus regen per level after level 1." },
-      { label: "Death penalty", text: "dying costs one level: your XP falls back to the previous level's threshold and abilities above it lock until re-earned. At level 1 you only lose progress toward level 2." }
+      { label: "Potion pouch", text: "storage slots unlock at levels " + POTION_SLOT_UNLOCK_LEVELS.join(", ") + "." },
+      { label: "Death penalty", text: "dying wipes XP earned within your current level only. Your level, stats, and unlocked abilities stay stable." }
     ]);
 
     const kits = helpSection("Weapon Kits");
@@ -9821,6 +11039,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     const world = helpSection("Dangers Of The Valley");
     helpParagraph(world, "Enemies grow tougher the farther you roam from the homestead. Near spawn they are prowlers; past the midlands they are veterans with amber health bars, and the far reaches hold dread beasts with red health bars - bigger, faster, harder-hitting, and worth far more XP.");
+    helpParagraph(world, "Entering a town sets your ordinary exploration death respawn to that town center. Crownring defeats still recover at the infirmary, and dungeon defeats recover at that dungeon's entrance.");
     helpList(world, [
       { label: "White HP bar", text: "prowler. Safe pickings near home." },
       { label: "Amber HP bar", text: "veteran. Tougher, meaner, 1.6x XP." },
@@ -9828,11 +11047,19 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     ]);
 
     const arena = helpSection("The Crownring Arena");
-    helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each kill grants XP, every cleared wave pays a bonus, and every third wave lands a milestone reward.");
+    helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each cleared wave pays a shared purse, and every third wave lands a milestone reward.");
     helpList(arena, [
-      { keys: "Y", label: "Yield", text: "leave mid-wave with your kill XP but no wave bonus. Yielding is respected, not shameful." },
-      { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues - but like any death, defeat costs you one level." },
+      { keys: "Y", label: "Yield", text: "leave mid-wave before the next purse is paid. Yielding is respected, not shameful." },
+      { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues - but like any death, defeat wipes current-level XP progress." },
       { text: "Online, everyone fights the same waves. Joiners arriving mid-wave wait at the infirmary and enter at the next bell." }
+    ]);
+
+    const dungeons = helpSection("Shared Dungeons");
+    helpParagraph(dungeons, "Shared dungeons are sealed party chambers opened by local service NPCs. Bellwater Underworks starts from Mason Vale in Crownford or the Bellwater scout at the grate; Siltwell Cistern starts from Ilyas at the desert-fringe wellstone.");
+    helpList(dungeons, [
+      { keys: "Y", label: "Ring out", text: "leave this dungeon without claiming the clear reward." },
+      { text: "Online, the host opens the selected entrance for everyone currently in the room. Late joiners wait outside until the return bell." },
+      { text: "First clear of each dungeon grants its own small permanent boon once per player, so a veteran host does not consume a new player's first-clear reward." }
     ]);
   }
 
@@ -9883,6 +11110,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
   function activeEffectEntries() {
     const entries = [];
+    if (localGodModeEnabled()) {
+      entries.push({ label: "Local god mode", value: "All kits, mounts, tack, and abilities" });
+    }
     if (player.resolveTimer > 0) {
       const reduction = Math.round((1 - combatTuningFor("knight").resolveDamageTaken) * 100);
       entries.push({ label: "Warden's Resolve", value: "-" + reduction + "% damage, " + Math.ceil(player.resolveTimer) + "s" });
@@ -10399,6 +11629,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       name: player.name,
       weaponId: equippedWeapon(),
       perks: getCharacterProgress().perks.slice(0, 8),
+      level: getCharacterLevel(),
       health: player.health,
       maxHealth: player.maxHealth,
       x: player.position.x,
@@ -10776,6 +12007,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       kills: game.kills,
       nextWaveIn: game.nextWaveIn,
       arenaActivity: serializeArenaActivityState(),
+      dungeonActivity: serializeDungeonActivityState(),
       enemies: game.enemies.filter(enemy => !enemy.dead).map(serializeEnemyState),
       fireballs: game.fireballs.map(serializeFireballState),
       potions: game.potions.map(serializePotionState)
@@ -11039,6 +12271,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.kills = world.kills ?? 0;
     game.nextWaveIn = world.nextWaveIn ?? 0;
     applyArenaActivitySnapshot(world.arenaActivity);
+    applyDungeonActivitySnapshot(world.dungeonActivity);
 
     const enemyIds = new Set();
     for (const enemyState of world.enemies || []) {
@@ -11177,7 +12410,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     upsertRemotePlayer(message.state);
     const remote = online.remotePlayers.get(message.id);
     const potion = game.potions.find(candidate => candidate.netId === message.potionId);
-    if (!remote || !potion || remote.health >= remote.maxHealth) {
+    const remoteUnlockedSlots = potionSlotsUnlockedForLevel(remote ? remote.level : message.state.level);
+    const remotePotionCount = clamp(Math.floor(numberOrZero(message.inventoryCount)), 0, POTION_INVENTORY_CAPACITY);
+    const wantsStore = !!message.store
+      && remotePotionCount < remoteUnlockedSlots
+      && !!storedPotionFromDrop(potion);
+    // No owner gate here: wizard Healing Draughts are shared party pickups,
+    // including for the wizard who dropped them.
+    if (!remote || !potion || (!wantsStore && remote.health >= remote.maxHealth)) {
       return;
     }
     const remotePosition = remote.targetPosition || remote.group.position;
@@ -11186,18 +12426,22 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       return;
     }
     removePotionById(potion.netId);
-    remote.health = potion.fullHeal ? remote.maxHealth : Math.min(remote.maxHealth, remote.health + (potion.healAmount || 0));
-    if (remote.nameTag) {
-      updateNameTag(remote.nameTag, remote.nameTag.text || "Player", remote.health, remote.maxHealth);
+    if (!wantsStore) {
+      remote.health = potion.fullHeal ? remote.maxHealth : Math.min(remote.maxHealth, remote.health + (potion.healAmount || 0));
+      if (remote.nameTag) {
+        updateNameTag(remote.nameTag, remote.nameTag.text || "Player", remote.health, remote.maxHealth);
+      }
     }
     sendOnlineMessage({
       kind: "potionPicked",
       targetId: message.id,
       potionId: message.potionId,
+      stored: wantsStore,
+      kind: potion.kind,
       healAmount: potion.healAmount,
       fullHeal: potion.fullHeal
     });
-    broadcastOnlineEffect({ type: "impact", x: potion.position.x, y: 0, z: potion.position.z, color: 0xff7f96, count: 16, sfx: "potion", sfxIntensity: 0.9, sfxDistance: 36 });
+    broadcastOnlineEffect({ type: "impact", x: potion.position.x, y: 0, z: potion.position.z, color: potionPickupColor(potion), count: 16, sfx: "potion", sfxIntensity: 0.9, sfxDistance: 36 });
   }
 
   function handleRemotePotionDrop(message) {
@@ -11218,6 +12462,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const inArena = message.activityType === "arena"
       && arenaActivityActive()
       && arenaListIncludes(game.exploration.arenaActivity.participants, message.id);
+    const inDungeon = message.activityType === "dungeon"
+      && dungeonActivityActive()
+      && arenaListIncludes(game.exploration.dungeonActivity.participants, message.id);
     // Host authority: clamp the requester's claimed heal/radius to the Tier III
     // maxima so a client cannot author an over-heal.
     const healCap = defaultCombatTuning.wizardPotionHealT3;
@@ -11228,8 +12475,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       kind: "wizard",
       healAmount: reqHeal,
       pickupRadius: reqRadius,
-      activityType: inArena ? "arena" : "",
-      activityId: inArena ? game.exploration.arenaActivity.activityId : ""
+      activityType: inDungeon ? "dungeon" : inArena ? "arena" : "",
+      activityId: inDungeon ? game.exploration.dungeonActivity.activityId : inArena ? game.exploration.arenaActivity.activityId : ""
     }));
     trimPotionDrops();
     playSfx("potion", 0.85);
@@ -11243,6 +12490,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     removePotionById(message.potionId);
     if (message.targetId !== online.localId) {
+      return;
+    }
+    if (message.stored) {
+      storePotionItem(storedPotionFromMessage(message));
       return;
     }
     const beforeHeal = player.health;
@@ -11388,6 +12639,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       handleArenaReward(message);
       return;
     }
+    if (message.kind === "dungeonReward") {
+      if (online.role === "join") {
+        applyDungeonReward(message);
+      }
+      return;
+    }
     if (message.kind === "arenaQueued") {
       if (!messageFromKnownHost(message) || message.targetId !== online.localId) {
         return;
@@ -11397,6 +12654,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       } else {
         showBanner("Queued for the next Crownring bell", 2.4);
       }
+      return;
+    }
+    if (message.kind === "dungeonQueued") {
+      if (!messageFromKnownHost(message) || message.targetId !== online.localId) {
+        return;
+      }
+      const def = dungeonDefinition(message.dungeonId || BELLWATER_DUNGEON_ID);
+      showBanner(message.ready ? def.readyCopy : def.queuedCopy, 2.6);
       return;
     }
     if (message.kind === "potionPickup") {
@@ -11417,6 +12682,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       startCrownringArenaActivity();
       return;
     }
+    if (message.kind === "dungeonStartRequest") {
+      if (online.role !== "host" || game.mode !== "exploration" || game.state !== "playing") {
+        return;
+      }
+      if (message.state) {
+        upsertRemotePlayer(message.state);
+      }
+      startDungeonActivity(message.dungeonId || BELLWATER_DUNGEON_ID);
+      return;
+    }
     if (message.kind === "arenaLeaveRequest" || message.kind === "arenaDefeated") {
       if (online.role !== "host") {
         return;
@@ -11425,6 +12700,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         upsertRemotePlayer(message.state);
       }
       removeArenaParticipant(message.id);
+      return;
+    }
+    if (message.kind === "dungeonLeaveRequest" || message.kind === "dungeonDefeated") {
+      if (online.role !== "host") {
+        return;
+      }
+      if (message.state) {
+        upsertRemotePlayer(message.state);
+      }
+      removeDungeonParticipant(message.id);
       return;
     }
     if (message.kind === "potionPicked") {
@@ -11455,6 +12740,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       upsertRemotePlayer(message.state);
       if (online.role === "host") {
         maybeQueueArenaLateParticipant(message.id, message.state);
+        maybeQueueDungeonLateParticipant(message.id, message.state);
       }
       updateOnlineStatus(online.role === "host" ? "Player joined" : "Joined room");
       if (online.role === "join" && (game.menuPhase === "joinSetup" || game.menuPhase === "landing")) {
@@ -11944,6 +13230,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     remote.playing = state.playing === true;
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
+    remote.level = clamp(Math.floor(numberOrZero(state.level) || 1), 1, 30);
     if (remote.nameTag) {
       updateNameTag(remote.nameTag, state.name || "Player", remote.health, remote.maxHealth);
     }
@@ -12043,6 +13330,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         online.remotePlayers.delete(id);
         if (online.role === "host") {
           removeArenaParticipant(id);
+          removeDungeonParticipant(id);
         }
         updateRoomRoster();
       }
@@ -12119,9 +13407,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
   function applyRemoteActionToEnemies(action, source, yaw, forward, state = {}) {
     const sourceId = state.id || online.localId;
-    if (arenaActivityActive() && !arenaListIncludes(game.exploration.arenaActivity.participants, sourceId)) {
+    const activity = activeCombatActivity();
+    if (activity && !arenaListIncludes(activity.participants, sourceId)) {
       return;
     }
+    const matchesActivity = enemy => !activity || enemy.activityId === activity.activityId;
     const remote = sourceId !== online.localId ? online.remotePlayers.get(sourceId) : null;
     const profile = remote && remote.combatProfile
       ? remote.combatProfile
@@ -12134,7 +13424,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const crown = action === "stormcrown";
       const radius = crown ? tuning.stormcrownRadius + 0.1 : 3.45;
       for (const enemy of game.enemies) {
-        if (!enemy.dead && Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z) < radius + enemy.radius) {
+        if (!enemy.dead && matchesActivity(enemy) && Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z) < radius + enemy.radius) {
           const direction = enemy.position.clone().sub(source);
           direction.y = 0;
           direction.normalize();
@@ -12157,7 +13447,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       const range = sweep ? tuning.sweepRange : 2.5;
       const minDot = sweep ? 0.26 : 0.5;
       for (const enemy of game.enemies) {
-        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
           continue;
         }
         const damage = sweep ? tuning.sweepDamageMin : tuning.partingDamageMin;
@@ -12169,7 +13459,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     if (action === "frostbind") {
       for (const enemy of game.enemies) {
-        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
           continue;
         }
         damageEnemy(enemy, tuning.frostbindDamageMin, forward, tuning.frostbindStun, sourceId);
@@ -12179,7 +13469,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
     if (action === "bash") {
       for (const enemy of game.enemies) {
-        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 2.55 + enemy.radius, 0.24)) {
           continue;
         }
         damageEnemy(enemy, tuning.bashDamageMin, forward, tuning.bashKnockback, sourceId);
@@ -12195,7 +13485,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (action === "pierce") {
       // Pierce damages every enemy in a narrow forward corridor.
       for (const enemy of game.enemies) {
-        if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
           continue;
         }
         damageEnemy(enemy, tuning.pierceDamageMin, forward, 0.4, sourceId);
@@ -12211,7 +13501,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       : tuning.slashRange + 0.15;
     const minDot = action === "lightning" ? 0.34 : action === "arrow" ? 0.6 : action === "heartseeker" ? 0.85 : 0.18;
     for (const enemy of game.enemies) {
-      if (enemy.dead || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
+      if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
         continue;
       }
       const distance = Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z);
@@ -12278,11 +13568,51 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     applyPlayerDamage(damage, guardDamage, forward, action === "bash" ? 0.32 : action === "burst" ? 0.18 : 0.08);
   }
 
+  function playerHasNearbyCombatThreat() {
+    const threatRadiusSq = PLAYER_REGEN_THREAT_RADIUS * PLAYER_REGEN_THREAT_RADIUS;
+    for (const enemy of game.enemies) {
+      if (!enemy || enemy.dead) {
+        continue;
+      }
+      const dx = player.position.x - enemy.position.x;
+      const dz = player.position.z - enemy.position.z;
+      if (dx * dx + dz * dz <= threatRadiusSq) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function playerHasActiveCombatIntent() {
+    return player.attacking
+      || player.rollTimer > 0
+      || game.playerProjectiles.some(projectile => !projectile.visualOnly);
+  }
+
+  function updatePlayerHealthRegen(dt) {
+    if (game.state !== "playing" || player.health <= 0 || player.health >= player.maxHealth || player.maxHealth <= 0) {
+      return;
+    }
+    const inCombat = game.mode !== "exploration"
+      || localPlayerInSharedActivity()
+      || playerHasActiveCombatIntent()
+      || playerHasNearbyCombatThreat();
+    if (inCombat) {
+      player.combatRegenDelay = PLAYER_REGEN_DELAY;
+      return;
+    }
+    if (player.combatRegenDelay > 0) {
+      player.combatRegenDelay = Math.max(0, player.combatRegenDelay - dt);
+      return;
+    }
+    player.health = Math.min(player.maxHealth, player.health + PLAYER_REGEN_RATE * dt);
+  }
+
   function combatTargets() {
-    const arenaActive = arenaActivityActive();
-    const activity = game.exploration.arenaActivity;
+    const activity = activeCombatActivity();
+    const activityActive = !!activity;
     const targets = [];
-    if (!arenaActive || arenaListIncludes(activity.participants, online.localId)) {
+    if (!activityActive || arenaListIncludes(activity.participants, online.localId)) {
       targets.push({
         id: online.localId,
         local: true,
@@ -12293,7 +13623,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
     if (online.role === "host") {
       for (const [id, remote] of online.remotePlayers) {
-        if (arenaActive && !arenaListIncludes(activity.participants, id)) {
+        if (activityActive && !arenaListIncludes(activity.participants, id)) {
           continue;
         }
         targets.push({
@@ -12309,7 +13639,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function combatTargetById(id) {
-    if (arenaActivityActive() && !arenaListIncludes(game.exploration.arenaActivity.participants, id || online.localId)) {
+    const activity = activeCombatActivity();
+    if (activity && !arenaListIncludes(activity.participants, id || online.localId)) {
       return null;
     }
     if (!id || id === online.localId) {
@@ -13618,6 +14949,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     game.startedOnce = true;
     if (game.mode === "exploration") {
       setArenaVisible(false);
+      setDungeonVisible(false);
       scene.fog.density = 0.0065;
       setupExplorationWorld();
       if (isJoinedClient()) {
@@ -13627,6 +14959,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       game.cameraYaw = Math.PI;
     } else {
       setArenaVisible(true);
+      setDungeonVisible(false);
       scene.fog.density = 0.018;
       clearExplorationWorld();
       player.position.set(0, 0, 0);
@@ -13636,7 +14969,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     setPlayerCharacter(game.selectedCharacter, true);
     if (game.mode === "exploration") {
       restoreSavedResources();
-      if (progression.exploration.horseUnlocked || progression.exploration.drakeUnlocked) {
+      if (localGodModeEnabled() || progression.exploration.horseUnlocked || progression.exploration.drakeUnlocked) {
         spawnHorseNearPlayer(false);
       }
     }
@@ -13736,14 +15069,16 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   function dropWaveHealthPotion() {
     const forward = forwardFromYaw(player.yaw, tmpVec);
     const dropPosition = tmpVec2.copy(player.position).addScaledVector(forward, 2.4);
+    const activity = activeCombatActivity();
+    const radius = activity ? activity.radius || arenaRadius : arenaRadius;
     const dist = Math.hypot(dropPosition.x, dropPosition.z);
-    if (dist > arenaRadius - 2.8) {
-      dropPosition.multiplyScalar((arenaRadius - 2.8) / dist);
+    if (dist > radius - 2.8) {
+      dropPosition.multiplyScalar((radius - 2.8) / dist);
     }
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
       kind: "full",
-      activityType: arenaActivityActive() ? "arena" : "",
-      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+      activityType: activity ? (activity === game.exploration.dungeonActivity ? "dungeon" : "arena") : "",
+      activityId: activity ? activity.activityId : ""
     }));
     trimPotionDrops();
     playSfx("potion", 1);
@@ -13753,17 +15088,19 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     // Dragons are now group-tier fights: every kill pays out a potion so the
     // post-fight sustain matches the much higher durability/threat.
     const dropPosition = enemy.position.clone();
-    if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
+    const activity = activeCombatActivity();
+    if (game.mode !== "exploration" || localPlayerInSharedActivity()) {
+      const radius = activity ? activity.radius || arenaRadius : arenaRadius;
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
-      if (dist > arenaRadius - 2.2) {
-        dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+      if (dist > radius - 2.2) {
+        dropPosition.multiplyScalar((radius - 2.2) / dist);
       }
     }
     game.potions.push(createHealthPotion(dropPosition.x, dropPosition.z, {
       kind: "small",
       healAmount: 14,
-      activityType: arenaActivityActive() ? "arena" : "",
-      activityId: arenaActivityActive() ? game.exploration.arenaActivity.activityId : ""
+      activityType: activity ? (activity === game.exploration.dungeonActivity ? "dungeon" : "arena") : "",
+      activityId: activity ? activity.activityId : ""
     }));
     trimPotionDrops();
     playSfx("potion", 0.8);
@@ -13780,10 +15117,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const tier = wizardPotionTier();
     const behind = forwardFromYaw(player.yaw, tmpVec).multiplyScalar(-0.9);
     const dropPosition = tmpVec2.copy(player.position).add(behind);
-    if (game.mode !== "exploration" || localPlayerInArenaActivity()) {
+    const activity = activeCombatActivity();
+    if (game.mode !== "exploration" || localPlayerInSharedActivity()) {
+      const radius = activity ? activity.radius || arenaRadius : arenaRadius;
       const dist = Math.hypot(dropPosition.x, dropPosition.z);
-      if (dist > arenaRadius - 2.2) {
-        dropPosition.multiplyScalar((arenaRadius - 2.2) / dist);
+      if (dist > radius - 2.2) {
+        dropPosition.multiplyScalar((radius - 2.2) / dist);
       }
     }
     // Tier III: instant top-up on the (squishy) wizard. Local authority over
@@ -13792,15 +15131,15 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       player.health = Math.min(player.maxHealth, player.health + tier.splash);
     }
     if (isJoinedClient()) {
-      const inArena = localPlayerInArenaActivity();
+      const activityType = localPlayerInDungeonActivity() ? "dungeon" : localPlayerInArenaActivity() ? "arena" : "";
       sendOnlineMessage({
         kind: "dropPotion",
         x: dropPosition.x,
         z: dropPosition.z,
         healAmount: tier.heal,
         pickupRadius: tier.radius,
-        activityType: inArena ? "arena" : "",
-        activityId: inArena ? game.exploration.arenaActivity.activityId : "",
+        activityType,
+        activityId: activity ? activity.activityId : "",
         state: serializePlayerState()
       });
       player.potionCooldown = player.potionCooldownMax;
@@ -13813,8 +15152,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       kind: "wizard",
       healAmount: tier.heal,
       pickupRadius: tier.radius,
-      activityType: localPlayerInArenaActivity() ? "arena" : "",
-      activityId: localPlayerInArenaActivity() ? game.exploration.arenaActivity.activityId : ""
+      activityType: activity ? (activity === game.exploration.dungeonActivity ? "dungeon" : "arena") : "",
+      activityId: activity ? activity.activityId : ""
     }));
     trimPotionDrops();
     player.potionCooldown = player.potionCooldownMax;
@@ -13904,7 +15243,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function constrainArenaPlayer() {
-    const activity = game.exploration.arenaActivity;
+    const activity = activeCombatActivity() || game.exploration.arenaActivity;
     const centerX = activity.center?.x || 0;
     const centerZ = activity.center?.z || 0;
     const radius = Math.max(8, (activity.radius || arenaRadius) - 1.6);
@@ -13946,6 +15285,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       player.blocking = false;
       player.blockHeld = false;
     }
+    updatePlayerHealthRegen(dt);
 
     const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
     const inputZ = (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0) - (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0);
@@ -13979,7 +15319,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
 
     player.position.addScaledVector(player.velocity, dt);
-    if (localPlayerInArenaActivity()) {
+    if (localPlayerInSharedActivity()) {
       constrainArenaPlayer();
     } else if (game.mode === "exploration") {
       constrainExplorationPlayer();
@@ -14073,7 +15413,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
 
     const walkBob = Math.sin(player.walkTime * 8) * Math.min(0.05, player.velocity.length() * 0.009);
-    const playerGroundY = game.mode === "exploration"
+    const playerGroundY = game.mode === "exploration" && !localPlayerInSharedActivity()
       ? explorationGroundWorldY(player.position.x, player.position.z)
       : 0;
     if (mounted) {
@@ -14511,7 +15851,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const forward = forwardFromYaw(player.yaw, tmpVec);
     if (canSimulateSharedWorld()) {
       for (const enemy of game.enemies) {
-        if (enemy.dead) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
           continue;
         }
         tmpVec2.copy(enemy.position).sub(player.position);
@@ -14542,7 +15882,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     let hitAny = false;
     if (canSimulateSharedWorld()) {
       for (const enemy of game.enemies) {
-        if (enemy.dead) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
           continue;
         }
         tmpVec2.copy(enemy.position).sub(player.position);
@@ -14569,7 +15909,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     let hitAny = false;
     if (canSimulateSharedWorld()) {
       for (const enemy of game.enemies) {
-        if (enemy.dead) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
           continue;
         }
         const direction = tmpVec2.copy(enemy.position).sub(player.position);
@@ -14604,7 +15944,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       projectile.shell.material = materials.wisp.clone();
       projectile.core.material = materials.wispCore.clone();
     }
-    game.playerProjectiles.push(tagArenaActor(projectile));
+    game.playerProjectiles.push(tagActiveCombatActor(projectile));
   }
 
   function performPlayerAttack() {
@@ -14615,7 +15955,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       return;
     }
     for (const enemy of game.enemies) {
-      if (enemy.dead || enemy.stunned > 0.2) {
+      if (enemy.dead || enemy.stunned > 0.2 || !enemyMatchesActiveCombat(enemy)) {
         continue;
       }
       tmpVec2.copy(enemy.position).sub(player.position);
@@ -14650,7 +15990,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       return;
     }
     for (const enemy of game.enemies) {
-      if (enemy.dead) {
+      if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
         continue;
       }
       tmpVec2.copy(enemy.position).sub(player.position);
@@ -14747,7 +16087,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       : pierce
       ? tuning.pierceDamageMin + Math.floor(Math.random() * tuning.pierceDamageSpread)
       : tuning.arrowDamageMin + tuning.arrowDamageBonus + Math.floor(Math.random() * tuning.arrowDamageSpread);
-    game.playerProjectiles.push(tagArenaActor(createArrowProjectile(source, velocity, {
+    game.playerProjectiles.push(tagActiveCombatActor(createArrowProjectile(source, velocity, {
       damage,
       pierce,
       stun: heartseeker ? 0.8 : pierce ? 0.4 : 0.22,
@@ -14760,12 +16100,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     const direction = forwardFromYaw(player.yaw, new THREE.Vector3());
     const velocity = direction.clone().multiplyScalar(12.8);
     const tuning = combatTuningFor("wizard");
-    game.playerProjectiles.push(createLightningProjectile(source, velocity, {
+    game.playerProjectiles.push(tagActiveCombatActor(createLightningProjectile(source, velocity, {
       damage: tuning.lightningDamageMin + tuning.lightningDamageBonus + Math.floor(Math.random() * tuning.lightningDamageSpread),
       turnRate: tuning.lightningTurnRate,
       life: tuning.lightningLife,
       visualOnly: !canSimulateSharedWorld()
-    }));
+    })));
   }
 
   function spawnRemoteLightningVisual(source, yaw) {
@@ -14800,7 +16140,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     let hitAny = false;
     if (canSimulateSharedWorld()) {
       for (const enemy of game.enemies) {
-        if (enemy.dead) {
+        if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
           continue;
         }
         const direction = tmpVec2.copy(enemy.position).sub(player.position);
@@ -14917,7 +16257,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     let bestScore = Infinity;
     const currentDirection = projectile.velocity.clone().normalize();
     for (const enemy of game.enemies) {
-      if (enemy.dead) {
+      if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
         continue;
       }
       const targetPosition = getEnemyAimPosition(enemy, new THREE.Vector3());
@@ -14973,7 +16313,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       let consumed = false;
       if (!projectile.visualOnly && canSimulateSharedWorld()) {
         for (const enemy of game.enemies) {
-          if (enemy.dead) {
+          if (enemy.dead || !enemyMatchesActiveCombat(enemy)) {
             continue;
           }
           if (projectile.hitIds && projectile.hitIds.has(enemy)) {
@@ -15022,6 +16362,10 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (!canSimulateSharedWorld()) {
       return;
     }
+    const activity = activeCombatActivity();
+    if (activity && enemy.activityId !== activity.activityId) {
+      return;
+    }
     enemy.health -= damage;
     enemy.stunned = Math.max(enemy.stunned, stun);
     enemy.velocity.addScaledVector(direction, 4.3);
@@ -15041,7 +16385,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       enemy.dead = true;
       if (enemy.type === "dragon") {
         dropDragonHealthPotion(enemy);
-      } else if (game.mode === "exploration" && !arenaActivityActive() && Math.random() < (enemy.type === "spider" ? 0.13 : enemy.type === "wisp" ? 0.16 : 0.2)) {
+      } else if (game.mode === "exploration" && !arenaActivityActive() && !dungeonActivityActive() && Math.random() < (enemy.type === "spider" ? 0.13 : enemy.type === "wisp" ? 0.16 : 0.2)) {
         game.potions.push(createHealthPotion(enemy.position.x, enemy.position.z, { kind: "small", healAmount: 14 }));
         trimPotionDrops();
       }
@@ -15864,16 +17208,21 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       return;
     }
     for (const village of game.exploration.villages) {
-      if (game.exploration.discovered.has(village.id)) {
+      const distance = Math.hypot(player.position.x - village.x, player.position.z - village.z);
+      if (distance >= village.radius) {
         continue;
       }
-      const distance = Math.hypot(player.position.x - village.x, player.position.z - village.z);
-      if (distance < village.radius) {
+      const alreadyDiscovered = game.exploration.discovered.has(village.id);
+      const respawnChanged = setExplorationRespawnTown(village);
+      if (!alreadyDiscovered) {
         game.exploration.discovered.add(village.id);
         spawnImpact(new THREE.Vector3(village.x, explorationGroundWorldY(village.x, village.z), village.z), 0xffd889, 24);
-        showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length);
+        showBanner("Village found " + game.exploration.discovered.size + "/" + game.exploration.villages.length + " - respawn set");
         awardExplorationXp(20);
         syncVillageQuestProgress({ silent: false });
+        saveProgress();
+      } else if (respawnChanged) {
+        showBanner("Respawn set: " + villageDisplayName(village), 2.3);
         saveProgress();
       }
     }
@@ -16018,12 +17367,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function updateEnemies(dt) {
-    if (game.mode === "exploration" && !arenaActivityActive()) {
+    const activity = activeCombatActivity();
+    if (game.mode === "exploration" && !activity) {
       updateExplorationEnemies(dt);
       return;
     }
+    const activityId = activity ? activity.activityId : "";
+    const activityCenterX = activity ? activity.center?.x || 0 : 0;
+    const activityCenterZ = activity ? activity.center?.z || 0 : 0;
+    const activityRadius = Math.max(8, activity ? activity.radius || arenaRadius : arenaRadius);
     for (const enemy of game.enemies) {
-      if (enemy.dead) {
+      if (enemy.dead || (activityId && enemy.activityId !== activityId)) {
         continue;
       }
 
@@ -16065,7 +17419,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
 
       for (const other of game.enemies) {
-        if (other === enemy || other.dead || (enemy.entering && enemy.entryDelay > 0)) {
+        if (other === enemy || other.dead || (activityId && other.activityId !== activityId) || (enemy.entering && enemy.entryDelay > 0)) {
           continue;
         }
         const dx = enemy.position.x - other.position.x;
@@ -16082,9 +17436,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
       enemy.position.addScaledVector(enemy.velocity, dt);
       enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
-      const dist = Math.hypot(enemy.position.x, enemy.position.z);
-      if (!enemy.entering && dist > arenaRadius - 1.2) {
-        enemy.position.multiplyScalar((arenaRadius - 1.2) / dist);
+      const dist = Math.hypot(enemy.position.x - activityCenterX, enemy.position.z - activityCenterZ);
+      if (!enemy.entering && dist > activityRadius - 1.2) {
+        const scale = (activityRadius - 1.2) / Math.max(0.001, dist);
+        enemy.position.x = activityCenterX + (enemy.position.x - activityCenterX) * scale;
+        enemy.position.z = activityCenterZ + (enemy.position.z - activityCenterZ) * scale;
       }
       if (enemy.type === "dragon") {
         const hover = enemy.hoverHeight + Math.sin(clock.elapsedTime * 3.4 + enemy.bobSeed) * 0.28;
@@ -16107,7 +17463,14 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     }
 
     game.enemies = game.enemies.filter(enemy => !enemy.dead);
-    if (game.enemies.length === 0 && game.state === "playing") {
+    const remainingActivityEnemies = activityId
+      ? game.enemies.some(enemy => !enemy.dead && enemy.activityId === activityId)
+      : game.enemies.length > 0;
+    if (!remainingActivityEnemies && game.state === "playing") {
+      if (dungeonActivityActive()) {
+        completeDungeonActivity();
+        return;
+      }
       if (game.nextWaveIn <= 0) {
         dropWaveHealthPotion();
         game.nextWaveIn = arenaActivityActive() ? 4.5 : 4.0;
@@ -16242,9 +17605,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       guardDamage: Math.round((48 + Math.min(game.wave * 2, 14)) * (enemy.damageMul || 1)),
       targetId: targetInfo.id
     });
-    if (enemy.activityType === "arena") {
-      fireball.activityType = "arena";
-      fireball.activityId = enemy.activityId || game.exploration.arenaActivity.activityId;
+    if (enemy.activityType) {
+      fireball.activityType = enemy.activityType;
+      fireball.activityId = enemy.activityId || (activeCombatActivity() ? activeCombatActivity().activityId : "");
     }
     fireball.remoteControlled = false;
     game.fireballs.push(fireball);
@@ -16278,9 +17641,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       guardDamage: Math.round((config.guardDamage || 26) * mul),
       targetId: targetInfo.id
     });
-    if (enemy.activityType === "arena") {
-      projectile.activityType = "arena";
-      projectile.activityId = enemy.activityId || game.exploration.arenaActivity.activityId;
+    if (enemy.activityType) {
+      projectile.activityType = enemy.activityType;
+      projectile.activityId = enemy.activityId || (activeCombatActivity() ? activeCombatActivity().activityId : "");
     }
     projectile.remoteControlled = false;
     game.fireballs.push(projectile);
@@ -16385,6 +17748,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (player.resolveTimer > 0) {
       finalDamage = Math.ceil(finalDamage * combatTuningFor("knight").resolveDamageTaken);
     }
+    player.combatRegenDelay = PLAYER_REGEN_DELAY;
     player.health = Math.max(0, player.health - finalDamage);
     player.hurtTimer = 0.42;
     player.velocity.addScaledVector(direction, 4.4 + extraPush * 7);
@@ -16394,15 +17758,20 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function handlePlayerDefeat() {
-    // Apply the level regression before the recovery flows below restore
-    // vitals, so health/guard/mana refill to the reduced caps.
+    // Apply XP progress loss before the recovery flows below restore vitals.
     const penalty = applyDeathLevelPenalty();
     if (localPlayerInArenaActivity()) {
       endCrownringArenaActivity("defeat");
       if (penalty) {
-        showBanner(penalty.lostLevel
-          ? "Recovered at Crownford infirmary - level lost, now level " + penalty.level
-          : "Recovered at Crownford infirmary - level progress lost", 3.2);
+        showBanner("Recovered at Crownford infirmary - level " + penalty.level + " progress lost", 3.2);
+      }
+      return;
+    }
+    if (localPlayerInDungeonActivity()) {
+      const def = activeDungeonDefinition();
+      endDungeonActivity("defeat");
+      if (penalty) {
+        showBanner(def.defeatCopy + " - level " + penalty.level + " progress lost", 3.2);
       }
       return;
     }
@@ -16411,12 +17780,9 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       player.guard = player.maxGuard;
       player.mana = player.maxMana;
       if (game.mode === "exploration") {
-        player.position.copy(game.exploration.spawn);
-        if (game.exploration.horse) {
-          game.exploration.horse.mounted = false;
-          game.exploration.horse.position.copy(player.position).add(new THREE.Vector3(2.4, 0, 2.2));
-          game.exploration.horse.velocity.set(0, 0, 0);
-        }
+        player.position.copy(currentExplorationRespawnPosition());
+        constrainExplorationPlayer();
+        parkHorseNear(player.position);
       } else {
         const angle = Math.random() * TAU;
         const radius = 7 + Math.random() * 9;
@@ -16427,7 +17793,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       player.group.position.copy(player.position);
       spawnImpact(player.position, 0xf7df9a, 22);
       showBanner(penalty
-        ? (penalty.lostLevel ? "Respawned - level lost, now level " + penalty.level : "Respawned - level progress lost")
+        ? "Respawned - level " + penalty.level + " progress lost"
         : "Respawned", penalty ? 3 : 1.8);
       if (game.mode === "exploration") {
         saveProgress();
@@ -16487,10 +17853,17 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function updateFireballs(dt) {
+    const activity = activeCombatActivity();
     for (let i = game.fireballs.length - 1; i >= 0; i -= 1) {
       const fireball = game.fireballs[i];
+      if (activity && fireball.activityId !== activity.activityId) {
+        continue;
+      }
       fireball.life -= dt;
       const targetInfo = combatTargetById(fireball.targetId) || combatTargetById(online.localId);
+      if (!targetInfo) {
+        continue;
+      }
       const targetGroundY = combatTargetGroundY(targetInfo);
       const homingTarget = tmpVec.copy(targetInfo.position);
       homingTarget.y = targetGroundY + 0.92;
@@ -16548,8 +17921,12 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
   }
 
   function updatePotions(dt) {
+    const activity = activeCombatActivity();
     for (let i = game.potions.length - 1; i >= 0; i -= 1) {
       const potion = game.potions[i];
+      if (activity && potion.activityId !== activity.activityId) {
+        continue;
+      }
       const bob = Math.sin(clock.elapsedTime * 4.2 + potion.bobSeed) * 0.08;
       potion.position.y = explorationGroundWorldY(potion.position.x, potion.position.z);
       potion.group.position.y = potion.position.y + 0.1 + bob;
@@ -16557,29 +17934,51 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       potion.marker.material.opacity = 0.36 + Math.sin(clock.elapsedTime * 5.3 + potion.bobSeed) * 0.12;
       potion.glow.intensity = 0.85 + Math.sin(clock.elapsedTime * 6.1 + potion.bobSeed) * 0.18;
 
-      if (player.health >= player.maxHealth) {
-        continue;
-      }
-
       const distance = Math.hypot(player.position.x - potion.position.x, player.position.z - potion.position.z);
       if (distance < potion.pickupRadius) {
+        const wantsStore = player.health >= player.maxHealth && !!storedPotionFromDrop(potion);
+        if (wantsStore && !canStorePotionDrop(potion)) {
+          if (!potion.storageNoticeCooldown || potion.storageNoticeCooldown <= 0) {
+            potion.storageNoticeCooldown = 1.8;
+            const unlockedSlots = unlockedPotionSlotCount();
+            showBanner(unlockedSlots > 0 ? "Potion pouch full" : "Potion slot unlocks at level " + potionSlotUnlockLevel(0), 1.4);
+          } else {
+            potion.storageNoticeCooldown -= dt;
+          }
+          continue;
+        }
+        if (player.health >= player.maxHealth && !wantsStore) {
+          continue;
+        }
         if (isJoinedClient()) {
           if (!potion.pickupRequested) {
             potion.pickupRequested = true;
             sendOnlineMessage({
               kind: "potionPickup",
               potionId: potion.netId,
+              store: wantsStore,
+              inventoryCount: storedPotions().length,
               state: serializePlayerState()
             });
           }
           continue;
         }
+        if (wantsStore) {
+          const item = storedPotionFromDrop(potion);
+          if (!storePotionItem(item)) {
+            continue;
+          }
+          spawnImpact(potion.position, potionPickupColor(potion), 12);
+          scene.remove(potion.group);
+          game.potions.splice(i, 1);
+          continue;
+        }
         const beforeHeal = player.health;
         player.health = potion.fullHeal ? player.maxHealth : Math.min(player.maxHealth, player.health + potion.healAmount);
         const healed = Math.ceil(player.health - beforeHeal);
-        spawnImpact(player.position, 0xff7f96, 18);
+        spawnImpact(player.position, potionPickupColor(potion), 18);
         playSfx("potion", potion.fullHeal ? 1.25 : 0.95);
-        broadcastOnlineEffect({ type: "impact", x: player.position.x, y: 0, z: player.position.z, color: 0xff7f96, count: 18 });
+        broadcastOnlineEffect({ type: "impact", x: player.position.x, y: 0, z: player.position.z, color: potionPickupColor(potion), count: 18 });
         showBanner(potion.fullHeal ? "Fully recovered" : "Recovered +" + healed);
         scene.remove(potion.group);
         game.potions.splice(i, 1);
@@ -16658,6 +18057,8 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     guardText.textContent = Math.ceil(resourceValue);
     waveLabel.textContent = localPlayerInArenaActivity()
       ? "Crownring " + Math.max(1, game.wave)
+      : localPlayerInDungeonActivity()
+      ? activeDungeonDefinition().shortName
       : game.mode === "exploration" ? "Explore" : "Wave " + Math.max(1, game.wave);
     const level = getCharacterLevel();
     levelText.textContent = level;
@@ -16666,6 +18067,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     if (saveHint) {
       saveHint.hidden = game.mode !== "exploration";
     }
+    updatePotionInventoryUi();
     if (game.mode === "exploration") {
       const xp = getCharacterProgress().xp;
       const levelBaseXp = xpForLevel(level);
@@ -16727,7 +18129,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
       }
       updatePotions(dt);
       if (game.mode === "exploration") {
-        if (!localPlayerInArenaActivity()) {
+        if (!localPlayerInSharedActivity()) {
           updateQuestItems(dt);
           updateHorse(dt);
           updateTalkPrompt();
@@ -16838,6 +18240,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         endCrownringArenaActivity("yield");
         return;
       }
+      if (event.code === "KeyY" && localPlayerInDungeonActivity()) {
+        event.preventDefault();
+        endDungeonActivity("yield");
+        return;
+      }
       if (event.code === "KeyG" && game.mode === "exploration" && game.state === "playing" && questDialog.hidden) {
         event.preventDefault();
         cycleEquippedWeapon();
@@ -16889,7 +18296,11 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
         event.preventDefault();
         startSecondaryAbility();
       }
-      if (event.code === "KeyH" || event.code === "KeyL") {
+      if (event.code === "KeyH") {
+        event.preventDefault();
+        handlePotionHotkey();
+      }
+      if (event.code === "KeyL") {
         event.preventDefault();
         dropWizardHealthPotion();
       }
@@ -17055,7 +18466,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
     playerNameInput.addEventListener("blur", syncPlayerName);
     questAcceptButton.addEventListener("click", acceptCurrentQuest);
     questClaimButton.addEventListener("click", claimCurrentQuest);
-    questServiceButton.addEventListener("click", startCrownringArenaActivity);
+    questServiceButton.addEventListener("click", activateCurrentNpcService);
     questCloseButton.addEventListener("click", () => {
       playSfx("uiBack", 1);
       closeQuestDialog();
@@ -17085,6 +18496,7 @@ import { ambientLineFor, mergeQuestDialogueOptions, respondToPlayerInput, sugges
 
   setupLighting();
   setupArena();
+  setupDungeonInterior();
   setPlayerCharacter("knight", true);
   setGameMode("exploration");
   setMenuPhase("landing");

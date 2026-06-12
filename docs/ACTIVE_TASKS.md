@@ -320,6 +320,165 @@ Remaining work:
 - Two-client smoke test of send/receive, fade timing, rate-limit, and Escape-to-cancel pointer-lock return.
 - Optional: surface a subtle "new message" cue when the log is faded, and optional roster integration.
 
+### T-012: Bellwater Shared Dungeon Slice
+
+Primary owner: Game Director / Integrator
+
+Support: World & Content, Gameplay Systems, RPG Mechanics / Economy, Multiplayer / Netcode, UI / UX, Creative / Narrative, Rendering / Performance, Sound, QA / Playtest, Release
+
+Status: `[~] Active`
+
+Done evidence:
+- Bellwater Underworks now exists as a compact shared dungeon POI near Crownford, with terrain/road support, an entrance facade, scout NPC, and Mason Vale as a Crownford service NPC.
+- Entering the Underworks starts a host-authoritative shared activity modeled after the Crownring: current room members are pulled into a hidden dungeon chamber, late joiners queue outside, and `Y` rings out.
+- Dungeon actors carry `activityType: "dungeon"` / activity id tags through enemy, fireball, potion, and world snapshot paths.
+- Clearing the first chamber grants shared XP and a once-per-player first-clear boon (`+3` health/guard/magica-focus), using local progression state so a veteran host does not consume a new player's first clear.
+- Dungeon defeat uses the normal current-level XP wipe only, restores the player at the Bellwater grate, and keeps the online room alive.
+- Help and dialogue service copy now mention shared dungeons, and the former Crownring-only service button is generalized for service NPCs.
+
+Remaining work:
+- Two-client smoke test for host start, joiner start request, queued late joiner, reward idempotency, defeat, and yield.
+- Visual/browser pass for Bellwater entrance readability and dungeon room framing.
+- Future dungeon expansion should add multiple chambers, authored boss/loot hooks, and a clearer in-world return bell object.
+
+Acceptance:
+- A solo player can enter Bellwater Underworks, clear the chamber, receive XP/boon once, and return to the overworld.
+- Online players already in the room enter together and resolve rewards from the host.
+- Late joiners and defeated/yielding players do not receive the current clear reward.
+- Crownring arena behavior remains unchanged.
+
+### T-018: Siltwell Cistern Shared Dungeon
+
+Primary owner: World & Content
+
+Support: Game Director / Integrator, Gameplay Systems, RPG Mechanics / Economy, Multiplayer / Netcode, UI / UX, Creative / Narrative, Rendering / Performance, Sound, QA / Playtest, Release
+
+Status: `[~] Active`
+
+Done evidence:
+- Siltwell Cistern is being added as a second shared dungeon at the northeast fringe of Amber Dunes, with its own service NPC, road spur, minimap marker, recovery point, encounter mix, clear XP, and first-clear boon.
+- Dungeon activity start, clear reward, recovery, HUD, help, and multiplayer messages are being generalized by `dungeonId` so Bellwater and Siltwell share the same host-authoritative flow.
+
+Remaining work:
+- Solo browser smoke for Siltwell discovery, entry, clear, reward, and recovery.
+- Bellwater regression pass after the shared dungeon path generalization.
+- Two-client smoke for requested `dungeonId`, late join queue, defeat/yield, and reward idempotency.
+
+Acceptance:
+- Bellwater and Siltwell each start from the correct NPC/entrance and use their own copy, reward XP, first-clear boon, and recovery point.
+- Clearing one dungeon does not consume the other dungeon's first-clear boon.
+- Host/join reward messages validate dungeon id, activity id, participants, and claim id.
+- Siltwell reads visually as a practical desert cistern entrance, not a village house or unannounced loot vault.
+
+### T-013: Field Recovery, Town Checkpoints, Wilds Pressure, And Death Penalty Patch
+
+Primary owner: Gameplay Systems Agent
+
+Support: RPG Mechanics / Economy, Multiplayer / Netcode, QA / Playtest, Release
+
+Status: `[x] Done`
+
+Done evidence:
+- Players slowly regenerate health while exploring out of combat. Recent damage, active attacks/projectiles, nearby enemies, and shared combat activities suppress the regen delay.
+- Entering a town now sets that town center as the ordinary exploration death respawn point. The checkpoint persists by town id plus local fallback coordinates, and is restored when the exploration world is rebuilt.
+- Wilds respawn pacing is faster: base refill delay, jitter, tier delay multipliers, and cleared-zone bonus caps were reduced so emptied areas recover sooner.
+- Death now wipes only XP earned inside the current level. The player never drops a level, and unlocked stats/abilities remain stable.
+- Crownring reward notes were corrected: online Crownring combat uses shared wave-clear XP, not per-kill payouts. Exploration enemy kill credit remains host-resolved by final damage source.
+- Verification: `npm run check`, `git diff --check`, stale reward/death-copy grep, and local browser startup smoke passed.
+
+Acceptance:
+- Out-of-combat exploration healing occurs only after combat pressure clears.
+- Entering a different town changes the exploration death respawn point to that town center.
+- Wilds feel busier over time without respawning directly on players.
+- Dying at any level never reduces the character level.
+- Online kill/reward copy matches host-authoritative behavior.
+
+### T-014: First Multi-Agent Code Boundaries
+
+Primary owner: Game Director / Integrator
+
+Support: Gameplay Systems, UI / UX, World & Content, Multiplayer / Netcode, Sound, QA / Playtest
+
+Status: `[x] Done`
+
+Done evidence:
+- Shared gameplay constants now live in `src/config/gameplay.js`.
+- Pure math/random helpers now live in `src/core/math.js`.
+- Help-panel data and tuning formatting now live in `src/content/help.js`.
+- Town checkpoint/death-respawn logic now lives in `src/systems/townRespawn.js`.
+- `docs/AGENT_EDITING_GUIDE.md` documents current file ownership and suggested future extraction targets.
+- `npm run check` now syntax-checks the extracted modules as well as the legacy files.
+
+Acceptance:
+- Future agents can edit tuning, help content, and town respawn logic without touching `src/main.js`.
+- The game still loads through the browser after extraction.
+- The extraction preserves existing progression keys and runtime behavior.
+
+### T-015: Local God Mode Testing Unlocks
+
+Primary owner: Gameplay Systems Agent
+
+Support: QA / Playtest, UI / UX
+
+Status: `[x] Done`
+
+Done evidence:
+- Local runs (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, or `file:`) enable god mode automatically.
+- God mode grants runtime access to every class kit, both mounts, Roadwarden tack, and all ability gates without forcing XP/level changes.
+- Clean local saves spawn a test mount immediately, and mount-gated quest content is available for testing.
+- God-mode test mounts do not mark mounts as permanently unlocked unless the player completes the real mount quest reward flow.
+- The pause/status effects list and exploration guidance banner identify local god mode when active.
+
+Acceptance:
+- On a local server, pressing `G` cycles through all valid kits for the current class.
+- On a local server, pressing `M` can switch between horse and Skyhatched Drake.
+- Level-gated abilities are usable on local runs regardless of current XP.
+- Non-local runs keep normal progression gates.
+
+### T-016: Potion Pouch Inventory
+
+Primary owner: RPG Mechanics / Economy Agent
+
+Support: UI / UX, Multiplayer / Netcode, QA / Playtest
+
+Status: `[x] Done`
+
+Done evidence:
+- Exploration progression now stores a compact three-slot potion pouch, with slots unlocking at levels 2, 5, and 8.
+- Ordinary field/full potions picked up at full health are stored when an unlocked slot is open; wounded players still consume pickups immediately.
+- Wizard Healing Draughts remain shared support drops that can be consumed by the caster or any wounded player, and are not pocketed at full health.
+- Stored potions render in fixed HUD slots with vial icons, locked slot labels, and `H`/click use.
+- Online pickup requests now support host-approved storage so shared drops are removed once and acknowledged as stored or consumed.
+
+Acceptance:
+- Full-health pickup with an unlocked empty slot stores the potion instead of wasting it.
+- Wounded pickup heals immediately instead of being stored.
+- Full-health pickup with no unlocked empty slot leaves the potion on the ground.
+- Locked pouch slots show their unlock level and cannot be used until earned.
+- Stored potions survive local save/load through exploration progression.
+- Wizard support draught behavior remains immediate/shared for the caster and all players.
+
+### T-017: NPC Reward Hint Topics
+
+Primary owner: Creative / Narrative Agent
+
+Support: World & Content, RPG Mechanics / Economy, UI / UX, QA / Playtest
+
+Status: `[x] Done`
+
+Done evidence:
+- NPC dialogue now includes an authored `Rewards nearby` topic for local kits, perks, mounts, and boons.
+- Typed questions about kits, gear, buffs, boons, perks, training, rewards, mounts, or tack route to mechanics-safe reward hints instead of generic quest prose.
+- Named NPCs have specific hints for their reward source; unnamed villagers fall back to biome-level area guidance.
+- Quest reward copy now matches actual grants for Quiet the Road and First Bell of the Crownring.
+- Hints avoid unsupported economy/crafting promises and refer only to shipped quest, Crownring, shared dungeon, and mount rewards.
+
+Acceptance:
+- Asking Torren about kits points to Roadwarden Blade and Wayfinder Focus, not a nonexistent ranger road kit.
+- Asking Edda Thorn about rewards points to Briarfall kits and Pathcraft.
+- Asking Steward Bryn about rewards points to Crownring class kits and the first-bell training boon.
+- Asking generic Briarfall or city villagers about rewards returns area-level guidance.
+
 ## Phase 1: Remove Arena As A Top-Level Mode
 
 Primary owner: UI / UX Agent
@@ -507,10 +666,10 @@ Task checklist:
 - [x] On arena defeat, stop the activity, clear arena actors, restore the player at the infirmary, and continue Exploration.
 
 Rewards:
-- [x] Kill XP remains small and immediate.
 - [x] Wave clear XP is awarded once per eligible participant.
+- [x] Crownring uses shared wave-clear XP rather than individual mid-wave kill payouts.
 - [~] Milestone rewards can land every three waves.
-- [x] Dying or yielding mid-wave keeps earned kill XP but no current wave clear bonus.
+- [x] Dying or yielding mid-wave does not claim the current wave clear bonus.
 - [ ] Future progression state should support `bestWave`, `completions`, and `rank`.
 
 Acceptance:

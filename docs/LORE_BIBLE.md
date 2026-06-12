@@ -21,6 +21,7 @@ Ironhold is a low-poly, grounded-fantasy valley. Travel, weather, and danger are
 - **Crownford** is a civic river-and-castle city — pale stone, timber upper floors, tiled roofs, broad disciplined streets. It runs on stone, bell, and writ rather than promise.
 - The **Crownring** is an arena built into Crownford's outer wall district. Fighters face waves and may yield by bell without shame. The fallen wake in the **infirmary** beside the church; nobody dies for sport in Crownford.
 - The southern **dunes** hold buried cisterns and well-stones; man-sized dune spiders web the water paths shut.
+- **Siltwell Cistern** sits on the northeast fringe of Amber Dunes: a practical road waterwork with a sealed wellstone chamber, not a treasure vault or temple.
 - The **Dragonspine Peaks** rise in ridges and passes; dragons roost on the high shelves.
 - **Mistfen** is a plank-road swamp where pale wisps drift against the wind to lure travelers off the boards. Old shrine bells glow in its sunken pools.
 - Travelers fight as **knights** (sword and guard) or **wizards** (staff and storm). A good **horse** makes the valley small.

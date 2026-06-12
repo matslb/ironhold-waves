@@ -251,6 +251,113 @@ canvas {
   display: none;
 }
 
+.potion-inventory {
+  position: fixed;
+  left: 18px;
+  bottom: 92px;
+  z-index: 5;
+  width: 188px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  pointer-events: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.potion-inventory[hidden] {
+  display: none;
+}
+
+.potion-inventory-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-transform: uppercase;
+}
+
+.potion-inventory-head strong {
+  color: #f7df9a;
+  font-size: 10px;
+}
+
+.potion-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.potion-slot {
+  width: 100%;
+  height: 46px;
+  min-height: 0;
+  padding: 4px 0 5px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  place-items: center;
+  gap: 1px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 10, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  color: rgba(244, 239, 228, 0.36);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.potion-slot-icon {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.58;
+}
+
+.potion-slot-label {
+  min-height: 11px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.potion-slot.empty .potion-slot-icon {
+  opacity: 0.28;
+}
+
+.potion-slot.filled {
+  border-color: rgba(255, 127, 150, 0.48);
+  background: rgba(137, 38, 54, 0.24);
+  color: #ffd7df;
+}
+
+.potion-slot.full {
+  border-color: rgba(247, 223, 154, 0.58);
+  background: rgba(213, 170, 80, 0.18);
+  color: #f7df9a;
+}
+
+.potion-slot.locked {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 10, 0.3);
+  color: rgba(244, 239, 228, 0.3);
+}
+
+.potion-slot.locked .potion-slot-icon {
+  opacity: 0.22;
+}
+
+.potion-slot.locked .potion-slot-label {
+  color: rgba(247, 223, 154, 0.44);
+}
+
+.potion-slot:disabled {
+  cursor: default;
+}
+
 .save-hint {
   color: rgba(244, 239, 228, 0.54);
   font-size: 10px;
@@ -1235,6 +1342,17 @@ button[hidden] {
 
   .kit-panel {
     display: none;
+  }
+
+  .potion-inventory {
+    left: 12px;
+    bottom: 186px;
+    width: 168px;
+    padding: 8px 10px;
+  }
+
+  .potion-slot {
+    height: 42px;
   }
 
   .buffs-panel {

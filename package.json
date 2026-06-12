@@ -4,7 +4,7 @@
   "private": true,
   "description": "Ironhold browser game",
   "scripts": {
-    "check": "node --check src/main.js && node --check src/content/rpg.js && node --check src/content/dialogue.js",
+    "check": "node --check src/main.js && node --check src/config/gameplay.js && node --check src/core/math.js && node --check src/content/rpg.js && node --check src/content/dialogue.js && node --check src/content/help.js && node --check src/systems/townRespawn.js",
     "serve": "python3 -m http.server 8765 --bind 127.0.0.1",
     "firebase:serve": "npx firebase-tools@15.20.0 emulators:start --only hosting",
     "firebase:deploy": "npx firebase-tools@15.20.0 deploy --only hosting"
