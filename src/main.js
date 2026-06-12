@@ -1427,6 +1427,8 @@ import {
   const OUTDOOR_FOG_COLOR = 0x9ac7e8;
   const DUNGEON_SKY_COLOR = 0x111820;
   const DUNGEON_FOG_COLOR = 0x151a1f;
+  const ENEMY_COMBAT_RESET_EXTRA_RADIUS = 8;
+  const ENEMY_COMBAT_RESET_MIN_RADIUS = 12;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(OUTDOOR_SKY_COLOR);
@@ -13784,6 +13786,70 @@ import {
     return best || combatTargetById(online.localId);
   }
 
+  function enemyCombatResetRadius(enemy) {
+    return Math.max(
+      ENEMY_COMBAT_RESET_MIN_RADIUS,
+      (enemy.awareness || 0) * 1.25,
+      (enemy.desiredRange || 0) + ENEMY_COMBAT_RESET_EXTRA_RADIUS
+    );
+  }
+
+  function enemyHasNearbyLivingCombatTarget(enemy, radius = enemyCombatResetRadius(enemy)) {
+    const radiusSq = radius * radius;
+    for (const target of combatTargets()) {
+      if (horizontalDistanceSq(enemy.position, target.position) <= radiusSq) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function enemyIsCombatEngaged(enemy) {
+    if (!enemy || enemy.dead || enemy.entering) {
+      return false;
+    }
+    return enemy.health < enemy.maxHealth
+      || enemy.state === "chase"
+      || enemy.state === "attack"
+      || enemy.state === "lunge"
+      || enemy.state === "pulse"
+      || enemy.state === "fire"
+      || enemy.state === "draw"
+      || enemy.state === "spit"
+      || enemy.state === "hex";
+  }
+
+  function resetAbandonedEnemyCombat(enemy) {
+    enemy.health = enemy.maxHealth;
+    enemy.stunned = 0;
+    enemy.cooldown = Math.max(enemy.cooldown || 0, 0.4);
+    enemy.attackTimer = 0;
+    enemy.attackType = null;
+    enemy.attackHitDone = false;
+    enemy.volleyCount = 0;
+    enemy.targetId = "";
+    enemy.state = "patrol";
+    enemy.velocity.multiplyScalar(0.25);
+    if (enemy.telegraph) {
+      enemy.telegraph.visible = false;
+    }
+    if (enemy.floatRoot) {
+      enemy.floatRoot.scale.setScalar(1);
+    }
+    if (enemy.mouthGlow) {
+      enemy.mouthGlow.visible = false;
+    }
+    updateEnemyHealthBillboard(enemy);
+  }
+
+  function maybeResetAbandonedEnemyCombat(enemy) {
+    if (!enemyIsCombatEngaged(enemy) || enemyHasNearbyLivingCombatTarget(enemy)) {
+      return false;
+    }
+    resetAbandonedEnemyCombat(enemy);
+    return true;
+  }
+
   function applyCombatTargetDamage(target, damage, guardDamage, direction, extraPush) {
     if (!target) {
       return;
@@ -17458,6 +17524,9 @@ import {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.stunned = Math.max(0, enemy.stunned - dt);
+      if (maybeResetAbandonedEnemyCombat(enemy)) {
+        continue;
+      }
 
       const target = nearestCombatTarget(enemy);
       enemy.targetId = target.id;
