@@ -14455,8 +14455,8 @@ import {
     const previousAttackType = enemy.attackType;
     enemy.networkTargetPosition = enemy.networkTargetPosition || new THREE.Vector3();
     enemy.networkTargetPosition.set(state.x || 0, 0, state.z || 0);
-    enemy.networkTargetY = state.y || 0;
-    enemy.networkTargetYaw = state.yaw || 0;
+    enemy.networkTargetY = state.y ?? 0;
+    enemy.networkTargetYaw = state.yaw ?? 0;
     enemy.type = normalizeEnemyType(state.type) || enemy.type;
     enemy.scale = state.scale || enemy.scale || 1;
     enemy.radius = state.radius || enemy.radius;
@@ -14485,7 +14485,12 @@ import {
       enemy.position.copy(enemy.networkTargetPosition);
       enemy.yaw = enemy.networkTargetYaw;
       if (enemy.group) {
-        enemy.group.position.set(state.x || 0, state.y || 0, state.z || 0);
+        const firstY = enemy.type === "dragon"
+          ? (enemy.networkTargetY || enemy.hoverHeight || 2.2)
+          : enemy.exploration
+          ? explorationGroundWorldY(state.x || 0, state.z || 0)
+          : (enemy.networkTargetY ?? 0);
+        enemy.group.position.set(state.x || 0, firstY, state.z || 0);
         enemy.group.rotation.y = enemy.yaw;
       }
     }
@@ -14697,7 +14702,10 @@ import {
         enemy.group.position.set(enemy.position.x, y, enemy.position.z);
         updateDragonAnimation(enemy, dt);
       } else {
-        enemy.group.position.copy(enemy.position);
+        const groundY = enemy.exploration
+          ? explorationGroundWorldY(enemy.position.x, enemy.position.z)
+          : (enemy.networkTargetY ?? 0);
+        enemy.group.position.set(enemy.position.x, groundY, enemy.position.z);
         if (enemy.type === "spider") {
           updateSpiderAnimation(enemy, dt);
         } else if (enemy.type === "wisp") {
