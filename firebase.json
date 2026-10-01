@@ -7,11 +7,13 @@
       ".firebaserc",
       ".firebase/**",
       ".git/**",
+      ".claude/**",
       ".gitignore",
       "_config.yml",
       "404.html",
       "README.md",
       "docs/**",
+      "tests/**",
       "node_modules/**",
       "package.json",
       "package-lock.json"

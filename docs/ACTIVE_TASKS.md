@@ -38,6 +38,61 @@ Completion rules:
 
 These are ready-to-delegate tasks extracted from `docs/ROADMAP.md`.
 
+### T-034: Character And House Model Cleanup
+
+Primary owner: Game Director / Integrator
+
+Reviewers: Rendering / Performance and Model QA
+
+Status: `[x] Done`
+
+Done evidence:
+- Local and remote heroes now have grounded boots, aligned knees/cuffs, and attached ranger limb details. Open ranger hoods and a lower collar expose the face; knight shield rims no longer cover the shield face.
+- Shared arm grip solving connects held weapons/shields after existing attack, walk, and mount poses. Barbarian bracers move with the arms; the Bonewarden has an articulated shoulder-to-sword arm and a neck connecting its head to the spine. Humanoid enemy feet meet the neutral ground plane; the barbarian axe spike points upward.
+- NPC hair caps and hood openings leave faces visible, and NPC boots meet the ground. Existing NPC palettes, names, markers, quests, and movement remain intact.
+- Ranger draws lift the bow to the chest, pull a two-part string to a reachable hand anchor, and return the arm/string to rest. All three kits share the same local/remote pose helper; regular remote arrow poses use existing replicated actions.
+- The full nine-enemy roster is covered: Barbarian, Dragon, Spider, Wisp, Bandit Archer, Sand Viper, Bonewarden, Bog Lurker, and Briar Beast. Dragon neck/tail taper directions and the downward-opening jaw are corrected; Spider legs stay joined through their gait. Viper eyes, bead overlap, ground contact, and moving tail attachment are fixed. Bog eyes clear the brow; Briar horns, rooted thorns, and a rounded moss mantle replace inverted/floating details. Wisp hover geometry passed its audit without changes.
+- Meadow, mountain, desert, swamp, briar, city, and stable models have supported roofs with matching wall/ridge/gable joins. Door leaves match their openings and adult scale; meadow steps, porch framing, shutters, side windows, and flower boxes attach correctly. Meadow corner braces join posts/top plates and clear every window/shutter by at least 0.23 units; swamp access and stable rails meet their supports. Original footprints, root scales, terrain placement, and colliders are preserved.
+- Browser gallery QA covered all seven structures, local/remote hero poses, NPC faces, and all nine enemies with individual and labeled group views. The full game initialized and entered Crownring without warnings/errors. All 69 tests pass with no skips, including actual Three.js 0.160 checks for face sightlines, creature joint/skin continuity, moving limbs, weapon contact through attack poses, string reach/reset, and immutable geometry. Syntax and diff checks pass. A separate regression review found no actionable model hierarchy, replication, or shared-resource issues.
+- Performance: cached geometry and existing material/texture palettes are reused; small limb/string meshes add no lights or textures. Static world batches still operate, and grip/string scratch state is reused. An isolated fixed-valley 240-frame smoke sample averaged 1,025 draw calls. Temporary galleries and QA controls live outside the repository.
+
+### T-033: Desktop And Hosting Performance
+
+Primary owner: Game Director / Integrator
+
+Reviewers: Rendering / Performance and Gameplay Systems
+
+Status: `[x] Done`
+
+Done evidence:
+- Exploration, arena, and dungeon static opaque scenery uses reversible material/spatial batches. The fixed test valley batches 12,910 source meshes into 1,448 batches; animated NPCs, herbs, quest items, mounts, and waterfall pieces retain their live hierarchy.
+- One 2048px sun shadow map follows the player across terrain instead of covering the whole valley. Arena point lights retain their illumination without six-face shadow passes. Rendering is capped at DPR 1.5 and three million pixels.
+- Local enemy/health-bar and pickup visibility reduces rendering without gating authoritative host simulation or remote-player targeting. Enemy separation uses an exact sequential grid for large populations and a direct scan for small waves.
+- Impacts use one shared geometry and a reusable pool capped at 256 particles. Projectile factories track and dispose only private resources on every removal path; telegraphs and Frostbind reuse their materials. HUD updates run at 15 Hz, and unchanged inventory DOM is cached.
+- Controlled 240-frame starting-area sample: average frame CPU 14.87 → 5.17 ms; rendering submission 14.16 → 4.55 ms; draw calls 2,685 → 1,009. Dungeon CPU 3.58 → 2.49 ms. A real hosted session measured 5.39 ms frame CPU before adding a second client. Conditions and limits are in `docs/PERFORMANCE.md`.
+- Browser checks: two-client hosting, remote combat damage, herb collection, night/elevated terrain, dungeon entry, arena entry/pause/resume/yield, and the ordinary preview's performance overlay. No browser warnings/errors in these checks. Ten warmed-up particle/projectile stress cycles kept geometry buffers at 1,412, with each particle burst capped at 256 and returning to zero.
+- `npm run check`, all nineteen tests, batching tests with the actual Three.js 0.160 runtime, and `git diff --check` pass. QA controls and fixed-seed instrumentation are confined to `/private/tmp`; no debugging hooks were added to production gameplay.
+
+### T-032: The Valley After Dusk
+
+Primary owner: Game Director / Integrator
+
+Reviewers: Gameplay Systems and Rendering / Performance
+
+Status: `[x] Done`
+
+Done evidence:
+- `src/systems/dayNight.js` owns a twelve-minute clock and a smooth daylight, golden dusk, blue moonlight, and morning palette. Rooms begin in daylight. Time remains transient and uses elapsed active-play time independently of combat's clamped frame delta.
+- The host sends one additive `dayPhase` value through existing world snapshots; joiners reconcile and predict for at most one second without a fresh snapshot. The host's pause freezes the clock. Existing saves and quest/reward state are unchanged.
+- Existing hemisphere, sun, and rim lights are reused. Dungeon entry immediately restores their original light colors and intensities; exiting restores the current outdoor phase. The sky follows the player across the valley and elevated terrain.
+- Stars and a low-poly moon emerge after dusk. A bounded firefly field appears in meadow, swamp, and briar terrain; arena/dungeon encounters and desert/mountain terrain suppress fireflies. A phase label with sun/moon/horizon icons sits above the minimap and is hidden indoors and outside active sessions.
+- Browser smoke checks: daylight/dusk/night/morning; night dungeon entry and yield; elevated traversal; host pause/resume. Two clients joined room 2425 on separate localhost origins: a late joiner received the night sky, and a host change to dusk updated both HUDs. No browser errors in these checks.
+- `npm run check`, five clock tests via `npm test`, and `git diff --check` pass. Tests cover frame-rate-independent pace, wraparound, configured reset, host synchronization, invalid inputs, and phase labels. Temporary QA controls were served from `/private/tmp`, never added to game source.
+
+Performance:
+- At most three additional draw calls: one field of 230 stars, one moon, and one field of 28 fireflies. Fixed geometry buffers and materials; no additional lights, shadow maps, textures, or gameplay particles. Firefly terrain heights are sampled at 2 Hz or after moving three units. Phase text changes only when the phase label changes.
+- Game entry, styles, and changed module imports carry a release cache key so an existing browser loads the update. Test files remain excluded from Firebase Hosting.
+
 ### T-001: Combat Event Pipeline Prep
 
 Primary owner: Gameplay Systems Agent
@@ -1059,8 +1114,7 @@ Done evidence:
 - Village/city roof eaves were raised, the city church roof was rebuilt along the nave axis, and dragon horn/scale tuning was adjusted.
 
 Remaining work:
-- Run a focused screenshot QA pass for all major character/enemy/structure proportions.
-- Re-check roofs, dragon horns, and barbarian horns during that pass before marking fully done.
+- T-034 completed screenshot and geometry QA for heroes, NPCs, all nine enemy types (including dragon horns), and seven house/stable styles. Check the larger landmark buildings, church, towers, and city walls against the player scale anchor before closing the whole phase.
 
 Scale targets:
 - Player body reads as roughly `2.2-2.4` world units tall. Plume/hat may reach about `3.0`.

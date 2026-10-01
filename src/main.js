@@ -19,8 +19,12 @@ import {
   BELLWATER_DUNGEON_CLEAR_XP,
   BELLWATER_DUNGEON_ID,
   BELLWATER_DUNGEON_NAME,
+  DAY_CYCLE_PREDICTION_SECONDS,
+  DAY_CYCLE_SECONDS,
+  DAY_CYCLE_START_PHASE,
   DUNGEON_RADIUS,
   ENEMY_SPEED_MULTIPLIER,
+  EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ,
   EXPLORATION_ENEMY_SEPARATION_DISTANCE,
   EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ,
   EXPLORATION_NPC_UPDATE_DISTANCE_SQ,
@@ -62,7 +66,7 @@ import {
   WILDS_TIER_DELAY_MUL,
   WIZARD_DRAUGHT_POCKET_DELAY,
   arenaRadius
-} from "./config/gameplay.js";
+} from "./config/gameplay.js?v=20261001-model-cleanup";
 import {
   formatTuningSummary,
   helpClassGuide,
@@ -78,6 +82,12 @@ import {
   setExplorationRespawnTown as setTownRespawnPoint,
   villageDisplayName
 } from "./systems/townRespawn.js";
+import { createDayNightClock, createDayNightSystem, describeDayPhase } from "./systems/dayNight.js?v=20261001-model-cleanup";
+import { EnemySeparationGrid } from "./systems/enemySeparation.js";
+import { disposeProjectileResources } from "./systems/projectileResources.js";
+import { buildStaticWorldBatches } from "./systems/staticWorldBatch.js";
+import { createArmGripSolver } from "./systems/characterGrip.js";
+import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
 (() => {
   "use strict";
@@ -127,6 +137,11 @@ import {
   const activityResultTitle = document.getElementById("activityResultTitle");
   const activityResultFlavor = document.getElementById("activityResultFlavor");
   const activityResultRows = document.getElementById("activityResultRows");
+  const completionScreen = document.getElementById("completionScreen");
+  const completionTitle = document.getElementById("completionTitle");
+  const completionFlavor = document.getElementById("completionFlavor");
+  const completionRows = document.getElementById("completionRows");
+  const completionContinueButton = document.getElementById("completionContinueButton");
   const sessionSelect = document.getElementById("sessionSelect");
   const startSessionButton = document.getElementById("startSessionButton");
   const resumeGameButton = document.getElementById("resumeGameButton");
@@ -177,6 +192,8 @@ import {
   const questMap = document.getElementById("questMap");
   const questMapCtx = questMap.getContext("2d");
   const minimapPanel = document.getElementById("minimapPanel");
+  const daylightReadout = document.getElementById("daylightReadout");
+  const dayPhaseLabel = document.getElementById("dayPhaseLabel");
   const chatPanel = document.getElementById("chatPanel");
   const chatLog = document.getElementById("chatLog");
   const chatForm = document.getElementById("chatForm");
@@ -251,8 +268,12 @@ import {
   }
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  function renderPixelRatio() {
+    const pixels = Math.max(1, window.innerWidth * window.innerHeight);
+    return Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(3000000 / pixels));
+  }
+  renderer.setPixelRatio(renderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2093,6 +2114,12 @@ import {
     }
   };
 
+  const dayClock = createDayNightClock({ cycleSeconds: DAY_CYCLE_SECONDS, startPhase: DAY_CYCLE_START_PHASE });
+  let dayNightSystem = null;
+  let dayTickAt = performance.now();
+  let daySyncedAt = -Infinity;
+  let dayHudPhase = "";
+
   function stableOnlineId() {
     const makeId = () => (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2);
     try {
@@ -2143,11 +2170,119 @@ import {
     hostId: "",
     sendTimer: 0,
     worldSendTimer: 0,
+    pingTimer: 0,
     effectSeq: 0,
     presenceTimer: 0,
+    // Estimated time (seconds) of joiner view staleness vs the host (roughly
+    // half RTT). Used for lag-compensated hit validation on the host.
+    viewDelaySeconds: 0.08,
     remotePlayers: new Map(),
     kickedIds: new Set()
   };
+
+  // --- Netcode tuning (joiner-side latency mitigation) ---
+  // The joiner does not simulate enemies; it dead-reckons replicated actors
+  // toward a predicted point (last position + velocity * age) so fast movers
+  // stay near their true host position, which is what makes dodging/aiming
+  // feel responsive. The host then lag-compensates joiner hits.
+  const REMOTE_EXTRAP_CAP = 0.22;          // cap dead-reckoning (s) to limit overshoot on turns
+  const REMOTE_ENEMY_LERP_BASE = 0.0009;   // exponential smoothing base toward predicted enemy target
+  const REMOTE_FIREBALL_LERP_BASE = 0.0016;
+  const REMOTE_LAG_COMP_MAX = 0.35;        // clamp for host-side lag-comp window (s)
+  const DODGE_IFRAME_SECONDS = 0.32;       // invulnerability granted by a dodge/roll
+
+  // Lightweight, opt-in network telemetry surfaced by the debug overlay
+  // (toggled with the "-" key). Measurement only; never gates gameplay.
+  const networkDebug = {
+    visible: false,
+    rttMs: 0,
+    lastWorldAt: 0,
+    worldSamples: [],
+    lastWorldBytes: 0
+  };
+  const framePerformance = { start: 0, frames: 0, cpuTotal: 0, renderTotal: 0,
+    fps: 0, cpuMs: 0, renderMs: 0, nextPanelAt: 0 };
+  const debugPanel = document.createElement("div");
+  debugPanel.hidden = true;
+  debugPanel.style.cssText = [
+    "position:absolute", "top:14px", "right:14px", "max-width:300px",
+    "padding:9px 11px", "border:1px solid rgba(255,255,255,0.16)",
+    "background:rgba(7,10,16,0.84)", "color:#d9ecff",
+    "font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace",
+    "white-space:pre", "pointer-events:none", "z-index:12",
+    "border-radius:8px", "box-shadow:0 8px 24px rgba(0,0,0,0.28)"
+  ].join(";");
+  (hud || root).appendChild(debugPanel);
+
+  function worldSnapshotRate() {
+    const samples = networkDebug.worldSamples;
+    if (samples.length < 2) {
+      return 0;
+    }
+    const span = Math.max(250, samples[samples.length - 1] - samples[0]);
+    return ((samples.length - 1) * 1000) / span;
+  }
+
+  function renderNetworkDebugPanel(force = false) {
+    if (!networkDebug.visible) {
+      if (!debugPanel.hidden) {
+        debugPanel.hidden = true;
+      }
+      return;
+    }
+    debugPanel.hidden = false;
+    const now = performance.now();
+    if (!force && now < framePerformance.nextPanelAt) return;
+    framePerformance.nextPanelAt = now + 250;
+    const worldAge = networkDebug.lastWorldAt ? Math.round(now - networkDebug.lastWorldAt) : -1;
+    const lines = [
+      "Performance / net  [-] to close",
+      `${framePerformance.fps.toFixed(0)} fps   CPU ${framePerformance.cpuMs.toFixed(1)}ms   render ${framePerformance.renderMs.toFixed(1)}ms`,
+      `draws: ${renderer.info.render.calls}   triangles: ${Math.round(renderer.info.render.triangles / 1000)}k`,
+      `buffers: ${renderer.info.memory.geometries}   pixel ratio: ${renderer.getPixelRatio().toFixed(2)}`,
+      `role: ${online.role || "offline"}   conn: ${online.connected ? "yes" : "no"}`,
+      online.role === "join"
+        ? `rtt: ${Math.round(networkDebug.rttMs)}ms   view delay: ${Math.round(online.viewDelaySeconds * 1000)}ms`
+        : "rtt: host",
+      online.role === "join"
+        ? `world: ${worldSnapshotRate().toFixed(1)}/s  ${networkDebug.lastWorldBytes}B  age ${worldAge >= 0 ? worldAge + "ms" : "n/a"}`
+        : `world out: ${online.remotePlayers.size} peer(s)`,
+      `enemies: ${game.enemies.length}   fireballs: ${game.fireballs.length}`
+    ];
+    debugPanel.textContent = lines.join("\n");
+  }
+
+  function toggleNetworkDebug() {
+    networkDebug.visible = !networkDebug.visible;
+    framePerformance.start = 0;
+    framePerformance.frames = 0;
+    framePerformance.cpuTotal = 0;
+    framePerformance.renderTotal = 0;
+    renderNetworkDebugPanel(true);
+  }
+
+  function recordFramePerformance(startedAt, renderMs) {
+    if (!startedAt) return;
+    const now = performance.now();
+    if (!framePerformance.start) framePerformance.start = startedAt;
+    framePerformance.frames++;
+    framePerformance.cpuTotal += now - startedAt;
+    framePerformance.renderTotal += renderMs;
+    const duration = now - framePerformance.start;
+    if (duration < 500) return;
+    framePerformance.fps = framePerformance.frames * 1000 / duration;
+    framePerformance.cpuMs = framePerformance.cpuTotal / framePerformance.frames;
+    framePerformance.renderMs = framePerformance.renderTotal / framePerformance.frames;
+    framePerformance.start = now;
+    framePerformance.frames = 0;
+    framePerformance.cpuTotal = 0;
+    framePerformance.renderTotal = 0;
+  }
+
+  function isNetworkDebugToggleKey(event) {
+    return event.code === "Minus" || event.code === "NumpadSubtract"
+      || event.key === "-" || event.key === "_";
+  }
 
   // Peer-broadcast room chat. Messages ride the existing MQTT layer as
   // { kind: "chat", name, text, color, ts }; every client renders what it
@@ -2208,6 +2343,7 @@ import {
     blocking: false,
     blockHeld: false,
     rollTimer: 0,
+    invulnTimer: 0,
     hurtTimer: 0,
     combatRegenDelay: 0,
     walkTime: 0,
@@ -2788,6 +2924,7 @@ import {
         respawnTownId: "",
         respawnLocal: null,
         completed: false,
+        allQuestsCelebrated: false,
         horseUnlocked: false,
         drakeUnlocked: false,
         courserUnlocked: false,
@@ -2868,6 +3005,7 @@ import {
       }
     }
     base.exploration.completed = !!sourceExploration.completed;
+    base.exploration.allQuestsCelebrated = !!sourceExploration.allQuestsCelebrated;
     base.exploration.horseUnlocked = !!sourceExploration.horseUnlocked;
     base.exploration.drakeUnlocked = !!sourceExploration.drakeUnlocked;
     base.exploration.courserUnlocked = !!sourceExploration.courserUnlocked;
@@ -3226,6 +3364,7 @@ import {
         : null;
       exploration.potionInventory = normalizePotionInventory(exploration.potionInventory);
       exploration.completed = !!game.exploration.completed;
+      exploration.allQuestsCelebrated = !!game.exploration.allQuestsCelebrated;
       if (!localGodModeEnabled()) {
         exploration.horseUnlocked = exploration.horseUnlocked
           || (!!game.exploration.horse && (game.exploration.horse.mountId || "horse") === "horse");
@@ -3286,6 +3425,7 @@ import {
     game.exploration.respawnLocal = normalizeRespawnLocal(saved.respawnLocal, game.exploration.radius);
     game.exploration.respawnPoint = null;
     game.exploration.completed = !!saved.completed;
+    game.exploration.allQuestsCelebrated = !!saved.allQuestsCelebrated;
   }
 
   function savedExplorationWorldPosition() {
@@ -3489,6 +3629,8 @@ import {
     }
   }
 
+  let potionInventoryUiKey = "";
+
   function updatePotionInventoryUi() {
     if (!potionInventory || !potionSlots) {
       return;
@@ -3501,6 +3643,12 @@ import {
     ensurePotionSlotButtons();
     const inventory = storedPotions();
     const unlockedSlots = unlockedPotionSlotCount();
+    const herbs = herbCount();
+    const uiKey = JSON.stringify([unlockedSlots, herbs, inventory]);
+    if (uiKey === potionInventoryUiKey) {
+      return;
+    }
+    potionInventoryUiKey = uiKey;
     for (let i = 0; i < POTION_INVENTORY_CAPACITY; i += 1) {
       const item = inventory[i] || null;
       const button = potionSlotButtons[i];
@@ -3523,7 +3671,6 @@ import {
       button.setAttribute("aria-label", button.title);
     }
     if (herbReadout && herbCountText) {
-      const herbs = herbCount();
       herbReadout.hidden = herbs <= 0;
       herbCountText.textContent = herbs + "/" + HERB_POUCH_CAP;
       herbReadout.title = "Valley herbs - brew potions at any village potion bench";
@@ -3954,6 +4101,7 @@ import {
     if (game.skyGroup) {
       game.skyGroup.visible = true;
     }
+    renderDayNightAtmosphere();
   }
 
   function applyDungeonAtmosphere() {
@@ -3963,6 +4111,7 @@ import {
     if (game.skyGroup) {
       game.skyGroup.visible = false;
     }
+    renderDayNightAtmosphere();
   }
 
   // handlePlayerDefeat applies the current-level XP wipe before the activity
@@ -4411,9 +4560,14 @@ import {
     return !activity || (enemy && enemy.activityId === activity.activityId);
   }
 
+  function removeProjectile(projectile) {
+    scene.remove(projectile.group);
+    disposeProjectileResources(projectile);
+  }
+
   function clearPlayerProjectiles() {
     for (const projectile of game.playerProjectiles) {
-      scene.remove(projectile.group);
+      removeProjectile(projectile);
     }
     game.playerProjectiles.length = 0;
   }
@@ -4428,7 +4582,7 @@ import {
 
     for (const fireball of game.fireballs) {
       if (!activityId || fireball.activityId === activityId) {
-        scene.remove(fireball.group);
+        removeProjectile(fireball);
       }
     }
     game.fireballs = game.fireballs.filter(fireball => activityId && fireball.activityId !== activityId);
@@ -4878,6 +5032,8 @@ import {
   }
 
   function clearExplorationWorld() {
+    game.explorationBatches?.dispose();
+    game.explorationBatches = null;
     if (game.explorationGroup) {
       scene.remove(game.explorationGroup);
       game.explorationGroup = null;
@@ -4920,6 +5076,7 @@ import {
     game.exploration.respawnPoint = null;
     game.exploration.discovered = new Set();
     game.exploration.completed = false;
+    game.exploration.allQuestsCelebrated = false;
     game.exploration.dungeonActivity = defaultDungeonActivity();
     game.exploration.wilds.seedPoints.length = 0;
     game.exploration.wilds.timer = 0;
@@ -6392,24 +6549,24 @@ import {
   function addStable(group, x, z) {
     const stable = new THREE.Group();
     setExplorationLocalGroundPosition(stable, x, z);
-    const postPositions = [
-      [-1.8, 0, -1.2],
-      [1.8, 0, -1.2],
-      [-1.8, 0, 1.2],
-      [1.8, 0, 1.2]
-    ];
-    for (const [px, py, pz] of postPositions) {
-      stable.add(makeBox(0.18, 1.85, 0.18, materials.wood, px, 0.92 + py, pz));
+    const postTop = 2.65;
+    for (const [px, pz] of [[-1.8, -1.2], [1.8, -1.2], [-1.8, 1.2], [1.8, 1.2]]) {
+      stable.add(makeBox(0.18, postTop, 0.18, materials.wood, px, postTop / 2, pz));
     }
-    const roofA = makeBox(4.8, 0.28, 1.95, materials.roof, 0, 2.34, -0.58);
-    const roofB = makeBox(4.8, 0.28, 1.95, materials.roof, 0, 2.34, 0.58);
-    roofA.rotation.x = -0.48;
-    roofB.rotation.x = 0.48;
-    const railBack = makeBox(3.8, 0.16, 0.14, materials.wood, 0, 0.88, 1.38);
-    const railLeft = makeBox(0.14, 0.16, 2.3, materials.wood, -2.0, 0.8, 0);
+    stable.add(makePitchedHouseRoof({
+      width: 4.8, depth: 3.4, wallWidth: 3.8, wallDepth: 2.4,
+      wallTop: postTop, rise: 0.65, thickness: 0.22,
+      roofMaterial: materials.roof, ridgeMaterial: materials.wood
+    }));
+    // Plates sit on the posts and carry the roof rather than leaving it afloat.
+    for (const pz of [-1.2, 1.2]) {
+      stable.add(makeBox(3.9, 0.16, 0.2, materials.wood, 0, postTop - 0.08, pz));
+    }
+    const railBack = makeBox(3.8, 0.16, 0.14, materials.wood, 0, 0.88, 1.2);
+    const railLeft = makeBox(0.14, 0.16, 2.3, materials.wood, -1.8, 0.8, 0);
     const hay = makeBox(1.1, 0.36, 0.78, materials.dryBrush, 0.75, 0.2, 0.8);
     hay.rotation.y = 0.18;
-    stable.add(roofA, roofB, railBack, railLeft, hay);
+    stable.add(railBack, railLeft, hay);
     stable.rotation.y = -0.28;
     group.add(stable);
     addExplorationCollider(x, z, 2.65, "structure");
@@ -6579,25 +6736,70 @@ import {
     group.add(patch);
   }
 
+  // A closed shell with a door-sized opening; the header spans the complete
+  // opening so narrow plank doors never leave holes beside or above them.
+  function makeHouseShell(width, depth, floorY, wallTop, doorHeight, doorWidth, material, thickness = 0.24) {
+    const shell = new THREE.Group();
+    const wallHeight = wallTop - floorY;
+    const wallY = floorY + wallHeight / 2;
+    const frontZ = -(depth - thickness) / 2;
+    const sideWidth = (width - doorWidth) / 2;
+    const headerHeight = wallHeight - doorHeight;
+    shell.add(makeBox(width, wallHeight, thickness, material, 0, wallY, -frontZ));
+    for (const sign of [-1, 1]) {
+      shell.add(makeBox(thickness, wallHeight, depth, material, sign * (width - thickness) / 2, wallY, 0));
+      shell.add(makeBox(sideWidth, wallHeight, thickness, material, sign * (width + doorWidth) / 4, wallY, frontZ));
+    }
+    shell.add(makeBox(doorWidth, headerHeight, thickness, material, 0, wallTop - headerHeight / 2, frontZ));
+    return shell;
+  }
+
+  // Ridge runs along X. Derive both slopes and the side gables from the same
+  // wall dimensions: roof undersides meet the wall tops, including overhangs.
+  function makePitchedHouseRoof({ width, depth, wallWidth, wallDepth, wallTop, rise, thickness = 0.22,
+    roofMaterial, wallMaterial = null, ridgeMaterial = materials.wood, gableThickness = 0.24 }) {
+    const roof = new THREE.Group();
+    const halfWallDepth = wallDepth / 2;
+    const eaveZ = depth / 2;
+    const pitch = Math.atan2(rise, halfWallDepth);
+    const eaveY = wallTop - (eaveZ - halfWallDepth) * Math.tan(pitch);
+    const ridgeY = wallTop + rise;
+    const slopeLength = Math.hypot(eaveZ, ridgeY - eaveY);
+    const centerY = (ridgeY + eaveY) / 2 + thickness / (2 * Math.cos(pitch));
+    for (const sign of [-1, 1]) {
+      const panel = makeBox(width, thickness, slopeLength, roofMaterial, 0, centerY, sign * eaveZ / 2);
+      panel.rotation.x = sign * pitch;
+      roof.add(panel);
+      if (wallMaterial) {
+        const gable = makeGable(wallDepth, rise, gableThickness, wallMaterial,
+          sign * (wallWidth - gableThickness) / 2, wallTop, 0);
+        gable.rotation.y = Math.PI / 2;
+        roof.add(gable);
+      }
+    }
+    roof.add(makeBox(width + 0.06, 0.14, 0.24, ridgeMaterial, 0,
+      ridgeY + thickness / Math.cos(pitch) + 0.025, 0));
+    return roof;
+  }
+
   function addDesertHouse(group, x, z, scale, variant) {
     const house = new THREE.Group();
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const walls = materials.adobe;
-    const roofMat = materials.dryBrush;
-    const base = makeBox(4.9, 0.16, 4.2, materials.desert, 0, 0.08, 0);
-    const back = makeBox(4.9, 2.0, 0.26, walls, 0, 1.08, 1.98);
-    const left = makeBox(0.26, 2.0, 4.2, walls, -2.32, 1.08, 0);
-    const right = makeBox(0.26, 2.0, 4.2, walls, 2.32, 1.08, 0);
-    const frontLeft = makeBox(1.72, 2.0, 0.26, walls, -1.55, 1.08, -1.98);
-    const frontRight = makeBox(1.72, 2.0, 0.26, walls, 1.55, 1.08, -1.98);
-    const lintel = makeBox(1.18, 0.3, 0.28, walls, 0, 1.98, -1.98);
-    const flatRoof = makeBox(5.55, 0.28, 4.86, roofMat, 0, 2.46, 0);
-    const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 2.06, -2.42);
+    const wallTop = 2.86;
+    house.add(makeBox(4.9, 0.16, 4.2, materials.desert, 0, 0.08, 0));
+    house.add(makeHouseShell(4.9, 4.2, 0.16, wallTop, 2.4, 0.98, walls, 0.26));
+    house.add(makeBox(5.55, 0.28, 4.86, materials.dryBrush, 0, wallTop + 0.14, 0));
+    const shade = makeBox(2.2, 0.08, 1.0, materials.cloth, 0, 2.65, -2.42);
     shade.rotation.x = -0.18;
-    const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, 2.78, 0.85);
-    const door = makeBox(0.92, 1.86, 0.08, materials.darkLeather, 0, 0.98, -2.16);
-    house.add(base, back, left, right, frontLeft, frontRight, lintel, flatRoof, shade, dome, door);
+    const dome = makeCylinder(0.1, 0.76, 0.5, 18, walls, variant % 2 ? -1.2 : 1.1, wallTop + 0.5, 0.85);
+    const door = makeBox(0.98, 2.4, 0.1, materials.darkLeather, 0, 1.36, -2.12);
+    house.add(shade, dome, door);
+    // Front posts support the outer edge of the cloth canopy.
+    for (const px of [-1.02, 1.02]) {
+      house.add(makeCylinder(0.045, 0.055, 2.52, 7, materials.wood, px, 1.26, -2.82));
+    }
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
     }
@@ -6611,21 +6813,18 @@ import {
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.mountainPlaster : materials.stone;
-    const floor = makeBox(5.0, 0.16, 4.4, materials.darkStone, 0, 0.08, 0);
-    const back = makeBox(5.0, 2.18, 0.28, wall, 0, 1.18, 2.08);
-    const left = makeBox(0.28, 2.18, 4.4, wall, -2.36, 1.18, 0);
-    const right = makeBox(0.28, 2.18, 4.4, wall, 2.36, 1.18, 0);
-    const frontLeft = makeBox(1.7, 2.18, 0.28, wall, -1.62, 1.18, -2.08);
-    const frontRight = makeBox(1.7, 2.18, 0.28, wall, 1.62, 1.18, -2.08);
-    const lintel = makeBox(1.35, 0.34, 0.3, materials.wood, 0, 2.08, -2.08);
-    const roofA = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 3.22, -0.9);
-    const roofB = makeBox(6.05, 0.4, 2.95, materials.darkStone, 0, 3.22, 0.9);
-    roofA.rotation.x = -0.6;
-    roofB.rotation.x = 0.6;
-    const beam = makeBox(5.9, 0.14, 0.14, materials.wood, 0, 2.72, -2.2);
-    const chimney = makeBox(0.48, 1.0, 0.48, materials.darkStone, 1.32, 3.54, 0.42);
-    const door = makeBox(0.92, 1.86, 0.08, materials.wood, 0, 0.98, -2.25);
-    house.add(floor, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, beam, chimney, door);
+    const wallTop = 2.96;
+    house.add(makeBox(5.0, 0.16, 4.4, materials.darkStone, 0, 0.08, 0));
+    house.add(makeHouseShell(5.0, 4.4, 0.16, wallTop, 2.4, 1.02, wall, 0.28));
+    house.add(makePitchedHouseRoof({
+      width: 6.05, depth: 5.2, wallWidth: 5.0, wallDepth: 4.4, wallTop, rise: 1.15,
+      thickness: 0.3, roofMaterial: materials.darkStone, wallMaterial: wall
+    }));
+    const beam = makeBox(5.1, 0.14, 0.14, materials.wood, 0, wallTop - 0.07, -2.2);
+    const chimney = makeBox(0.48, 1.5, 0.48, materials.darkStone, 1.32, 4.0, 0.72);
+    const chimneyCap = makeBox(0.64, 0.16, 0.64, materials.darkStone, 1.32, 4.79, 0.72);
+    const door = makeBox(1.02, 2.4, 0.1, materials.wood, 0, 1.36, -2.22);
+    house.add(beam, chimney, chimneyCap, door);
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
     }
@@ -6638,29 +6837,34 @@ import {
     const house = new THREE.Group();
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
-    const platform = makeBox(5.7, 0.18, 4.8, materials.swampPlank, 0, 0.62, 0);
-    const posts = [
-      [-2.35, -1.95],
-      [2.35, -1.95],
-      [-2.35, 1.95],
-      [2.35, 1.95]
-    ].map(([px, pz]) => makeCylinder(0.08, 0.12, 1.2, 8, materials.wood, px, 0.6, pz));
-    const back = makeBox(4.5, 1.72, 0.24, materials.swampPlank, 0, 1.58, 1.72);
-    const left = makeBox(0.24, 1.72, 3.7, materials.swampPlank, -2.13, 1.58, 0);
-    const right = makeBox(0.24, 1.72, 3.7, materials.swampPlank, 2.13, 1.58, 0);
-    const frontLeft = makeBox(1.45, 1.72, 0.24, materials.swampPlank, -1.35, 1.58, -1.72);
-    const frontRight = makeBox(1.45, 1.72, 0.24, materials.swampPlank, 1.35, 1.58, -1.72);
-    const door = makeBox(0.86, 1.72, 0.08, materials.darkLeather, 0, 1.47, -1.86);
-    const roof = makeCone(3.72, 1.0, 4, materials.thatch, 0, 2.78, 0);
+    const platformY = 0.71;
+    const wallTop = 3.41;
+    house.add(makeBox(5.7, 0.18, 4.8, materials.swampPlank, 0, 0.62, 0));
+    for (const [px, pz] of [[-2.35, -1.95], [2.35, -1.95], [-2.35, 1.95], [2.35, 1.95]]) {
+      house.add(makeCylinder(0.08, 0.12, 0.62, 8, materials.wood, px, 0.31, pz));
+    }
+    house.add(makeHouseShell(4.5, 3.7, platformY, wallTop, 2.4, 0.98, materials.swampPlank));
+    house.add(makeBox(0.98, 2.4, 0.1, materials.darkLeather, 0, platformY + 1.2, -1.87));
+    // A four-sided hip roof meets a full eave course, rather than cutting
+    // its diamond corners through the walls.
+    const roof = makeCone(1, 1.05, 4, materials.thatch, 0, wallTop + 0.525, 0);
     roof.rotation.y = Math.PI / 4;
-    roof.scale.set(1.2, 0.76, 1.0);
-    const eave = makeBox(5.55, 0.12, 4.72, materials.thatch, 0, 2.34, 0);
+    roof.scale.set(5.55 / Math.SQRT2, 1, 4.72 / Math.SQRT2);
+    house.add(roof, makeBox(5.55, 0.12, 4.72, materials.thatch, 0, wallTop, 0));
     const lanternMat = materials.wispCore.clone();
     lanternMat.opacity = 0.78;
-    const lantern = makeSphere(0.095, lanternMat, -1.72, 1.84, -1.9);
-    const railA = makeBox(2.3, 0.1, 0.08, materials.wood, -1.62, 0.98, -2.32);
-    const railB = makeBox(2.3, 0.1, 0.08, materials.wood, 1.62, 0.98, -2.32);
-    house.add(platform, back, left, right, frontLeft, frontRight, door, roof, eave, lantern, railA, railB, ...posts);
+    house.add(makeSphere(0.095, lanternMat, -1.72, 2.44, -1.94));
+    for (const sign of [-1, 1]) {
+      house.add(makeBox(1.88, 0.1, 0.08, materials.wood, sign * 1.64, 1.28, -2.32));
+      for (const px of [sign * 0.72, sign * 2.55]) {
+        house.add(makeBox(0.09, 0.62, 0.09, materials.wood, px, 1.0, -2.32));
+      }
+    }
+    // Three supported treads connect the raised deck to the ground.
+    for (let i = 0; i < 3; i += 1) {
+      const height = platformY * (i + 1) / 3;
+      house.add(makeBox(1.26, height, 0.4, materials.swampPlank, 0, height / 2, -3.1 + i * 0.35));
+    }
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
     }
@@ -6674,28 +6878,22 @@ import {
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.rootwood : materials.paleWood;
-    const footing = makeBox(5.25, 0.22, 4.45, materials.stone, 0, 0.11, 0);
-    const back = makeBox(5.0, 2.05, 0.28, wall, 0, 1.2, 2.03);
-    const left = makeBox(0.28, 2.05, 4.25, wall, -2.36, 1.2, 0);
-    const right = makeBox(0.28, 2.05, 4.25, wall, 2.36, 1.2, 0);
-    const frontLeft = makeBox(1.58, 2.05, 0.28, wall, -1.56, 1.2, -2.03);
-    const frontRight = makeBox(1.58, 2.05, 0.28, wall, 1.56, 1.2, -2.03);
-    const lintel = makeBox(1.26, 0.24, 0.3, materials.rootwood, 0, 2.02, -2.05);
-    const roofA = makeBox(5.95, 0.34, 2.82, materials.mossRoof, 0, 3.04, -0.86);
-    const roofB = makeBox(5.95, 0.34, 2.82, materials.mossRoof, 0, 3.04, 0.86);
-    roofA.rotation.x = -0.54;
-    roofB.rotation.x = 0.54;
-    const ridge = makeCylinder(0.07, 0.09, 5.55, 8, materials.rootwood, 0, 3.28, 0);
-    ridge.rotation.z = Math.PI / 2;
-    const door = makeBox(0.92, 1.72, 0.08, materials.darkLeather, 0, 0.92, -2.2);
+    const wallTop = 2.92;
+    house.add(makeBox(5.25, 0.22, 4.45, materials.stone, 0, 0.11, 0));
+    house.add(makeHouseShell(5.0, 4.25, 0.22, wallTop, 2.4, 1.02, wall, 0.28));
+    house.add(makePitchedHouseRoof({
+      width: 5.95, depth: 5.1, wallWidth: 5.0, wallDepth: 4.25, wallTop, rise: 1.1,
+      thickness: 0.26, roofMaterial: materials.mossRoof, wallMaterial: wall, ridgeMaterial: materials.rootwood
+    }));
+    const door = makeBox(1.02, 2.4, 0.1, materials.darkLeather, 0, 1.42, -2.15);
     const windowMat = materials.lampGlow.clone();
     windowMat.opacity = 0.64;
-    const windowA = makeBox(0.5, 0.44, 0.07, windowMat, -1.38, 1.42, -2.22);
+    const windowA = makeBox(0.5, 0.44, 0.07, windowMat, -1.38, 1.82, -2.2);
     const rootA = makeCylinder(0.04, 0.08, 1.4, 7, materials.rootwood, -2.34, 0.28, -1.7);
     rootA.rotation.set(0.7, 0.22, -0.46);
     const rootB = makeCylinder(0.035, 0.075, 1.18, 7, materials.rootwood, 2.24, 0.24, 1.56);
     rootB.rotation.set(-0.62, -0.36, 0.52);
-    house.add(footing, back, left, right, frontLeft, frontRight, lintel, roofA, roofB, ridge, door, windowA, rootA, rootB);
+    house.add(door, windowA, rootA, rootB);
     if (variant % 2 === 1) {
       house.rotation.y = Math.PI / 2;
     }
@@ -6734,6 +6932,7 @@ import {
     setExplorationLocalGroundPosition(house, x, z);
     house.scale.setScalar(scale);
     const parts = [];
+    const wallTop = 3.22;
 
     const glassMat = materials.lightningCore.clone();
     glassMat.color.setHex(0xffd889);
@@ -6743,78 +6942,63 @@ import {
     parts.push(makeBox(5.46, 0.5, 4.86, meadowHouse.foundation, 0, 0.25, 0));
     parts.push(makeBox(5.2, 0.12, 4.6, materials.paleWood, 0, 0.52, 0));
 
-    // Plaster shell. Front (-z) is split for the doorway.
-    parts.push(makeBox(5.2, 2.25, 0.24, wallMat, 0, 1.18, 2.18));
-    parts.push(makeBox(0.24, 2.25, 4.6, wallMat, -2.48, 1.18, 0));
-    parts.push(makeBox(0.24, 2.25, 4.6, wallMat, 2.48, 1.18, 0));
-    parts.push(makeBox(1.8, 2.25, 0.24, wallMat, -1.7, 1.18, -2.18));
-    parts.push(makeBox(1.8, 2.25, 0.24, wallMat, 1.7, 1.18, -2.18));
-    parts.push(makeBox(1.25, 0.34, 0.26, wallMat, 0, 2.13, -2.18));
+    // The door starts above the foundation, with a header closing the wall.
+    parts.push(makeHouseShell(5.2, 4.6, 0.5, wallTop, 2.48, 1.04, wallMat));
 
     // Half-timber framing over the plaster: sill, top plate, corner posts,
     // a mid rail and a few diagonal braces.
-    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, -2.2));
-    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, 2.2));
-    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, 2.28, -2.18));
-    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, 2.28, 2.18));
-    parts.push(makeBox(0.16, 0.16, 4.62, timber, -2.5, 0.45, 0));
-    parts.push(makeBox(0.16, 0.16, 4.62, timber, 2.5, 0.45, 0));
-    parts.push(makeBox(0.2, 0.18, 4.7, timber, -2.52, 2.28, 0));
-    parts.push(makeBox(0.2, 0.18, 4.7, timber, 2.52, 2.28, 0));
-    for (const cx of [-2.52, 2.52]) {
-      for (const cz of [-2.18, 2.18]) {
-        parts.push(makeBox(0.2, 2.3, 0.2, timber, cx, 1.2, cz));
+    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, -2.32));
+    parts.push(makeBox(5.28, 0.16, 0.16, timber, 0, 0.45, 2.32));
+    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, wallTop - 0.06, -2.32));
+    parts.push(makeBox(5.34, 0.18, 0.2, timber, 0, wallTop - 0.06, 2.32));
+    parts.push(makeBox(0.16, 0.16, 4.62, timber, -2.62, 0.45, 0));
+    parts.push(makeBox(0.16, 0.16, 4.62, timber, 2.62, 0.45, 0));
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, -2.62, wallTop - 0.06, 0));
+    parts.push(makeBox(0.2, 0.18, 4.7, timber, 2.62, wallTop - 0.06, 0));
+    for (const cx of [-2.54, 2.54]) {
+      for (const cz of [-2.24, 2.24]) {
+        parts.push(makeBox(0.2, 2.72, 0.2, timber, cx, 1.86, cz));
       }
     }
-    // Diagonal braces on the side walls (tilt in the Z-Y plane).
-    for (const cx of [-2.51, 2.51]) {
+    // Short upper-corner braces connect posts to the top plate, above the
+    // complete window/shutter envelope rather than crossing the openings.
+    const braceRun = 0.71;
+    const braceLength = braceRun * Math.SQRT2;
+    const braceY = wallTop - 0.06 - braceRun / 2;
+    for (const cx of [-2.63, 2.63]) {
       for (const sign of [-1, 1]) {
-        const brace = makeBox(0.14, 1.55, 0.14, timber, cx, 1.3, sign * 1.2);
-        brace.rotation.x = sign * 0.62;
+        const brace = makeBox(0.14, braceLength, 0.14, timber, cx, braceY, sign * (2.24 - braceRun / 2));
+        brace.rotation.x = -sign * Math.PI / 4;
         parts.push(brace);
       }
     }
-    // Diagonal braces flanking the doorway (tilt in the X-Y plane).
     for (const sign of [-1, 1]) {
-      const brace = makeBox(0.14, 1.4, 0.16, timber, sign * 1.7, 1.2, -2.2);
-      brace.rotation.z = sign * 0.6;
+      const brace = makeBox(0.14, braceLength, 0.16, timber, sign * (2.54 - braceRun / 2), braceY, -2.34);
+      brace.rotation.z = sign * Math.PI / 4;
       parts.push(brace);
     }
 
-    // Pitched, gabled roof. Ridge runs along X; slopes face +/-Z with eaves.
-    const wallTop = 2.305;
-    const gableH = 1.15;
-    const ridgeY = wallTop + gableH;
-    const eaveZ = 2.7;
-    const roofAngle = Math.atan2(gableH, eaveZ);
-    const roofLen = Math.hypot(eaveZ, gableH) + 0.12;
-    const roofA = makeBox(5.9, 0.22, roofLen, roofMat, 0, wallTop + gableH / 2, -eaveZ / 2);
-    const roofB = makeBox(5.9, 0.22, roofLen, roofMat, 0, wallTop + gableH / 2, eaveZ / 2);
-    roofA.rotation.x = -roofAngle;
-    roofB.rotation.x = roofAngle;
-    parts.push(roofA, roofB);
-    // Filled gable ends (so you can't see into the roof from the sides).
-    const gableFront = makeGable(4.6, gableH, 0.22, wallMat, -2.48, wallTop, 0);
-    gableFront.rotation.y = Math.PI / 2;
-    const gableBack = makeGable(4.6, gableH, 0.22, wallMat, 2.48, wallTop, 0);
-    gableBack.rotation.y = Math.PI / 2;
-    parts.push(gableFront, gableBack);
-    // Ridge beam.
-    parts.push(makeBox(6.0, 0.16, 0.24, timber, 0, ridgeY + 0.02, 0));
+    parts.push(makePitchedHouseRoof({
+      width: 5.9, depth: 5.4, wallWidth: 5.2, wallDepth: 4.6, wallTop, rise: 1.15,
+      roofMaterial: roofMat, wallMaterial: wallMat, ridgeMaterial: timber, gableThickness: 0.22
+    }));
 
     // Capped chimney rising through the back slope.
-    parts.push(makeBox(0.5, 2.0, 0.5, materials.darkStone, 1.55, 2.6, 1.45));
-    parts.push(makeBox(0.64, 0.18, 0.64, materials.darkStone, 1.55, 3.62, 1.45));
-    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.42, 3.78, 1.45));
-    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.68, 3.78, 1.45));
+    parts.push(makeBox(0.5, 2.0, 0.5, materials.darkStone, 1.55, 3.52, 1.45));
+    parts.push(makeBox(0.64, 0.18, 0.64, materials.darkStone, 1.55, 4.54, 1.45));
+    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.42, 4.7, 1.45));
+    parts.push(makeBox(0.16, 0.22, 0.16, materials.darkStone, 1.68, 4.7, 1.45));
 
-    // Doorway: framed plank door with a stone threshold.
-    parts.push(makeBox(0.94, 1.86, 0.1, materials.wood, 0, 0.98, -2.34));
-    parts.push(makeBox(0.16, 1.94, 0.14, timber, -0.55, 1.02, -2.36));
-    parts.push(makeBox(0.16, 1.94, 0.14, timber, 0.55, 1.02, -2.36));
-    parts.push(makeBox(1.26, 0.16, 0.14, timber, 0, 1.99, -2.36));
-    parts.push(makeBox(1.1, 0.12, 0.42, meadowHouse.foundation, 0, 0.08, -2.55));
-    parts.push(makeSphere(0.05, materials.iron, 0.28, 0.98, -2.42));
+    // Plank door and jambs sit on the floor; solid steps reach the threshold.
+    parts.push(makeBox(1.04, 2.4, 0.1, materials.wood, 0, 1.78, -2.34));
+    parts.push(makeBox(0.16, 2.56, 0.14, timber, -0.59, 1.8, -2.36));
+    parts.push(makeBox(0.16, 2.56, 0.14, timber, 0.59, 1.8, -2.36));
+    parts.push(makeBox(1.34, 0.16, 0.14, timber, 0, 3.04, -2.36));
+    for (let i = 0; i < 3; i += 1) {
+      const stepHeight = 0.58 * (i + 1) / 3;
+      parts.push(makeBox(1.34, stepHeight, 0.34, meadowHouse.foundation, 0, stepHeight / 2, -3.02 + i * 0.3));
+    }
+    parts.push(makeSphere(0.05, materials.iron, 0.3, 1.55, -2.42));
 
     // Framed, shuttered windows with flower boxes. makeWindow builds a panel
     // facing -Z that gets rotated/placed onto each wall.
@@ -6828,9 +7012,9 @@ import {
       win.add(makeBox(0.06, 0.52, 0.06, timber, 0, 0, -0.05));
       win.add(makeBox(0.6, 0.06, 0.06, timber, 0, 0, -0.05));
       win.add(makeBox(0.8, 0.08, 0.2, timber, 0, -0.32, -0.08));
-      const shutterL = makeBox(0.3, 0.56, 0.05, wallMat, -0.52, 0, -0.08);
+      const shutterL = makeBox(0.3, 0.56, 0.05, materials.paleWood, -0.52, 0, -0.08);
       shutterL.rotation.y = 0.5;
-      const shutterR = makeBox(0.3, 0.56, 0.05, wallMat, 0.52, 0, -0.08);
+      const shutterR = makeBox(0.3, 0.56, 0.05, materials.paleWood, 0.52, 0, -0.08);
       shutterR.rotation.y = -0.5;
       win.add(shutterL, shutterR);
       return win;
@@ -6844,33 +7028,33 @@ import {
         bloom.castShadow = false;
         planter.add(bloom);
       }
-      planter.position.set(px, 0.66, pz);
+      planter.position.set(px, 1.28, pz);
       planter.rotation.y = rotY;
       return planter;
     };
 
     const winA = makeWindow();
-    winA.position.set(-1.4, 1.45, -2.32);
+    winA.position.set(-1.4, 1.82, -2.32);
     const winB = makeWindow();
-    winB.position.set(1.4, 1.45, -2.32);
+    winB.position.set(1.4, 1.82, -2.32);
     parts.push(winA, winB);
-    parts.push(makePlanter(-1.4, -2.62, 0), makePlanter(1.4, -2.62, 0));
+    parts.push(makePlanter(-1.4, -2.46, 0), makePlanter(1.4, -2.46, 0));
     const winSide = makeWindow();
-    winSide.position.set(2.5, 1.5, 0.45);
-    winSide.rotation.y = Math.PI / 2;
+    winSide.position.set(2.62, 1.85, 0.45);
+    winSide.rotation.y = -Math.PI / 2;
     parts.push(winSide);
 
     if (style.porch) {
-      parts.push(makeBox(0.13, 1.72, 0.13, timber, -0.66, 0.86, -2.96));
-      parts.push(makeBox(0.13, 1.72, 0.13, timber, 0.66, 0.86, -2.96));
-      const awning = makeBox(1.78, 0.12, 1.05, roofMat, 0, 1.84, -2.86);
-      awning.rotation.x = 0.46;
+      parts.push(makeBox(0.13, 2.94, 0.13, timber, -0.73, 1.47, -3.04));
+      parts.push(makeBox(0.13, 2.94, 0.13, timber, 0.73, 1.47, -3.04));
+      const awning = makeBox(1.92, 0.12, 1.05, roofMat, 0, 3.12, -2.86);
+      awning.rotation.x = -0.22;
       parts.push(awning);
-      parts.push(makeBox(1.78, 0.12, 0.12, timber, 0, 1.62, -3.06));
+      parts.push(makeBox(1.86, 0.12, 0.14, timber, 0, 3.0, -3.04));
     } else {
       // Side lean-to woodshed (kept inside the house collider radius).
-      parts.push(makeBox(0.13, 1.3, 0.13, timber, 3.32, 0.65, -0.95));
-      parts.push(makeBox(0.13, 1.3, 0.13, timber, 3.32, 0.65, 1.05));
+      parts.push(makeBox(0.13, 1.34, 0.13, timber, 3.32, 0.67, -0.95));
+      parts.push(makeBox(0.13, 1.34, 0.13, timber, 3.32, 0.67, 1.05));
       const shedRoof = makeBox(1.2, 0.12, 2.5, roofMat, 2.96, 1.55, 0.05);
       shedRoof.rotation.z = -0.46;
       parts.push(shedRoof);
@@ -7639,7 +7823,7 @@ import {
       const leg = new THREE.Group();
       leg.position.set(side * 0.12, 0.62, 0);
       const thigh = makeBox(0.15, 0.52, 0.17, look.leg, 0, -0.28, 0);
-      const boot = makeBox(0.18, 0.15, 0.24, npcBootMaterial, 0, -0.58, -0.03);
+      const boot = makeBox(0.18, 0.15, 0.24, npcBootMaterial, 0, -0.545, -0.03);
       leg.add(thigh, boot);
       frame.add(leg);
       return leg;
@@ -7689,9 +7873,16 @@ import {
 
     // Hair / beard.
     if (look.hairStyle !== "bald" || look.headwear !== "none") {
-      const cap = makeSphere(0.185, look.hair, 0, 1.6, 0.02);
-      cap.scale.set(1.04, 0.82, 1.04);
+      // A full sphere here covered the eyes and face. Keep the crown above
+      // the brow, with a separate back panel for short hair at the nape.
+      const cap = addShadow(new THREE.Mesh(
+        cachedPrimitiveGeometry("npcHairCap", [0.185, 12, 8], () =>
+          new THREE.SphereGeometry(0.185, 12, 8, 0, TAU, 0, Math.PI * 0.52)), look.hair));
+      cap.position.set(0, 1.6, 0.02);
       frame.add(cap);
+      if (look.hairStyle !== "long") {
+        frame.add(makeBox(0.27, 0.16, 0.085, look.hair, 0, 1.51, 0.14));
+      }
     }
     if (look.hairStyle === "long") {
       frame.add(makeBox(0.3, 0.34, 0.13, look.hair, 0, 1.42, 0.14));
@@ -7706,9 +7897,16 @@ import {
     // Headwear.
     const hoodMat = biome === "desert" ? materials.adobe : biome === "mountain" ? materials.darkStone : biome === "city" ? materials.cityRoof : biome === "swamp" ? materials.reed : biome === "briar" ? materials.mossRoof : materials.paleWood;
     if (look.headwear === "hood") {
-      const hood = makeCone(0.24, 0.34, 12, hoodMat, 0, 1.68, 0.02);
-      const cowl = makeCylinder(0.22, 0.25, 0.18, 12, hoodMat, 0, 1.46, 0.04);
-      frame.add(hood, cowl);
+      const hood = addShadow(new THREE.Mesh(
+        cachedPrimitiveGeometry("npcOpenHood", [0.215, 14, 9], () =>
+          new THREE.SphereGeometry(0.215, 14, 9, -Math.PI / 2 + 0.78, TAU - 1.56, 0, Math.PI * 0.73)), hoodMat));
+      hood.position.set(0, 1.56, 0.02);
+      const cowl = makeCylinder(0.13, 0.2, 0.14, 12, hoodMat, 0, 1.4, 0.02);
+      const lip = addShadow(new THREE.Mesh(
+        cachedPrimitiveGeometry("npcHoodLip", [0.18, 0.018, 5, 14], () =>
+          new THREE.TorusGeometry(0.18, 0.018, 5, 14, Math.PI)), hoodMat));
+      lip.position.set(0, 1.53, -0.13);
+      frame.add(hood, cowl, lip);
     } else if (look.headwear === "hat") {
       const brim = makeCylinder(0.27, 0.27, 0.05, 14, materials.leather, 0, 1.72, 0);
       const crown = makeCone(0.17, 0.24, 12, look.garment, 0, 1.86, 0);
@@ -8155,7 +8353,9 @@ import {
       }
       const dx = player.position.x - node.position.x;
       const dz = player.position.z - node.position.z;
-      if (dx * dx + dz * dz >= 1.32 * 1.32) {
+      const distanceSq = dx * dx + dz * dz;
+      node.group.visible = distanceSq < EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ;
+      if (distanceSq >= 1.32 * 1.32) {
         continue;
       }
       if (herbCount() >= HERB_POUCH_CAP) {
@@ -9019,10 +9219,8 @@ import {
       const dx = player.position.x - item.position.x;
       const dz = player.position.z - item.position.z;
       const distanceSq = dx * dx + dz * dz;
-      if (!item.visibleActive) {
-        item.visibleActive = true;
-        item.group.visible = true;
-      }
+      item.visibleActive = true;
+      item.group.visible = distanceSq < EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ;
       if (distanceSq >= EXPLORATION_ITEM_VISIBLE_DISTANCE_SQ) {
         item.light.intensity = 0;
         continue;
@@ -9716,6 +9914,7 @@ import {
     updateQuestLog();
     updateQuestMarkers();
     refreshQuestDialog();
+    maybeCelebrateAllQuestsComplete();
   }
 
   function grantQuestReward(quest) {
@@ -10565,34 +10764,28 @@ import {
     house.rotation.y = rotation;
     house.scale.setScalar(scale);
     const wall = variant % 2 ? materials.cityWall : materials.stone;
+    const wallTop = 2.98;
     const floor = makeBox(4.6, 0.12, 4.0, materials.darkStone, 0, 0.06, 0);
-    const back = makeBox(4.6, 2.6, 0.24, wall, 0, 1.35, 1.88);
-    const left = makeBox(0.24, 2.6, 4.0, wall, -2.18, 1.35, 0);
-    const right = makeBox(0.24, 2.6, 4.0, wall, 2.18, 1.35, 0);
-    const frontLeft = makeBox(1.48, 2.6, 0.24, wall, -1.56, 1.35, -1.88);
-    const frontRight = makeBox(1.48, 2.6, 0.24, wall, 1.56, 1.35, -1.88);
-    const door = makeBox(0.92, 1.9, 0.08, materials.wood, 0, 1.02, -2.04);
-    const doorFrame = makeBox(1.16, 2.16, 0.05, materials.darkStone, 0, 1.1, -2.0);
-    const roofA = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, -0.8);
-    const roofB = makeBox(5.45, 0.34, 2.64, materials.cityRoof, 0, 3.2, 0.8);
-    roofA.rotation.x = -0.52;
-    roofB.rotation.x = 0.52;
-    // Filled gable ends + ridge beam so the roof reads as a solid pitched form.
-    const gableFront = makeGable(4.6, 1.05, 0.24, wall, 0, 2.6, -1.92);
-    const gableBack = makeGable(4.6, 1.05, 0.24, wall, 0, 2.6, 1.92);
-    const ridge = makeBox(5.2, 0.18, 0.2, materials.darkStone, 0, 3.56, 0);
-    // Capped chimney off the back slope.
-    const chimney = makeBox(0.52, 1.5, 0.52, variant % 2 ? materials.cityWall : materials.stone, 1.45, 3.35, 1.15);
-    const chimneyCap = makeBox(0.68, 0.2, 0.68, materials.darkStone, 1.45, 4.18, 1.15);
-    const sign = makeBox(1.0, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, 0, 1.55, -2.07);
-    const signArm = makeBox(0.06, 0.06, 0.5, materials.wood, 0, 1.92, -2.16);
-    const windowA = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), -1.28, 1.58, -2.06);
-    const windowB = makeBox(0.54, 0.42, 0.06, materials.stainedGlass.clone(), 1.28, 1.58, -2.06);
+    const shell = makeHouseShell(4.6, 4.0, 0.12, wallTop, 2.46, 1.02, wall);
+    const door = makeBox(1.02, 2.46, 0.1, materials.wood, 0, 1.35, -2.04);
+    const doorFrame = makeBox(1.28, 2.66, 0.05, materials.darkStone, 0, 1.45, -2.0);
+    const roof = makePitchedHouseRoof({
+      width: 5.45, depth: 4.86, wallWidth: 4.6, wallDepth: 4.0, wallTop, rise: 1.05,
+      thickness: 0.26, roofMaterial: materials.cityRoof, wallMaterial: wall, ridgeMaterial: materials.darkStone
+    });
+    const chimney = makeBox(0.52, 1.5, 0.52, wall, 1.45, 3.86, 1.15);
+    const chimneyCap = makeBox(0.68, 0.2, 0.68, materials.darkStone, 1.45, 4.69, 1.15);
+    // Put the hanging shop sign beside the door, with a bracket and two straps.
+    const sign = makeBox(0.86, 0.32, 0.08, variant % 2 ? materials.gold : materials.blue, -1.35, 2.22, -2.37);
+    const signArm = makeBox(1.02, 0.08, 0.12, materials.wood, -1.35, 2.54, -2.37);
+    const signBracket = makeBox(0.08, 0.08, 0.5, materials.wood, -1.77, 2.54, -2.16);
+    const straps = [-1.62, -1.08].map(px => makeBox(0.035, 0.24, 0.04, materials.iron, px, 2.38, -2.37));
+    const windowA = makeBox(0.54, 0.42, 0.06, materials.stainedGlass, -1.28, 1.58, -2.06);
+    const windowB = makeBox(0.54, 0.42, 0.06, materials.stainedGlass, 1.28, 1.58, -2.06);
     const windowFrameA = makeBox(0.72, 0.6, 0.05, materials.wood, -1.28, 1.58, -2.02);
     const windowFrameB = makeBox(0.72, 0.6, 0.05, materials.wood, 1.28, 1.58, -2.02);
-    house.add(floor, back, left, right, frontLeft, frontRight, door, doorFrame, roofA, roofB,
-      gableFront, gableBack, ridge, chimney, chimneyCap, sign, signArm,
-      windowFrameA, windowA, windowFrameB, windowB);
+    house.add(floor, shell, doorFrame, door, roof, chimney, chimneyCap, sign, signArm, signBracket,
+      ...straps, windowFrameA, windowA, windowFrameB, windowB);
     group.add(house);
     addExplorationCollider(x, z, scale * 3.05, "structure");
     return house;
@@ -11857,6 +12050,17 @@ import {
       const beast = createBriarBeast(world.x, world.z, 1 + Math.floor(random() * 3));
       seedExplorationEnemy(beast, world, random, 14 + random() * 7, 8.5);
     }
+    const drainage = game.exploration.bellwaterDrainage;
+    game.explorationBatches = buildStaticWorldBatches({
+      THREE, root: group, cellSize: 32,
+      excludeRoots: [
+        ...game.npcs.map(npc => npc.group),
+        ...game.questItems.map(item => item.group),
+        ...game.exploration.herbNodes.map(node => node.group),
+        game.exploration.horse?.group,
+        drainage?.ribbon, drainage?.backSheet, drainage?.foam
+      ]
+    });
     updateQuestMarkers();
     updateQuestLog();
   }
@@ -11869,18 +12073,23 @@ import {
     sun.position.set(-22, 34, -16);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 620;
-    sun.shadow.camera.left = -320;
-    sun.shadow.camera.right = 520;
-    sun.shadow.camera.top = 320;
-    sun.shadow.camera.bottom = -320;
+    // Follow the player with one focused map rather than redraw the valley.
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 160;
+    sun.shadow.camera.left = -50;
+    sun.shadow.camera.right = 50;
+    sun.shadow.camera.top = 50;
+    sun.shadow.camera.bottom = -50;
     sun.shadow.bias = -0.00025;
+    sun.shadow.normalBias = 0.035;
     scene.add(sun);
+    scene.add(sun.target);
 
     const rim = new THREE.DirectionalLight(0x86b6ff, 1.15);
     rim.position.set(14, 10, -18);
     scene.add(rim);
+
+    game.atmosphereLights = { hemi, sun, rim };
 
     const torchPositions = [
       [-17, 1.8, -17],
@@ -11899,8 +12108,9 @@ import {
       flame.position.set(pos[0], 3.08, pos[2]);
       const light = new THREE.PointLight(0xff9f4a, 1.9, 17, 1.8);
       light.position.set(pos[0], 3.05, pos[2]);
-      light.castShadow = true;
-      light.shadow.mapSize.set(512, 512);
+      // The sun supplies character/world shadows; flickering point lights
+      // otherwise require six extra scene renders per torch.
+      light.castShadow = false;
       addArenaObject(post);
       addArenaObject(bowl);
       addArenaObject(flame);
@@ -12438,10 +12648,19 @@ import {
     stave.position.z = 0.48;
     addShadow(stave);
     const grip = makeCylinder(0.05, 0.05, 0.26, 8, materials.leather, 0, 0, -0.1);
-    const string = makeBox(0.012, 0.96, 0.012, briar ? materials.rope : materials.bone, 0, 0, 0.15);
+    // Two cached unit boxes follow the tip-to-hand segments of a real V draw.
+    const upperString = makeBox(0.012, 1, 0.012, briar ? materials.rope : materials.bone, 0, 0.24, 0.15);
+    const lowerString = makeBox(0.012, 1, 0.012, briar ? materials.rope : materials.bone, 0, -0.24, 0.15);
+    upperString.scale.y = 0.48;
+    lowerString.scale.y = 0.48;
+    const stringCenter = new THREE.Vector3(0, 0, 0.15);
+    weapon.userData.bowString = {
+      upper: upperString, lower: lowerString, center: stringCenter, drawAmount: 0,
+      gripOptions: { side: 1, point: stringCenter }
+    };
     const upperTip = makeSphere(recurve ? 0.055 : 0.045, tipMaterial, 0, 0.48, 0.15);
     const lowerTip = makeSphere(recurve ? 0.055 : 0.045, tipMaterial, 0, -0.48, 0.15);
-    weapon.add(stave, grip, string, upperTip, lowerTip);
+    weapon.add(stave, grip, upperString, lowerString, upperTip, lowerTip);
     if (briar) {
       for (const y of [0.3, -0.3]) {
         const thorn = makeCylinder(0.0, 0.028, 0.12, 5, materials.wood, 0, y, 0.02);
@@ -12576,10 +12795,10 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.7, 0);
       const thigh = makeCylinder(0.13, 0.14, 0.4, 12, materials.iron, 0, -0.18, 0);
-      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.16, -0.11);
+      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.36, -0.11);
       knee.scale.set(1, 0.62, 0.72);
-      const shin = makeCylinder(0.11, 0.12, 0.4, 12, materials.iron.clone(), 0, -0.5, 0.01);
-      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.73, -0.05);
+      const shin = makeCylinder(0.11, 0.12, 0.28, 12, materials.iron.clone(), 0, -0.49, 0.01);
+      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.6, -0.05);
       leg.add(thigh, knee, shin, boot);
       return leg;
     }
@@ -12594,9 +12813,9 @@ import {
       const elbow = makeSphere(0.1, materials.steel.clone(), 0, -0.4, 0);
       const forearm = makeCylinder(0.1, 0.11, 0.38, 12, materials.iron.clone(), 0, -0.58, -0.01);
       const gauntlet = makeCylinder(0.12, 0.13, 0.18, 10, materials.steel.clone(), 0, -0.68, -0.02);
-      gauntlet.rotation.z = Math.PI / 2;
       const fist = makeSphere(0.12, materials.steel.clone(), 0, -0.8, -0.02);
       arm.add(upper, elbow, forearm, gauntlet, fist);
+      arm.userData.gripRig = { upper, elbow, forearm, cuff: gauntlet, hand: fist, upperLength: 0.4, lowerLength: 0.4 };
       return arm;
     }
     const leftArm = makeKnightArm(-0.58);
@@ -12620,8 +12839,11 @@ import {
     shieldBoss.rotation.x = Math.PI / 2;
     const shieldCrossV = makeBox(0.08, 0.58, 0.035, materials.gold, 0, 0, -0.29);
     const shieldCrossH = makeBox(0.42, 0.08, 0.035, materials.gold, 0, 0, -0.3);
-    const shieldRim = makeCylinder(0.44, 0.44, 0.045, 24, materials.gold, 0, 0, -0.13);
-    shieldRim.rotation.x = Math.PI / 2;
+    const shieldRim = addShadow(new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-shield-rim", [0.42, 0.025, 6, 24], () => new THREE.TorusGeometry(0.42, 0.025, 6, 24)),
+      materials.gold
+    ));
+    shieldRim.position.z = -0.16;
     shieldPivot.add(shield, shieldRim, shieldBoss, shieldCrossV, shieldCrossH);
     shieldPivot.rotation.set(0.1, 0.38, 0.0);
 
@@ -12748,8 +12970,8 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.5, 0);
       const thigh = makeCylinder(0.11, 0.12, 0.32, 10, materials.darkLeather, 0, -0.15, 0);
-      const shin = makeCylinder(0.09, 0.1, 0.3, 10, materials.darkLeather, 0, -0.4, 0.01);
-      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.54, -0.05);
+      const shin = makeCylinder(0.09, 0.1, 0.2, 10, materials.darkLeather, 0, -0.31, 0.01);
+      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.41, -0.05);
       leg.add(thigh, shin, boot);
       return leg;
     }
@@ -12766,14 +12988,15 @@ import {
       const upper = makeCylinder(0.14, 0.16, 0.4, 12, materials.wizardRobe.clone(), 0, -0.2, 0);
       const forearm = makeCylinder(0.11, 0.12, 0.36, 12, materials.wizardRobe.clone(), 0, -0.56, 0);
       const cuff = makeCylinder(0.13, 0.14, 0.16, 12, materials.wizardTrim.clone(), 0, -0.67, -0.02);
-      cuff.rotation.z = Math.PI / 2;
       const hand = makeSphere(0.105, materials.skin.clone(), 0, -0.78, -0.03);
-      const drape = makeBox(0.2, 0.32, 0.06, materials.wizardRobe.clone(), 0, -0.42, 0.08);
-      arm.add(upper, forearm, cuff, hand, drape);
+      const drape = makeBox(0.2, 0.32, 0.06, materials.wizardRobe.clone(), 0, -0.22, 0.08);
+      upper.add(drape);
+      arm.add(upper, forearm, cuff, hand);
       if (staffHand) {
-        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.77, -0.03);
-        arm.add(wrap);
+        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.21, -0.03);
+        forearm.add(wrap);
       }
+      arm.userData.gripRig = { upper, elbow: null, forearm, cuff, hand, upperLength: 0.4, lowerLength: 0.38 };
       return arm;
     }
     const leftArm = makeWizArm(-0.58, false);
@@ -12829,12 +13052,20 @@ import {
     const group = new THREE.Group();
     group.position.copy(player.position);
 
-    const leftLeg = makeBox(0.21, 0.74, 0.23, materials.rangerJerkin, -0.21, 0.32, 0);
-    const rightLeg = makeBox(0.21, 0.74, 0.23, materials.rangerJerkin, 0.21, 0.32, 0);
-    const leftBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, -0.21, -0.03, -0.06);
-    const rightBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0.21, -0.03, -0.06);
-    const leftKneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, -0.21, 0.55, 0);
-    const rightKneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, 0.21, 0.55, 0);
+    // Boots and wraps share the hip pivot so walking and riding keep the
+    // complete leg together instead of leaving the feet planted behind it.
+    function makeRangerLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeBox(0.21, 0.36, 0.23, materials.rangerJerkin, 0, -0.18, 0);
+      const kneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, 0, -0.36, 0);
+      const shin = makeBox(0.19, 0.26, 0.21, materials.rangerJerkin, 0, -0.49, 0.01);
+      const boot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0, -0.6, -0.06);
+      leg.add(thigh, kneeWrap, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeRangerLeg(-0.21);
+    const rightLeg = makeRangerLeg(0.21);
 
     const hips = makeCylinder(0.44, 0.52, 0.62, 16, materials.rangerJerkin, 0, 0.78, 0);
     const chest = makeCylinder(0.52, 0.42, 0.9, 16, materials.rangerJerkin.clone(), 0, 1.4, 0);
@@ -12846,24 +13077,44 @@ import {
 
     const cloak = makeBox(0.86, 1.34, 0.06, materials.rangerCloak, 0, 1.08, 0.46);
     cloak.rotation.x = -0.1;
-    const shoulderMantle = makeCylinder(0.56, 0.66, 0.34, 16, materials.rangerHood, 0, 1.78, 0);
+    const shoulderMantle = makeCylinder(0.36, 0.62, 0.24, 16, materials.rangerHood, 0, 1.74, 0);
 
     const head = makeSphere(0.26, materials.skin, 0, 2.04, 0);
     const leftEye = makeSphere(0.03, materials.emberEye.clone(), -0.08, 2.07, -0.23);
     const rightEye = makeSphere(0.03, materials.emberEye.clone(), 0.08, 2.07, -0.23);
-    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.72, 16), materials.rangerHood.clone());
-    hood.position.set(0, 2.32, 0.07);
-    hood.rotation.x = 0.34;
+    // An open-front shell leaves the face visible. A solid cone/cylinder
+    // around the head previously buried both eyes inside the cloth.
+    const hoodMaterial = materials.rangerHood.clone();
+    hoodMaterial.side = THREE.DoubleSide;
+    const hood = new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-ranger-hood", [0.34, 12, 8], () => new THREE.SphereGeometry(0.34, 12, 8, -Math.PI / 4, Math.PI * 1.5, 0, Math.PI * 0.86)),
+      hoodMaterial
+    );
+    hood.position.set(0, 2.1, 0.02);
+    hood.scale.y = 1.08;
     addShadow(hood);
-    const hoodRim = makeCylinder(0.33, 0.35, 0.16, 16, materials.rangerHood.clone(), 0, 2.1, 0.04);
-    hoodRim.rotation.x = 0.3;
+    const hoodRim = addShadow(new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-ranger-hood-rim", [0.27, 0.025, 6, 20], () => new THREE.TorusGeometry(0.27, 0.025, 6, 20, Math.PI * 1.28)),
+      materials.rangerHood
+    ));
+    hoodRim.position.set(0, 2.1, -0.22);
+    hoodRim.rotation.z = -Math.PI * 0.14;
+    hoodRim.scale.y = 1.08;
 
-    const leftArm = makeBox(0.19, 0.74, 0.21, materials.rangerCloak.clone(), -0.55, 1.36, 0);
-    const rightArm = makeBox(0.19, 0.74, 0.21, materials.rangerCloak.clone(), 0.55, 1.36, 0);
-    const leftBracer = makeCylinder(0.12, 0.13, 0.24, 10, materials.leather, -0.55, 1.04, -0.02);
-    const rightBracer = makeCylinder(0.12, 0.13, 0.24, 10, materials.leather, 0.55, 1.04, -0.02);
-    const leftHand = makeSphere(0.1, materials.skin, -0.55, 0.94, -0.03);
-    const rightHand = makeSphere(0.1, materials.skin, 0.55, 0.94, -0.03);
+    function makeRangerArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.7, 0);
+      const upper = makeBox(0.19, 0.38, 0.21, materials.rangerCloak, 0, -0.19, 0);
+      const elbow = makeSphere(0.095, materials.rangerCloak, 0, -0.38, 0);
+      const forearm = makeBox(0.18, 0.33, 0.2, materials.rangerCloak, 0, -0.545, -0.01);
+      const bracer = makeCylinder(0.12, 0.13, 0.18, 10, materials.leather, 0, -0.66, -0.02);
+      const hand = makeSphere(0.1, materials.skin, 0, -0.78, -0.03);
+      arm.add(upper, elbow, forearm, bracer, hand);
+      arm.userData.gripRig = { upper, elbow, forearm, cuff: bracer, hand, upperLength: 0.38, lowerLength: 0.4 };
+      return arm;
+    }
+    const leftArm = makeRangerArm(-0.55);
+    const rightArm = makeRangerArm(0.55);
 
     // Quiver across the back with arrow shafts poking out.
     const quiver = new THREE.Group();
@@ -12893,10 +13144,10 @@ import {
     hitFlash.visible = false;
 
     group.add(
-      leftLeg, rightLeg, leftBoot, rightBoot, leftKneeWrap, rightKneeWrap,
+      leftLeg, rightLeg,
       hips, chest, belt, beltBuckle, chestStrap, pouch, cloak, shoulderMantle,
       head, leftEye, rightEye, hood, hoodRim,
-      leftArm, rightArm, leftBracer, rightBracer, leftHand, rightHand,
+      leftArm, rightArm,
       quiver, bowPivot, hitFlash
     );
     scene.add(group);
@@ -12932,10 +13183,10 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.7, 0);
       const thigh = makeCylinder(0.125, 0.135, 0.4, 12, materials.sentinelSash, 0, -0.18, 0);
-      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.16, -0.1);
+      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.36, -0.1);
       knee.scale.set(1, 0.6, 0.7);
-      const shin = makeCylinder(0.105, 0.115, 0.4, 12, materials.darkLeather, 0, -0.5, 0.01);
-      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.73, -0.05);
+      const shin = makeCylinder(0.105, 0.115, 0.28, 12, materials.darkLeather, 0, -0.49, 0.01);
+      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.6, -0.05);
       leg.add(thigh, knee, shin, boot);
       return leg;
     }
@@ -12972,6 +13223,7 @@ import {
       const bracer = makeCylinder(0.1, 0.115, 0.34, 10, materials.leather, 0, -0.58, -0.01);
       const hand = makeSphere(0.105, materials.skin, 0, -0.8, -0.02);
       arm.add(upper, elbow, bracer, hand);
+      arm.userData.gripRig = { upper, elbow, forearm: bracer, cuff: null, hand, upperLength: 0.4, lowerLength: 0.4 };
       return arm;
     }
     const leftArm = makeSentinelArm(-0.58);
@@ -13027,6 +13279,36 @@ import {
     player.hitFlash = hitFlash;
   }
 
+  const alignArmGrip = createArmGripSolver({ THREE });
+  const updateRangerBowPose = createRangerBowPoseSystem({ THREE });
+  const rightWeaponGrip = { side: 1, point: { x: 0, y: 0, z: -0.1 } };
+  const rightShaftGrip = { side: 1 };
+  const leftBowGrip = { side: -1, point: { x: 0, y: 0, z: -0.1 } };
+  const leftShieldGrip = { side: -1, point: { x: 0, y: -0.15, z: 0 } };
+  const rightAxeGrip = { side: 1, point: { x: 0, y: 0, z: -0.2 } };
+  const rightBoneGrip = { side: 1, point: { x: 0, y: 0, z: -0.4 } };
+
+  function updateEnemyGrips(enemy) {
+    if (enemy.rightArm?.userData.gripRig) {
+      alignArmGrip(enemy.rightArm, enemy.weaponPivot, enemy.type === "bonewarden" ? rightBoneGrip : rightAxeGrip);
+    }
+  }
+
+  function updateCharacterGrips(actor) {
+    const pivot = actor.weaponPivot || actor.bowPivot || actor.staffPivot || actor.swordPivot;
+    if (actor.character === "ranger") {
+      alignArmGrip(actor.leftArm, pivot, leftBowGrip);
+      for (const weapon of pivot?.children || []) {
+        const string = weapon.userData.bowString;
+        if (string?.drawAmount > 0) alignArmGrip(actor.rightArm, weapon, string.gripOptions);
+        if (string) break;
+      }
+    } else {
+      alignArmGrip(actor.rightArm, pivot, actor.character === "knight" ? rightWeaponGrip : rightShaftGrip);
+      if (actor.character === "knight") alignArmGrip(actor.leftArm, actor.shieldPivot, leftShieldGrip);
+    }
+  }
+
   function setPlayerCharacter(character, resetVitals = true) {
     game.selectedCharacter = character;
     player.character = character;
@@ -13045,6 +13327,7 @@ import {
     } else {
       createKnight();
     }
+    updateCharacterGrips(player);
     applyProgressionStats(resetVitals);
     game.exploration.xp = getCharacterProgress(character).xp;
 
@@ -13323,6 +13606,7 @@ import {
     helpParagraph(basics, "Ironhold is an exploration RPG. Walk the valley, discover villages and Crownford, and take quests by talking to named NPCs. Quests reward XP, boons, perks, and weapon kits.");
     helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you. In an online room, press Enter to chat with your party - recent messages appear in the upper left and fade during play.");
     helpParagraph(basics, "The minimap in the lower right shows discovered terrain, roads, quest areas, and a compass. Your arrow sits at the center of attention; online teammates appear as small colored dots, pinned to the rim when they roam far away.");
+    helpParagraph(basics, "The valley moves through daylight, golden dusk, moonlit night, and morning over twelve minutes of play. The time of day appears above the minimap. Stars and fireflies emerge after dusk; the host keeps everyone's sky in step. The cycle pauses with the host, and dungeon interiors keep their own lighting.");
 
     const controls = helpSection("Movement & Controls");
     helpList(controls, [
@@ -13731,6 +14015,7 @@ import {
       return;
     }
     game.state = "playing";
+    dayTickAt = performance.now();
     overlay.classList.add("hidden");
     roomRoster.hidden = true;
     setMusicPaused(false);
@@ -14009,13 +14294,18 @@ import {
       level: getCharacterLevel(),
       health: player.health,
       maxHealth: player.maxHealth,
-      x: player.position.x,
-      z: player.position.z,
-      yaw: player.yaw,
+      x: netRound(player.position.x),
+      z: netRound(player.position.z),
+      yaw: netRound(player.yaw, 3),
       // Additive field: ranged aim elevation in radians, captured by reticle
       // convergence at attack start (action messages are sent in the same
       // tick). Older clients ignore it and treat missing values as flat aim.
       aimPitch: Math.round((player.attackAimPitch ?? 0) * 1000) / 1000,
+      // Remaining dodge invulnerability (s). The host honors this so a joiner
+      // who dodged on their screen is not hit by stale host-side resolution.
+      iframe: netRound(Math.max(0, player.invulnTimer || 0), 2),
+      // Joiner view staleness estimate (s) for host lag compensation.
+      viewDelay: netRound(online.viewDelaySeconds || 0, 3),
       hasHorse: !!horse,
       mountTackId: currentMountTackId(),
       mountId: horse ? horse.mountId || "horse" : currentMountId(),
@@ -14304,7 +14594,7 @@ import {
     }
     if (fireballs) {
       for (const fireball of game.fireballs) {
-        scene.remove(fireball.group);
+        removeProjectile(fireball);
       }
       game.fireballs.length = 0;
     }
@@ -14316,24 +14606,40 @@ import {
     }
   }
 
+  // Quantize replicated floats to trim snapshot bytes (and therefore broker
+  // queuing latency). Positions/velocities keep cm precision; angles keep
+  // ~0.6 degree precision. This is the safe, stateless bandwidth lever vs a
+  // fragile delta protocol over best-effort (qos 0) MQTT.
+  function netRound(value, decimals = 2) {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    const factor = decimals === 2 ? 100 : decimals === 3 ? 1000 : Math.pow(10, decimals);
+    return Math.round(value * factor) / factor;
+  }
+
   function serializeEnemyState(enemy) {
     const groupY = enemy.group ? enemy.group.position.y : 0;
     return {
       enemyId: enemy.netId,
       type: enemy.type,
-      x: enemy.position.x,
-      z: enemy.position.z,
-      y: groupY,
-      yaw: enemy.yaw || 0,
+      x: netRound(enemy.position.x),
+      z: netRound(enemy.position.z),
+      y: netRound(groupY),
+      // Replicated planar velocity drives joiner dead-reckoning and host
+      // lag-compensated hit tests; absent on older hosts (treated as 0).
+      vx: netRound(enemy.velocity ? enemy.velocity.x : 0),
+      vz: netRound(enemy.velocity ? enemy.velocity.z : 0),
+      yaw: netRound(enemy.yaw || 0, 3),
       scale: enemy.scale || 1,
       radius: enemy.radius || 0.7,
-      health: Math.max(0, enemy.health),
+      health: Math.max(0, Math.round(enemy.health)),
       maxHealth: enemy.maxHealth,
       speed: enemy.speed,
       state: enemy.state,
       attackType: enemy.attackType || "",
-      attackTimer: enemy.attackTimer || 0,
-      attackDuration: enemy.attackDuration || 0,
+      attackTimer: netRound(enemy.attackTimer || 0, 3),
+      attackDuration: netRound(enemy.attackDuration || 0, 3),
       cooldown: enemy.cooldown || 0,
       stunned: enemy.stunned || 0,
       entering: !!enemy.entering,
@@ -14350,12 +14656,12 @@ import {
     return {
       fireballId: fireball.netId,
       variant: fireball.variant || "fire",
-      x: fireball.group.position.x,
-      y: fireball.group.position.y,
-      z: fireball.group.position.z,
-      vx: fireball.velocity.x,
-      vy: fireball.velocity.y,
-      vz: fireball.velocity.z,
+      x: netRound(fireball.group.position.x),
+      y: netRound(fireball.group.position.y),
+      z: netRound(fireball.group.position.z),
+      vx: netRound(fireball.velocity.x),
+      vy: netRound(fireball.velocity.y),
+      vz: netRound(fireball.velocity.z),
       speed: fireball.speed,
       turnRate: fireball.turnRate,
       life: fireball.life,
@@ -14384,6 +14690,7 @@ import {
   function serializeWorldSnapshot() {
     return {
       roomPhase: currentRoomPhase(),
+      dayPhase: dayClock.phase,
       wave: game.wave,
       kills: game.kills,
       nextWaveIn: game.nextWaveIn,
@@ -14457,6 +14764,11 @@ import {
     enemy.networkTargetPosition.set(state.x || 0, 0, state.z || 0);
     enemy.networkTargetY = state.y ?? 0;
     enemy.networkTargetYaw = state.yaw ?? 0;
+    // Dead-reckoning inputs: replicated planar velocity + the local time the
+    // snapshot was applied, so updateRemoteWorldActors can predict forward.
+    enemy.networkVelocity = enemy.networkVelocity || new THREE.Vector3();
+    enemy.networkVelocity.set(state.vx || 0, 0, state.vz || 0);
+    enemy.networkSnapshotTime = clock.elapsedTime;
     enemy.type = normalizeEnemyType(state.type) || enemy.type;
     enemy.scale = state.scale || enemy.scale || 1;
     enemy.radius = state.radius || enemy.radius;
@@ -14527,6 +14839,8 @@ import {
   function createFireballVisual(state) {
     const variant = state.variant || "fire";
     const group = new THREE.Group();
+    const ownedGeometries = [];
+    const ownedMaterials = [];
     group.position.set(state.x || 0, state.y || 0.9, state.z || 0);
     let shell = null;
     let core = null;
@@ -14537,6 +14851,7 @@ import {
       const shaft = makeCylinder(0.024, 0.024, 0.82, 6, materials.bowWood, 0, 0, 0);
       shaft.rotation.x = Math.PI / 2;
       const head = makeCylinder(0.0, 0.05, 0.16, 6, materials.steel.clone(), 0, 0, -0.47);
+      ownedMaterials.push(head.material);
       head.rotation.x = -Math.PI / 2;
       const fletch = makeBox(0.014, 0.1, 0.16, materials.banditTunic, 0, 0, 0.34);
       group.add(shaft, head, fletch);
@@ -14545,11 +14860,15 @@ import {
       style = fireballVariantStyle(variant);
       shell = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), style.shellMat.clone());
       core = new THREE.Mesh(new THREE.SphereGeometry(0.08, 14, 10), style.coreMat.clone());
+      ownedGeometries.push(shell.geometry, core.geometry);
+      ownedMaterials.push(shell.material, core.material);
       const glow = new THREE.PointLight(style.glow, variant === "hex" ? 2.2 : 2.6, 9, 1.7);
       shell.castShadow = true;
       group.add(shell, core, glow);
       if (variant === "hex") {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.02, 8, 22), style.coreMat.clone());
+        ownedGeometries.push(ring.geometry);
+        ownedMaterials.push(ring.material);
         ring.rotation.x = Math.PI / 2;
         group.add(ring);
       }
@@ -14557,6 +14876,8 @@ import {
     scene.add(group);
     return assignFireballId({
       group,
+      ownedGeometries,
+      ownedMaterials,
       shell,
       core,
       variant,
@@ -14590,6 +14911,7 @@ import {
     fireball.networkTargetPosition = fireball.networkTargetPosition || new THREE.Vector3();
     fireball.networkTargetPosition.set(state.x || 0, state.y || 0.9, state.z || 0);
     fireball.velocity.set(state.vx || 0, state.vy || 0, state.vz || 0);
+    fireball.networkSnapshotTime = clock.elapsedTime;
     fireball.speed = state.speed || fireball.speed;
     fireball.turnRate = state.turnRate || fireball.turnRate;
     fireball.life = state.life || fireball.life;
@@ -14637,13 +14959,17 @@ import {
     return potion;
   }
 
-  function removeActorsMissingFromSnapshot(collection, ids, idKey = "netId") {
+  function removeActorsMissingFromSnapshot(collection, ids, idKey = "netId", removeActor = null) {
     for (let i = collection.length - 1; i >= 0; i -= 1) {
       const actor = collection[i];
       if (!actor[idKey] || ids.has(actor[idKey])) {
         continue;
       }
-      scene.remove(actor.group);
+      if (removeActor) {
+        removeActor(actor);
+      } else {
+        scene.remove(actor.group);
+      }
       collection.splice(i, 1);
     }
   }
@@ -14653,6 +14979,9 @@ import {
       return;
     }
     online.roomPhase = sanitizeRoomPhase(world.roomPhase || online.roomPhase);
+    if (dayClock.sync(world.dayPhase)) {
+      daySyncedAt = performance.now();
+    }
     game.wave = world.wave ?? game.wave;
     game.kills = world.kills ?? 0;
     game.nextWaveIn = world.nextWaveIn ?? 0;
@@ -14671,7 +15000,7 @@ import {
       fireballIds.add(fireballState.fireballId);
       upsertFireballSnapshot(fireballState);
     }
-    removeActorsMissingFromSnapshot(game.fireballs, fireballIds);
+    removeActorsMissingFromSnapshot(game.fireballs, fireballIds, "netId", removeProjectile);
 
     const potionIds = new Set();
     for (const potionState of world.potions || []) {
@@ -14681,21 +15010,63 @@ import {
     removeActorsMissingFromSnapshot(game.potions, potionIds);
   }
 
+  const REMOTE_TELEGRAPH_STATES = new Set(["attack", "lunge", "pulse", "draw", "spit", "hex", "fire"]);
+  const remoteActorPredict = new THREE.Vector3();
+
+  // Joiner-side enemy windup. The host's per-type attack updaters never run on
+  // a joiner, so drive the telegraph from the replicated attackTimer/duration,
+  // advancing it locally between snapshots. Brightness ramps toward the strike
+  // so the joiner has a smooth, readable "tell" to time a dodge against.
+  function updateRemoteEnemyTelegraph(enemy, dt) {
+    if (!enemy.telegraph) {
+      return;
+    }
+    if (!REMOTE_TELEGRAPH_STATES.has(enemy.state)) {
+      enemy.telegraph.visible = false;
+      if (enemy.floatRoot) {
+        enemy.floatRoot.scale.setScalar(1);
+      }
+      return;
+    }
+    if (enemy.attackDuration > 0) {
+      enemy.attackTimer = Math.min(enemy.attackDuration, (enemy.attackTimer || 0) + dt);
+    }
+    const t = enemy.attackDuration > 0 ? clamp(enemy.attackTimer / enemy.attackDuration, 0, 1) : 0;
+    enemy.telegraph.visible = true;
+    if (enemy.telegraph.material) {
+      enemy.telegraph.material.opacity = 0.14 + 0.42 * smoothstep(0, 0.92, t);
+    }
+    if (enemy.floatRoot) {
+      enemy.floatRoot.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.2);
+    }
+  }
+
   function updateRemoteWorldActors(dt) {
     for (const enemy of game.enemies) {
       if (!enemy.remoteControlled) {
         continue;
       }
       const previous = enemy.position.clone();
-      const target = enemy.networkTargetPosition || enemy.position;
-      enemy.position.lerp(target, 1 - Math.pow(0.0001, dt));
-      enemy.velocity.copy(enemy.position).sub(previous).multiplyScalar(1 / Math.max(0.001, dt));
-      enemy.yaw = lerpAngle(enemy.yaw || 0, enemy.networkTargetYaw || 0, 1 - Math.pow(0.0001, dt));
-      updateEnemyHealthBillboard(enemy);
-      if (enemy.telegraph) {
-        enemy.telegraph.visible = enemy.state === "attack" || enemy.state === "lunge" || enemy.state === "pulse"
-          || enemy.state === "draw" || enemy.state === "spit" || enemy.state === "hex";
+      const base = enemy.networkTargetPosition || enemy.position;
+      // Predict the enemy's current host position by extending the last
+      // snapshot along its replicated velocity (capped) so fast movers stay
+      // near their true position between snapshots.
+      const age = Math.max(0, clock.elapsedTime - (enemy.networkSnapshotTime ?? clock.elapsedTime));
+      const extrap = Math.min(age, REMOTE_EXTRAP_CAP);
+      if (enemy.networkVelocity) {
+        remoteActorPredict.set(
+          base.x + enemy.networkVelocity.x * extrap,
+          0,
+          base.z + enemy.networkVelocity.z * extrap
+        );
+      } else {
+        remoteActorPredict.set(base.x, 0, base.z);
       }
+      enemy.position.lerp(remoteActorPredict, 1 - Math.pow(REMOTE_ENEMY_LERP_BASE, dt));
+      enemy.velocity.copy(enemy.position).sub(previous).multiplyScalar(1 / Math.max(0.001, dt));
+      enemy.yaw = lerpAngle(enemy.yaw || 0, enemy.networkTargetYaw || 0, 1 - Math.pow(REMOTE_ENEMY_LERP_BASE, dt));
+      updateEnemyHealthBillboard(enemy);
+      updateRemoteEnemyTelegraph(enemy, dt);
       if (enemy.type === "dragon") {
         const targetY = enemy.networkTargetY || enemy.hoverHeight || 2.2;
         const y = lerp(enemy.group.position.y, targetY, 1 - Math.pow(0.0001, dt));
@@ -14725,6 +15096,7 @@ import {
         }
       }
       applyEnemyVisualYaw(enemy, dt);
+      updateEnemyGrips(enemy);
       updateEnemyMovementAudio(enemy, dt);
     }
 
@@ -14732,8 +15104,18 @@ import {
       if (!fireball.remoteControlled) {
         continue;
       }
-      const target = fireball.networkTargetPosition || fireball.group.position;
-      fireball.group.position.lerp(target, 1 - Math.pow(0.00005, dt));
+      const fbBase = fireball.networkTargetPosition || fireball.group.position;
+      // Projectiles travel straight, so dead-reckoning along velocity tracks
+      // the true path tightly and removes most of the snapshot-cadence lag
+      // that made enemy projectiles hard to dodge as a joiner.
+      const fbAge = Math.max(0, clock.elapsedTime - (fireball.networkSnapshotTime ?? clock.elapsedTime));
+      const fbExtrap = Math.min(fbAge, REMOTE_EXTRAP_CAP);
+      remoteActorPredict.set(
+        fbBase.x + fireball.velocity.x * fbExtrap,
+        fbBase.y + fireball.velocity.y * fbExtrap,
+        fbBase.z + fireball.velocity.z * fbExtrap
+      );
+      fireball.group.position.lerp(remoteActorPredict, 1 - Math.pow(REMOTE_FIREBALL_LERP_BASE, dt));
       if (fireball.shell) {
         fireball.shell.rotation.y += dt * 7.5;
         fireball.shell.rotation.x += dt * 5.8;
@@ -14986,6 +15368,22 @@ import {
       sendOnlineMessage({ kind: "kick", targetId: message.id });
       return;
     }
+    if (message.kind === "ping") {
+      // RTT probe: only the host echoes, giving joiners a host round-trip.
+      if (online.role === "host") {
+        sendOnlineMessage({ kind: "pong", t: message.t, to: message.id });
+      }
+      return;
+    }
+    if (message.kind === "pong") {
+      if (message.to === online.localId && typeof message.t === "number") {
+        const rtt = performance.now() - message.t;
+        // Smooth the estimate; derive view staleness (~half RTT) for lag comp.
+        networkDebug.rttMs = networkDebug.rttMs > 0 ? networkDebug.rttMs * 0.6 + rtt * 0.4 : rtt;
+        online.viewDelaySeconds = clamp(networkDebug.rttMs / 2000 + 0.02, 0.02, REMOTE_LAG_COMP_MAX);
+      }
+      return;
+    }
     if (message.kind === "chat") {
       handleIncomingChat(message);
       return;
@@ -15110,6 +15508,13 @@ import {
       if (!messageFromKnownHost(message)) {
         return;
       }
+      const now = performance.now();
+      networkDebug.lastWorldAt = now;
+      networkDebug.lastWorldBytes = typeof text === "string" ? text.length : 0;
+      networkDebug.worldSamples.push(now);
+      while (networkDebug.worldSamples.length && now - networkDebug.worldSamples[0] > 4000) {
+        networkDebug.worldSamples.shift();
+      }
       applyWorldSnapshot(message.world);
       return;
     }
@@ -15229,10 +15634,10 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.7, 0);
       const thigh = makeCylinder(0.13, 0.14, 0.4, 12, materials.iron, 0, -0.18, 0);
-      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.16, -0.11);
+      const knee = makeSphere(0.13, materials.steel.clone(), 0, -0.36, -0.11);
       knee.scale.set(1, 0.62, 0.72);
-      const shin = makeCylinder(0.11, 0.12, 0.4, 12, materials.iron.clone(), 0, -0.5, 0.01);
-      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.73, -0.05);
+      const shin = makeCylinder(0.11, 0.12, 0.28, 12, materials.iron.clone(), 0, -0.49, 0.01);
+      const boot = makeBox(0.29, 0.2, 0.35, materials.darkLeather, 0, -0.6, -0.05);
       leg.add(thigh, knee, shin, boot);
       return leg;
     }
@@ -15246,9 +15651,9 @@ import {
       const elbow = makeSphere(0.1, materials.steel.clone(), 0, -0.4, 0);
       const forearm = makeCylinder(0.1, 0.11, 0.38, 12, materials.iron.clone(), 0, -0.58, -0.01);
       const gauntlet = makeCylinder(0.12, 0.13, 0.18, 10, materials.steel.clone(), 0, -0.68, -0.02);
-      gauntlet.rotation.z = Math.PI / 2;
       const fist = makeSphere(0.12, materials.steel.clone(), 0, -0.8, -0.02);
       arm.add(upper, elbow, forearm, gauntlet, fist);
+      arm.userData.gripRig = { upper, elbow, forearm, cuff: gauntlet, hand: fist, upperLength: 0.4, lowerLength: 0.4 };
       return arm;
     }
     const leftArm = makeKnightArm(-0.58);
@@ -15271,8 +15676,11 @@ import {
     shieldBoss.rotation.x = Math.PI / 2;
     const shieldCrossV = makeBox(0.08, 0.58, 0.035, trim, 0, 0, -0.29);
     const shieldCrossH = makeBox(0.42, 0.08, 0.035, trim, 0, 0, -0.3);
-    const shieldRim = makeCylinder(0.44, 0.44, 0.045, 24, trim, 0, 0, -0.13);
-    shieldRim.rotation.x = Math.PI / 2;
+    const shieldRim = addShadow(new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-shield-rim", [0.42, 0.025, 6, 24], () => new THREE.TorusGeometry(0.42, 0.025, 6, 24)),
+      trim
+    ));
+    shieldRim.position.z = -0.16;
     shieldPivot.add(shield, shieldRim, shieldBoss, shieldCrossV, shieldCrossH);
     shieldPivot.rotation.set(0.1, 0.38, 0.0);
 
@@ -15370,8 +15778,8 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.5, 0);
       const thigh = makeCylinder(0.11, 0.12, 0.32, 10, materials.darkLeather, 0, -0.15, 0);
-      const shin = makeCylinder(0.09, 0.1, 0.3, 10, materials.darkLeather, 0, -0.4, 0.01);
-      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.54, -0.05);
+      const shin = makeCylinder(0.09, 0.1, 0.2, 10, materials.darkLeather, 0, -0.31, 0.01);
+      const boot = makeBox(0.29, 0.18, 0.34, materials.darkLeather, 0, -0.41, -0.05);
       leg.add(thigh, shin, boot);
       return leg;
     }
@@ -15384,14 +15792,15 @@ import {
       const upper = makeCylinder(0.14, 0.16, 0.4, 12, robe.clone(), 0, -0.2, 0);
       const forearm = makeCylinder(0.11, 0.12, 0.36, 12, robe.clone(), 0, -0.56, 0);
       const cuff = makeCylinder(0.13, 0.14, 0.16, 12, trim, 0, -0.67, -0.02);
-      cuff.rotation.z = Math.PI / 2;
       const hand = makeSphere(0.105, materials.skin, 0, -0.78, -0.03);
-      const drape = makeBox(0.2, 0.32, 0.06, robe.clone(), 0, -0.42, 0.08);
-      arm.add(upper, forearm, cuff, hand, drape);
+      const drape = makeBox(0.2, 0.32, 0.06, robe.clone(), 0, -0.22, 0.08);
+      upper.add(drape);
+      arm.add(upper, forearm, cuff, hand);
       if (staffHand) {
-        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.77, -0.03);
-        arm.add(wrap);
+        const wrap = makeCylinder(0.095, 0.105, 0.1, 10, materials.leather, 0, -0.21, -0.03);
+        forearm.add(wrap);
       }
+      arm.userData.gripRig = { upper, elbow: null, forearm, cuff, hand, upperLength: 0.4, lowerLength: 0.38 };
       return arm;
     }
     const leftArm = makeWizArm(-0.58, false);
@@ -15429,10 +15838,18 @@ import {
     const trim = paletteMaterial(palette.trim, 0.5, 0.1);
     const glow = paletteGlow(palette.glow);
 
-    const leftLeg = makeBox(0.21, 0.74, 0.23, jerkin, -0.21, 0.32, 0);
-    const rightLeg = makeBox(0.21, 0.74, 0.23, jerkin.clone(), 0.21, 0.32, 0);
-    const leftBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, -0.21, -0.03, -0.06);
-    const rightBoot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0.21, -0.03, -0.06);
+    function makeRangerLeg(x) {
+      const leg = new THREE.Group();
+      leg.position.set(x, 0.7, 0);
+      const thigh = makeBox(0.21, 0.36, 0.23, jerkin, 0, -0.18, 0);
+      const kneeWrap = makeCylinder(0.13, 0.14, 0.16, 10, materials.leather, 0, -0.36, 0);
+      const shin = makeBox(0.19, 0.26, 0.21, jerkin, 0, -0.49, 0.01);
+      const boot = makeBox(0.27, 0.2, 0.36, materials.darkLeather, 0, -0.6, -0.06);
+      leg.add(thigh, kneeWrap, shin, boot);
+      return leg;
+    }
+    const leftLeg = makeRangerLeg(-0.21);
+    const rightLeg = makeRangerLeg(0.21);
 
     const hips = makeCylinder(0.44, 0.52, 0.62, 16, jerkin.clone(), 0, 0.78, 0);
     const chest = makeCylinder(0.52, 0.42, 0.9, 16, jerkin.clone(), 0, 1.4, 0);
@@ -15442,22 +15859,42 @@ import {
     chestStrap.rotation.z = 0.62;
     const cloak = makeBox(0.86, 1.34, 0.06, cloakMat, 0, 1.08, 0.46);
     cloak.rotation.x = -0.1;
-    const shoulderMantle = makeCylinder(0.56, 0.66, 0.34, 16, hoodMat, 0, 1.78, 0);
+    const shoulderMantle = makeCylinder(0.36, 0.62, 0.24, 16, hoodMat, 0, 1.74, 0);
 
     const head = makeSphere(0.26, materials.skin, 0, 2.04, 0);
     const leftEye = makeSphere(0.03, glow, -0.08, 2.07, -0.23);
     const rightEye = makeSphere(0.03, glow.clone(), 0.08, 2.07, -0.23);
-    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.72, 16), hoodMat.clone());
-    hood.position.set(0, 2.32, 0.07);
-    hood.rotation.x = 0.34;
+    const hoodMaterial = hoodMat.clone();
+    hoodMaterial.side = THREE.DoubleSide;
+    const hood = new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-ranger-hood", [0.34, 12, 8], () => new THREE.SphereGeometry(0.34, 12, 8, -Math.PI / 4, Math.PI * 1.5, 0, Math.PI * 0.86)),
+      hoodMaterial
+    );
+    hood.position.set(0, 2.1, 0.02);
+    hood.scale.y = 1.08;
     addShadow(hood);
-    const hoodRim = makeCylinder(0.33, 0.35, 0.16, 16, hoodMat.clone(), 0, 2.1, 0.04);
-    hoodRim.rotation.x = 0.3;
+    const hoodRim = addShadow(new THREE.Mesh(
+      cachedPrimitiveGeometry("hero-ranger-hood-rim", [0.27, 0.025, 6, 20], () => new THREE.TorusGeometry(0.27, 0.025, 6, 20, Math.PI * 1.28)),
+      hoodMat
+    ));
+    hoodRim.position.set(0, 2.1, -0.22);
+    hoodRim.rotation.z = -Math.PI * 0.14;
+    hoodRim.scale.y = 1.08;
 
-    const leftArm = makeBox(0.19, 0.74, 0.21, cloakMat.clone(), -0.55, 1.36, 0);
-    const rightArm = makeBox(0.19, 0.74, 0.21, cloakMat.clone(), 0.55, 1.36, 0);
-    const leftHand = makeSphere(0.1, materials.skin, -0.55, 0.94, -0.03);
-    const rightHand = makeSphere(0.1, materials.skin, 0.55, 0.94, -0.03);
+    function makeRangerArm(x) {
+      const arm = new THREE.Group();
+      arm.position.set(x, 1.7, 0);
+      const upper = makeBox(0.19, 0.38, 0.21, cloakMat, 0, -0.19, 0);
+      const elbow = makeSphere(0.095, cloakMat, 0, -0.38, 0);
+      const forearm = makeBox(0.18, 0.33, 0.2, cloakMat, 0, -0.545, -0.01);
+      const bracer = makeCylinder(0.12, 0.13, 0.18, 10, materials.leather, 0, -0.66, -0.02);
+      const hand = makeSphere(0.1, materials.skin, 0, -0.78, -0.03);
+      arm.add(upper, elbow, forearm, bracer, hand);
+      arm.userData.gripRig = { upper, elbow, forearm, cuff: bracer, hand, upperLength: 0.38, lowerLength: 0.4 };
+      return arm;
+    }
+    const leftArm = makeRangerArm(-0.55);
+    const rightArm = makeRangerArm(0.55);
 
     const quiver = new THREE.Group();
     quiver.position.set(0.3, 1.52, 0.4);
@@ -15477,10 +15914,10 @@ import {
     bowPivot.rotation.set(0, -0.3, -0.06);
 
     group.add(
-      leftLeg, rightLeg, leftBoot, rightBoot,
+      leftLeg, rightLeg,
       hips, chest, belt, beltBuckle, chestStrap, cloak, shoulderMantle,
       head, leftEye, rightEye, hood, hoodRim,
-      leftArm, rightArm, leftHand, rightHand,
+      leftArm, rightArm,
       quiver, bowPivot
     );
 
@@ -15497,10 +15934,10 @@ import {
       const leg = new THREE.Group();
       leg.position.set(x, 0.7, 0);
       const thigh = makeCylinder(0.125, 0.135, 0.4, 12, sash.clone(), 0, -0.18, 0);
-      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.16, -0.1);
+      const knee = makeSphere(0.12, materials.steel.clone(), 0, -0.36, -0.1);
       knee.scale.set(1, 0.6, 0.7);
-      const shin = makeCylinder(0.105, 0.115, 0.4, 12, materials.darkLeather, 0, -0.5, 0.01);
-      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.73, -0.05);
+      const shin = makeCylinder(0.105, 0.115, 0.28, 12, materials.darkLeather, 0, -0.49, 0.01);
+      const boot = makeBox(0.28, 0.2, 0.36, materials.darkLeather, 0, -0.6, -0.05);
       leg.add(thigh, knee, shin, boot);
       return leg;
     }
@@ -15534,6 +15971,7 @@ import {
       const bracer = makeCylinder(0.1, 0.115, 0.34, 10, materials.leather, 0, -0.58, -0.01);
       const hand = makeSphere(0.105, materials.skin, 0, -0.8, -0.02);
       arm.add(upper, elbow, bracer, hand);
+      arm.userData.gripRig = { upper, elbow, forearm: bracer, cuff: null, hand, upperLength: 0.4, lowerLength: 0.4 };
       return arm;
     }
     const leftArm = makeSentinelArm(-0.58);
@@ -15749,6 +16187,14 @@ import {
     remote.playing = state.playing === true;
     remote.health = state.health ?? remote.health;
     remote.maxHealth = state.maxHealth ?? remote.maxHealth;
+    // Honor the joiner's dodge: store when their reported i-frame window ends
+    // on the host clock. We trust the full reported remainder (it is already
+    // stale by ~half RTT), which biases in the dodger's favor within the short
+    // window — the right call for responsiveness.
+    if (numberOrZero(state.iframe) > 0) {
+      remote.iframeExpiresAt = clock.elapsedTime + clamp(numberOrZero(state.iframe), 0, DODGE_IFRAME_SECONDS);
+    }
+    remote.viewDelay = clamp(numberOrZero(state.viewDelay), 0, REMOTE_LAG_COMP_MAX);
     remote.level = clamp(Math.floor(numberOrZero(state.level) || 1), 1, 30);
     if (remote.nameTag) {
       updateNameTag(remote.nameTag, state.name || "Player", remote.health, remote.maxHealth);
@@ -15831,6 +16277,7 @@ import {
         }
       }
       updateRemoteActionPose(remote, dt);
+      updateCharacterGrips(remote);
       if (remote.horse) {
         remote.horse.group.visible = !!remote.hasHorse;
         if (remote.hasHorse) {
@@ -15876,6 +16323,14 @@ import {
       if (online.worldSendTimer <= 0) {
         online.worldSendTimer = 0.12;
         sendWorldSnapshot();
+      }
+    } else if (online.role === "join") {
+      online.pingTimer -= dt;
+      if (online.pingTimer <= 0) {
+        online.pingTimer = 2.0;
+        if (online.hostId) {
+          sendOnlineMessage({ kind: "ping", t: performance.now() });
+        }
       }
     }
     updateRemotePlayers(dt);
@@ -15952,6 +16407,8 @@ import {
       : action === "frostbind" ? 0.5
       : action === "stormcrown" ? 0.62
       : action === "heartseeker" ? 0.7
+      : action === "arrow" ? 0.34
+      : action === "pierce" ? 0.52
       : action === "parting" ? 0.3
       : action === "resolve" ? 0.45
       : action === "thrust" ? 0.44
@@ -16028,11 +16485,13 @@ import {
         remote.rightArm.rotation.x = lerp(remote.rightArm.rotation.x, 0, ease);
         remote.rightArm.rotation.z = lerp(remote.rightArm.rotation.z, 0, ease);
       }
+      if (remote.character === "ranger") updateRangerBowPose(remote, 0, ease);
       return;
     }
     remote.actionAnimTimer += dt;
     const t = remote.actionAnimTimer / remote.actionAnimDuration;
     if (t >= 1) {
+      if (remote.character === "ranger") updateRangerBowPose(remote, 0, ease);
       endRemoteActionPose(remote);
       return;
     }
@@ -16118,38 +16577,13 @@ import {
       }
       return;
     }
-    if (action === "heartseeker") {
-      const draw = smoothstep(0, 0.52, t);
-      const anchor = smoothstep(0.4, 0.56, t);
-      const pose = draw * (1 - smoothstep(0.62, 0.95, t));
-      if (remote.weaponPivot) {
-        remote.weaponPivot.rotation.y = -0.3 - pose * 1.06;
-        remote.weaponPivot.rotation.z = -0.06 - pose * 0.18;
-      }
-      if (remote.leftArm) {
-        remote.leftArm.rotation.x = -pose * 1.34;
-        remote.leftArm.rotation.z = pose * 0.16;
-      }
-      if (remote.rightArm) {
-        remote.rightArm.rotation.x = -pose * (1.12 + anchor * 0.14);
-        remote.rightArm.rotation.z = -pose * 0.52;
-      }
+    if (action === "heartseeker" || action === "arrow" || action === "pierce") {
+      updateRangerShotPose(remote, t, swing, action);
       return;
     }
     if (action === "parting") {
       const snap = Math.pow(clamp(1 - t, 0, 1), 0.6);
-      if (remote.weaponPivot) {
-        remote.weaponPivot.rotation.y = -0.3 - snap * 1.05;
-        remote.weaponPivot.rotation.z = -0.06 + snap * 0.72;
-      }
-      if (remote.leftArm) {
-        remote.leftArm.rotation.x = -snap * 1.5;
-        remote.leftArm.rotation.z = snap * 0.3;
-      }
-      if (remote.rightArm) {
-        remote.rightArm.rotation.x = snap * 0.85;
-        remote.rightArm.rotation.z = -snap * 0.22;
-      }
+      updateRangerPartingPose(remote, snap);
       return;
     }
     if (action === "moulinet") {
@@ -16216,6 +16650,14 @@ import {
       weaponId: profile.weaponId,
       perks: profile.perks
     });
+    // Lag compensation for a remote joiner's aimed attack: they aimed at where
+    // they SAW the enemy (~viewDelay ago). Pad the hit range by how far the
+    // enemy could have travelled since, so shots that visually connected still
+    // register. Capped so it never becomes a field-wide auto-hit.
+    const lagSeconds = sourceId !== online.localId
+      ? clamp(numberOrZero(state.viewDelay) || (remote && remote.viewDelay) || 0, 0, REMOTE_LAG_COMP_MAX)
+      : 0;
+    const lagPad = enemy => Math.min((enemy.velocity ? enemy.velocity.length() : 0) * lagSeconds, 2.4);
     if (action === "burst" || action === "stormcrown") {
       const crown = action === "stormcrown";
       const radius = crown ? tuning.stormcrownRadius + 0.1 : 3.45;
@@ -16255,7 +16697,7 @@ import {
 
     if (action === "frostbind") {
       for (const enemy of game.enemies) {
-        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius + lagPad(enemy), 0.86)) {
           continue;
         }
         damageEnemy(enemy, tuning.frostbindDamageMin, forward, tuning.frostbindStun, sourceId);
@@ -16355,7 +16797,7 @@ import {
     if (action === "pierce") {
       // Flaming Arrow keeps the legacy `pierce` action id for compatibility.
       for (const enemy of game.enemies) {
-        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius, 0.86)) {
+        if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), 16 + enemy.radius + lagPad(enemy), 0.86)) {
           continue;
         }
         damageEnemy(enemy, tuning.pierceDamageMin, forward, 0.4, sourceId);
@@ -16376,7 +16818,7 @@ import {
       : tuning.slashRange + 0.15;
     const minDot = action === "lightning" ? 0.34 : action === "arrow" ? 0.6 : action === "heartseeker" ? 0.85 : 0.18;
     for (const enemy of game.enemies) {
-      if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius, minDot)) {
+      if (enemy.dead || !matchesActivity(enemy) || !pointInAttackCone(source, yaw, enemy.position.clone(), range + enemy.radius + lagPad(enemy), minDot)) {
         continue;
       }
       const distance = Math.hypot(enemy.position.x - source.x, enemy.position.z - source.z);
@@ -16649,6 +17091,13 @@ import {
       applyPlayerDamage(damage, guardDamage, direction, extraPush);
       return;
     }
+    const remoteTarget = online.remotePlayers.get(target.id);
+    if (remoteTarget && (remoteTarget.iframeExpiresAt || 0) > clock.elapsedTime) {
+      // Joiner dodged on their screen; respect it instead of hitting a stale
+      // position. Show a whiff so the host player gets feedback.
+      spawnImpact(target.position.clone(), 0xbfe9ff, 6);
+      return;
+    }
     sendOnlineMessage({
       kind: "playerDamage",
       targetId: target.id,
@@ -16711,16 +17160,16 @@ import {
       leg.position.set(x, 0.66, 0);
       const thigh = makeCylinder(0.14, 0.16, 0.42, 10, materials.leather.clone(), 0, -0.21, 0);
       const loin = makeBox(0.26, 0.28, 0.16, materials.fur.clone(), 0, -0.06, -0.12);
-      const shin = makeCylinder(0.1, 0.12, 0.4, 10, materials.darkLeather, 0, -0.58, 0.01);
-      const boot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, 0, -0.78, -0.04);
+      const shin = makeCylinder(0.1, 0.12, 0.28, 10, materials.darkLeather, 0, -0.44, 0.01);
+      const boot = makeBox(0.28, 0.18, 0.34, materials.darkLeather, 0, -0.57, -0.04);
       leg.add(thigh, loin, shin, boot);
       return leg;
     }
     const leftLeg = makeLeg(-0.23);
     const rightLeg = makeLeg(0.23);
 
-    // Shoulder-pivot arms with upper-arm, forearm, and a fist. Not animated by the
-    // melee state machine, but structured to match the quality bar.
+    // Keep shoulders fixed while the annotated links follow the existing axe
+    // handle after attack animation; weapon pivots and hit paths stay intact.
     function makeArm(x) {
       const arm = new THREE.Group();
       arm.position.set(x, 1.6, 0);
@@ -16728,6 +17177,7 @@ import {
       const forearm = makeCylinder(0.11, 0.1, 0.38, 10, materials.skin.clone(), 0, -0.56, 0);
       const fist = makeSphere(0.13, materials.skin.clone(), 0, -0.78, 0);
       arm.add(upper, forearm, fist);
+      arm.userData.gripRig = { upper, elbow: null, forearm, cuff: null, hand: fist, upperLength: 0.4, lowerLength: 0.38 };
       return arm;
     }
     const leftArm = makeArm(-0.58);
@@ -16739,10 +17189,14 @@ import {
     const rightShoulder = makeCylinder(0.17, 0.24, 0.18, 12, materials.iron, 0.56, 1.68, 0);
     leftShoulder.rotation.z = Math.PI / 2;
     rightShoulder.rotation.z = Math.PI / 2;
-    const leftBracer = makeCylinder(0.12, 0.12, 0.18, 10, materials.darkLeather, -0.58, 1.02, -0.01);
-    const rightBracer = makeCylinder(0.12, 0.12, 0.18, 10, materials.darkLeather, 0.58, 1.02, -0.01);
+    const leftBracer = makeCylinder(0.12, 0.12, 0.18, 10, materials.darkLeather, 0, -0.58, -0.01);
+    const rightBracer = makeCylinder(0.12, 0.12, 0.18, 10, materials.darkLeather, 0, -0.58, -0.01);
     leftBracer.rotation.z = Math.PI / 2;
     rightBracer.rotation.z = Math.PI / 2;
+    leftArm.add(leftBracer);
+    rightArm.add(rightBracer);
+    leftArm.userData.gripRig.cuff = leftBracer;
+    rightArm.userData.gripRig.cuff = rightBracer;
 
     const weaponPivot = new THREE.Group();
     weaponPivot.position.set(0.63, 1.36, -0.04);
@@ -16751,7 +17205,6 @@ import {
     const axe = makeBox(0.56, 0.4, 0.08, materials.iron, 0, 0.18, -1.15);
     axe.rotation.z = 0.26;
     const axeSpike = makeCylinder(0.025, 0.08, 0.34, 8, materials.iron, 0, 0.42, -1.12);
-    axeSpike.rotation.z = Math.PI;
     const gripWrapTop = makeCylinder(0.052, 0.052, 0.12, 8, materials.darkLeather, 0, 0, -0.2);
     const gripWrapBottom = makeCylinder(0.052, 0.052, 0.12, 8, materials.darkLeather, 0, 0, -0.78);
     gripWrapTop.rotation.x = Math.PI / 2;
@@ -16779,10 +17232,10 @@ import {
       head, cheekL, cheekR, beard1, beard2, beard3, hair, leftEye, rightEye, nose, warPaint, warPaint2,
       helmetBand, hornLeft, hornRight,
       leftLeg, rightLeg, leftArm, rightArm, belt, buckle, leftShoulder, rightShoulder,
-      leftBracer, rightBracer, weaponPivot, healthRoot, telegraph
+      weaponPivot, healthRoot, telegraph
     );
 
-    return { group, weaponPivot, healthRoot, hpFill, telegraph, leftLeg, rightLeg, chest };
+    return { group, weaponPivot, healthRoot, hpFill, telegraph, leftLeg, rightLeg, leftArm, rightArm, chest };
   }
 
   function makeWing(side) {
@@ -16827,30 +17280,34 @@ import {
     // Three tapered, curving neck segments so the head reaches forward to the
     // mouth point (~z -2.0) that launchFireball reads via group.localToWorld.
     const neck1 = makeCylinder(0.3, 0.36, 0.52, 14, materials.dragonScale, 0, 0.16, -0.76);
-    neck1.rotation.x = 0.5;
+    neck1.rotation.x = -0.5;
     const neck2 = makeCylinder(0.25, 0.3, 0.48, 14, materials.dragonScale, 0, 0.42, -1.12);
-    neck2.rotation.x = 0.74;
+    neck2.rotation.x = -0.74;
     const neck3 = makeCylinder(0.21, 0.26, 0.44, 14, materials.dragonScale, 0, 0.62, -1.42);
-    neck3.rotation.x = 0.96;
+    neck3.rotation.x = -0.96;
     const head = makeSphere(0.42, materials.dragonScale, 0, 0.68, -1.54);
     head.scale.set(1.18, 0.88, 1.12);
     const snout = makeBox(0.54, 0.26, 0.54, materials.dragonScale, 0, 0.58, -1.96);
     const upperJaw = makeBox(0.5, 0.14, 0.58, materials.dragonScale, 0, 0.64, -2.12);
-    const lowerJaw = makeBox(0.48, 0.11, 0.48, materials.dragonBelly, 0, 0.45, -2.1);
+    // Rotate from the rear jaw hinge, keeping the throat attached while the
+    // front teeth drop away from the upper jaw during the fire windup.
+    const lowerJaw = new THREE.Group();
+    lowerJaw.position.set(0, 0.45, -1.86);
+    lowerJaw.add(makeBox(0.48, 0.11, 0.48, materials.dragonBelly, 0, 0, -0.24));
     // Lower-jaw teeth ride as children so they swing open with the jaw hinge.
     for (let i = -1; i <= 1; i += 1) {
-      const tooth = makeCone(0.028, 0.13, 5, materials.bone, i * 0.15, 0.07, -0.18);
+      const tooth = makeCone(0.028, 0.13, 5, materials.bone, i * 0.15, 0.07, -0.42);
       lowerJaw.add(tooth);
     }
-    const leftEye = makeSphere(0.06, materials.dragonEye, -0.2, 0.75, -1.9);
-    const rightEye = makeSphere(0.06, materials.dragonEye, 0.2, 0.75, -1.9);
+    const leftEye = makeSphere(0.06, materials.dragonEye, -0.23, 0.75, -1.98);
+    const rightEye = makeSphere(0.06, materials.dragonEye, 0.23, 0.75, -1.98);
     // Brow ridges over the eyes and nostril dots on the snout for a meaner head.
-    const browLeft = makeBox(0.18, 0.06, 0.16, materials.dragonScale, -0.2, 0.84, -1.9);
+    const browLeft = makeBox(0.18, 0.06, 0.16, materials.dragonScale, -0.23, 0.84, -1.98);
     browLeft.rotation.set(0.1, 0, 0.22);
-    const browRight = makeBox(0.18, 0.06, 0.16, materials.dragonScale, 0.2, 0.84, -1.9);
+    const browRight = makeBox(0.18, 0.06, 0.16, materials.dragonScale, 0.23, 0.84, -1.98);
     browRight.rotation.set(0.1, 0, -0.22);
-    const nostrilLeft = makeSphere(0.035, materials.dragonScale, -0.11, 0.62, -2.2);
-    const nostrilRight = makeSphere(0.035, materials.dragonScale, 0.11, 0.62, -2.2);
+    const nostrilLeft = makeSphere(0.027, materials.charcoal, -0.11, 0.62, -2.425);
+    const nostrilRight = makeSphere(0.027, materials.charcoal, 0.11, 0.62, -2.425);
     const hornLeft = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, -0.21, 0.98, -1.46);
     const hornRight = makeCylinder(0.022, 0.085, 0.56, 8, materials.bone || materials.gold, 0.21, 0.98, -1.46);
     hornLeft.rotation.set(-0.82, -0.22, 0.18);
@@ -16873,7 +17330,7 @@ import {
       tailSegmentsGroup.add(seg, spike);
     }
     const tailTip = makeCone(0.12, 0.5, 10, materials.dragonScale, 0, -0.28, 2.78);
-    tailTip.rotation.x = -(Math.PI / 2 + 0.6);
+    tailTip.rotation.x = Math.PI / 2 + 0.6;
 
     const leftWing = new THREE.Group();
     leftWing.position.set(-0.48, 0.3, -0.2);
@@ -16948,17 +17405,38 @@ import {
     rightFang.rotation.x = Math.PI;
 
     const legs = [];
+    const legMaterial = materials.spiderCarapace.clone();
+    const jointGeometry = cachedPrimitiveGeometry("spiderJoint", [0.05, 6, 4], () => new THREE.SphereGeometry(0.05, 6, 4));
+    const footGeometry = cachedPrimitiveGeometry("spiderFoot", [0.025, 6, 4], () => new THREE.SphereGeometry(0.025, 6, 4));
     for (let side = -1; side <= 1; side += 2) {
       for (let i = 0; i < 4; i += 1) {
         const z = -0.46 + i * 0.25;
-        const leg = makeCylinder(0.032, 0.045, 0.78, 7, materials.spiderCarapace.clone(), side * 0.42, 0.42, z);
-        leg.rotation.z = side * (Math.PI / 2.35);
-        leg.rotation.x = (i - 1.5) * 0.16;
-        const shin = makeCylinder(0.026, 0.036, 0.56, 7, materials.spiderCarapace.clone(), side * 0.78, 0.24, z + (i - 1.5) * 0.1);
-        shin.rotation.z = side * (Math.PI / 2.7);
-        shin.rotation.x = (i - 1.5) * 0.22;
-        legs.push(leg, shin);
-        group.add(leg, shin);
+        const leg = new THREE.Group();
+        leg.position.set(side * 0.24, 0.52, z);
+        const elbow = new THREE.Vector3(side * 0.49, 0.17, (i - 1.5) * 0.14);
+        const toe = new THREE.Vector3(side * 0.82, -0.495, (i - 1.5) * 0.27);
+        const up = new THREE.Vector3(0, 1, 0);
+        const upperLength = elbow.length();
+        const lowerDirection = elbow.clone().sub(toe);
+        const lowerLength = lowerDirection.length();
+        const upper = makeCylinder(0.032, 0.045, upperLength, 7, legMaterial);
+        upper.position.copy(elbow).multiplyScalar(0.5);
+        upper.quaternion.setFromUnitVectors(up, elbow.clone().normalize());
+        const knee = new THREE.Group();
+        knee.position.copy(elbow);
+        const shin = makeCylinder(0.028, 0.022, lowerLength, 7, legMaterial);
+        shin.position.copy(toe).sub(elbow).multiplyScalar(0.5);
+        shin.quaternion.setFromUnitVectors(up, lowerDirection.normalize());
+        const kneeCap = addShadow(new THREE.Mesh(jointGeometry, legMaterial));
+        const foot = addShadow(new THREE.Mesh(footGeometry, legMaterial));
+        foot.position.copy(toe).sub(elbow);
+        knee.add(shin, kneeCap, foot);
+        leg.add(upper, knee);
+        leg.userData.spiderRig = { upper, knee, shin, foot, elbow, toe, up, upperLength, lowerLength, side, index: i };
+        // Retain the paired 16-entry limb contract; each knee now belongs to
+        // its hip instead of rotating a detached lower leg in world space.
+        legs.push(leg, knee);
+        group.add(leg);
       }
     }
 
@@ -17067,7 +17545,16 @@ import {
 
     const neck = makeCylinder(0.1, 0.12, 0.16, 8, materials.skin, 0, 1.86, 0);
     const head = makeSphere(0.2, materials.skin, 0, 2.0, -0.02);
-    const hood = makeSphere(0.27, materials.banditHood, 0, 2.04, 0);
+    // Open the front quarter of the shell so the hood frames the eyes instead
+    // of enclosing the entire face inside an opaque sphere.
+    const hoodMaterial = materials.banditHood.clone();
+    hoodMaterial.side = THREE.DoubleSide;
+    const hood = addShadow(new THREE.Mesh(
+      cachedPrimitiveGeometry("bandit-open-hood", [0.27, 12, 8], () =>
+        new THREE.SphereGeometry(0.27, 12, 8, -Math.PI / 4, Math.PI * 1.5, 0, Math.PI * 0.88)),
+      hoodMaterial
+    ));
+    hood.position.set(0, 2.04, 0);
     hood.scale.set(1.05, 1.1, 1.12);
     const hoodPeak = makeCone(0.16, 0.34, 7, materials.banditHood.clone(), 0, 2.12, 0.18);
     hoodPeak.rotation.x = 0.95;
@@ -17090,7 +17577,7 @@ import {
       leg.position.set(x, 0.84, 0);
       const thigh = makeCylinder(0.1, 0.12, 0.46, 8, materials.banditTunic.clone(), 0, -0.22, 0);
       const shin = makeCylinder(0.07, 0.09, 0.42, 8, materials.darkLeather, 0, -0.6, 0.015);
-      const boot = makeBox(0.18, 0.14, 0.3, materials.darkLeather, 0, -0.84, -0.05);
+      const boot = makeBox(0.18, 0.14, 0.3, materials.darkLeather, 0, -0.77, -0.05);
       leg.add(thigh, shin, boot);
       return leg;
     }
@@ -17101,7 +17588,8 @@ import {
     bowArmL.position.set(-0.4, 1.62, 0);
     bowArmL.add(
       makeCylinder(0.07, 0.08, 0.4, 8, materials.banditTunic.clone(), 0, -0.18, 0),
-      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0)
+      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0),
+      makeSphere(0.07, materials.skin.clone(), 0, -0.66, 0)
     );
     bowArmL.rotation.x = -0.9;
 
@@ -17109,7 +17597,8 @@ import {
     bowArmR.position.set(0.4, 1.62, 0);
     bowArmR.add(
       makeCylinder(0.07, 0.08, 0.4, 8, materials.banditTunic.clone(), 0, -0.18, 0),
-      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0)
+      makeCylinder(0.055, 0.065, 0.4, 8, materials.skin.clone(), 0, -0.5, 0),
+      makeSphere(0.07, materials.skin.clone(), 0, -0.7, 0)
     );
     bowArmR.rotation.x = -0.55;
 
@@ -17145,23 +17634,33 @@ import {
 
     const segments = [];
     const segData = [
-      [1.5, 0.1, 0.13],
-      [1.12, 0.12, 0.16],
-      [0.74, 0.13, 0.19],
-      [0.36, 0.14, 0.2],
-      [-0.02, 0.14, 0.2],
-      [-0.32, 0.13, 0.18]
+      [1.5, 0.13],
+      [1.12, 0.16],
+      [0.74, 0.19],
+      [0.36, 0.2],
+      [-0.02, 0.2],
+      [-0.32, 0.18]
     ];
-    for (const [z, y, r] of segData) {
-      const seg = makeSphere(r, materials.viperScale.clone(), 0, y, z);
-      seg.scale.set(1.0, 0.78, 1.12);
+    for (const [z, r] of segData) {
+      const seg = makeSphere(r, materials.viperScale.clone(), 0, r * 0.78, z);
+      // Consecutive beads need overlap even at the widest slither offset.
+      // The tapered rear bead needs extra length to join its larger neighbor.
+      seg.scale.set(1.0, 0.78, segments.length === 0 ? 1.8 : 1.35);
       const belly = makeBox(r * 1.1, 0.04, r * 1.6, materials.viperBelly, 0, -r * 0.7, 0);
       seg.add(belly);
       segments.push(seg);
       group.add(seg);
     }
-    const tailTip = makeCone(0.08, 0.5, 7, materials.viperScale.clone(), 0, 0.1, 1.9);
+    // Follow the rear body bead without inheriting its squash/stretch. This
+    // keeps the original tail size and rest position while it moves sideways.
+    const rear = segments[0];
+    const tailRoot = new THREE.Group();
+    tailRoot.position.set(0, (0.1 - rear.position.y) / rear.scale.y, (1.9 - rear.position.z) / rear.scale.z);
+    tailRoot.scale.set(1 / rear.scale.x, 1 / rear.scale.y, 1 / rear.scale.z);
+    const tailTip = makeCone(0.08, 0.5, 7, materials.viperScale.clone(), 0, 0, 0);
     tailTip.rotation.x = Math.PI / 2;
+    tailRoot.add(tailTip);
+    rear.add(tailRoot);
 
     const neckPivot = new THREE.Group();
     neckPivot.position.set(0, 0.16, -0.5);
@@ -17174,8 +17673,8 @@ import {
     const head = makeSphere(0.18, materials.viperScale.clone(), 0, 0.62, -0.3);
     head.scale.set(1.1, 0.8, 1.3);
     const snout = makeBox(0.16, 0.1, 0.2, materials.viperScale.clone(), 0, 0.58, -0.46);
-    const leftEye = makeSphere(0.035, materials.emberEye, -0.09, 0.66, -0.4);
-    const rightEye = makeSphere(0.035, materials.emberEye, 0.09, 0.66, -0.4);
+    const leftEye = makeSphere(0.035, materials.emberEye, -0.13, 0.68, -0.455);
+    const rightEye = makeSphere(0.035, materials.emberEye, 0.13, 0.68, -0.455);
     const leftFang = makeCone(0.02, 0.1, 5, materials.bone, -0.05, 0.5, -0.5);
     const rightFang = makeCone(0.02, 0.1, 5, materials.bone, 0.05, 0.5, -0.5);
     leftFang.rotation.x = Math.PI;
@@ -17194,7 +17693,7 @@ import {
     telegraph.position.y = 0.02;
     telegraph.visible = false;
 
-    group.add(tailTip, neckPivot, bars.healthRoot, telegraph);
+    group.add(neckPivot, bars.healthRoot, telegraph);
     return { group, segments, neckPivot, mouthGlow, tongue, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
   }
 
@@ -17206,6 +17705,7 @@ import {
 
     const pelvis = makeBox(0.34, 0.18, 0.22, materials.bone, 0, 0.92, 0);
     const spine = makeCylinder(0.05, 0.05, 0.52, 6, materials.bone, 0, 1.28, -0.02);
+    const neck = makeCylinder(0.055, 0.06, 0.25, 7, materials.bone, 0, 1.655, -0.02);
     const ribCage = makeCylinder(0.26, 0.2, 0.5, 10, materials.boneArmor, 0, 1.34, 0);
     ribCage.scale.set(1.0, 1, 0.72);
     const ribs = new THREE.Group();
@@ -17238,9 +17738,19 @@ import {
 
     const leftArm = makeBox(0.1, 0.62, 0.1, materials.bone.clone(), -0.44, 1.32, 0);
 
+    // The sword keeps its attack pivot; a fixed shoulder owns the bones that
+    // reach its leather grip instead of carrying a loose bone with the blade.
+    const rightArm = new THREE.Group();
+    rightArm.position.set(0.4, 1.66, 0);
+    const armBone = makeCylinder(0.05, 0.06, 0.5, 7, materials.bone.clone(), 0, -0.25, 0);
+    const forearmBone = makeCylinder(0.045, 0.05, 0.38, 7, materials.bone.clone(), 0, -0.69, 0);
+    const knuckles = makeBox(0.12, 0.11, 0.12, materials.bone.clone(), 0, -0.88, 0);
+    rightArm.add(armBone, forearmBone, knuckles);
+    rightArm.userData.gripRig = { upper: armBone, elbow: null, forearm: forearmBone, cuff: null,
+      hand: knuckles, upperLength: 0.5, lowerLength: 0.38 };
+
     const weaponPivot = new THREE.Group();
     weaponPivot.position.set(0.46, 1.5, -0.02);
-    const armBone = makeCylinder(0.05, 0.06, 0.5, 7, materials.bone.clone(), 0, -0.18, 0);
     const grip = makeCylinder(0.04, 0.04, 0.5, 7, materials.darkLeather, 0, 0, -0.4);
     grip.rotation.x = Math.PI / 2;
     const guard = makeBox(0.34, 0.06, 0.1, materials.iron.clone(), 0, 0.02, -0.62);
@@ -17248,7 +17758,7 @@ import {
     const bladeTip = makeCone(0.085, 0.26, 4, materials.steel.clone(), 0, 0.04, -1.78);
     bladeTip.rotation.set(-Math.PI / 2, Math.PI / 4, 0);
     const notch = makeBox(0.06, 0.06, 0.18, materials.iron.clone(), 0.05, 0.04, -1.4);
-    weaponPivot.add(armBone, grip, guard, blade, bladeTip, notch);
+    weaponPivot.add(grip, guard, blade, bladeTip, notch);
     weaponPivot.rotation.set(-0.12, -0.3, -0.7);
 
     function makeLeg(x) {
@@ -17256,7 +17766,7 @@ import {
       leg.position.set(x, 0.9, 0);
       const femur = makeCylinder(0.06, 0.07, 0.46, 7, materials.bone.clone(), 0, -0.24, 0);
       const tibia = makeCylinder(0.045, 0.055, 0.44, 7, materials.bone.clone(), 0, -0.62, 0.01);
-      const foot = makeBox(0.16, 0.1, 0.3, materials.darkStone.clone(), 0, -0.86, -0.05);
+      const foot = makeBox(0.16, 0.1, 0.3, materials.darkStone.clone(), 0, -0.85, -0.05);
       leg.add(femur, tibia, foot);
       return leg;
     }
@@ -17270,10 +17780,10 @@ import {
     telegraph.visible = false;
 
     group.add(
-      pelvis, spine, ribCage, ribs, breastplate, plateRune, skull, jaw, helm, nasal, socketL, socketR, leftEye, rightEye,
-      leftShoulder, rightShoulder, leftArm, weaponPivot, leftLeg, rightLeg, bars.healthRoot, telegraph
+      pelvis, spine, neck, ribCage, ribs, breastplate, plateRune, skull, jaw, helm, nasal, socketL, socketR, leftEye, rightEye,
+      leftShoulder, rightShoulder, leftArm, rightArm, weaponPivot, leftLeg, rightLeg, bars.healthRoot, telegraph
     );
-    return { group, weaponPivot, leftLeg, rightLeg, chest: ribCage, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
+    return { group, weaponPivot, leftLeg, rightLeg, rightArm, chest: ribCage, healthRoot: bars.healthRoot, hpFill: bars.hpFill, telegraph };
   }
 
   // Swamp Bog Lurker: a hunched swamp troll whose silhouette is built around a
@@ -17345,10 +17855,11 @@ import {
     neck.rotation.x = 1.12;
     const head = makeSphere(0.3, materials.bogHide.clone(), 0, 1.02, -0.86);
     head.scale.set(1.2, 0.85, 1.15);
-    const brow = makeBox(0.6, 0.16, 0.34, materials.bogMuck.clone(), 0, 1.18, -0.9);
+    const brow = makeBox(0.6, 0.16, 0.34, materials.bogMuck.clone(), 0, 1.18, -1.06);
     brow.rotation.x = -0.18;
-    const leftEye = makeSphere(0.06, materials.emberEye, -0.16, 1.06, -1.04);
-    const rightEye = makeSphere(0.06, materials.emberEye, 0.16, 1.06, -1.04);
+    // Eyes sit on the scaled head surface, beneath the projecting brow.
+    const leftEye = makeSphere(0.06, materials.emberEye, -0.16, 1.06, -1.19);
+    const rightEye = makeSphere(0.06, materials.emberEye, 0.16, 1.06, -1.19);
     const jaw = makeBox(0.5, 0.15, 0.42, materials.bogMuck.clone(), 0, 0.84, -0.92);
     const tuskL = makeCone(0.05, 0.24, 6, materials.bone, -0.18, 0.96, -1.08);
     tuskL.rotation.set(-0.35, 0, 0.18);
@@ -17560,8 +18071,9 @@ import {
     chest.scale.set(1.04, 0.68, 1.06);
     const haunch = makeSphere(0.42, materials.rootwood, 0, 0.64, 0.82);
     haunch.scale.set(0.98, 0.62, 1.04);
-    const mossBack = makeBox(0.86, 0.08, 1.56, materials.briarLeaf.clone(), 0, 1.08, 0.08);
-    mossBack.rotation.x = -0.04;
+    // Rounded moss grows into the back instead of reading as a carried plank.
+    const mossBack = makeSphere(0.5, materials.briarLeaf, 0, 0.9, 0.08);
+    mossBack.scale.set(0.86, 0.44, 1.56);
     const tail = makeCylinder(0.035, 0.11, 0.86, 7, materials.rootwood, 0, 0.68, 1.34);
     tail.rotation.x = Math.PI / 2 - 0.26;
 
@@ -17579,8 +18091,8 @@ import {
     rightFang.rotation.x = Math.PI;
     const leftHorn = makeCone(0.065, 0.36, 7, materials.briarThorn, -0.21, 0.24, -0.12);
     const rightHorn = makeCone(0.065, 0.36, 7, materials.briarThorn, 0.21, 0.24, -0.12);
-    leftHorn.rotation.set(-0.72, -0.24, -0.32);
-    rightHorn.rotation.set(-0.72, 0.24, 0.32);
+    leftHorn.rotation.set(-0.72, -0.24, 0.32);
+    rightHorn.rotation.set(-0.72, 0.24, -0.32);
     headPivot.add(skull, snout, lowerJaw, leftEye, rightEye, leftFang, rightFang, leftHorn, rightHorn);
 
     const legs = [];
@@ -17605,8 +18117,21 @@ import {
     for (let i = 0; i < 7; i += 1) {
       const z = -0.72 + i * 0.28;
       const height = 0.22 + Math.sin(i * 0.8) * 0.04;
-      const spike = makeCone(0.06, height, 7, materials.briarThorn, 0, 1.22, z);
-      spike.rotation.x = z < -0.2 ? -0.18 : 0.16;
+      const tilt = z < -0.2 ? -0.18 : 0.16;
+      const baseZ = z - Math.sin(tilt) * height / 2;
+      // Root each thorn in the rounded mantle or the shoulder/haunch beneath
+      // it. A small overlap covers the shared low-poly spheres' flat facets.
+      let surfaceY = 0;
+      for (const part of [body, chest, haunch, mossBack]) {
+        const radius = part.geometry.parameters.radius;
+        const normalizedZ = (baseZ - part.position.z) / (radius * part.scale.z);
+        if (Math.abs(normalizedZ) <= 1) {
+          surfaceY = Math.max(surfaceY, part.position.y + radius * part.scale.y * Math.sqrt(1 - normalizedZ * normalizedZ));
+        }
+      }
+      const spineY = Math.min(1.22, surfaceY - 0.014 + Math.cos(tilt) * height / 2);
+      const spike = makeCone(0.06, height, 7, materials.briarThorn, 0, spineY, z);
+      spike.rotation.x = tilt;
       spine.add(spike);
     }
 
@@ -17867,20 +18392,25 @@ import {
   }
 
   function resetGame() {
+    if (!isJoinedClient()) {
+      dayClock.reset();
+      daySyncedAt = -Infinity;
+    }
+    dayTickAt = performance.now();
     for (const enemy of game.enemies) {
       scene.remove(enemy.group);
     }
     for (const fireball of game.fireballs) {
-      scene.remove(fireball.group);
+      removeProjectile(fireball);
     }
     for (const projectile of game.playerProjectiles) {
-      scene.remove(projectile.group);
+      removeProjectile(projectile);
     }
     for (const potion of game.potions) {
       scene.remove(potion.group);
     }
     for (const particle of game.particles) {
-      scene.remove(particle.mesh);
+      recycleImpactParticle(particle);
     }
     game.enemies.length = 0;
     game.fireballs.length = 0;
@@ -17956,6 +18486,65 @@ import {
     game.bannerTime = duration;
   }
 
+  // True once every authored quest has been turned in (state "done"). "ready"
+  // (objectives met but unclaimed) does not count.
+  function allQuestsComplete() {
+    return game.quests.length > 0 && game.quests.every(quest => quest.state === "done");
+  }
+
+  // Informational, dismissible "you finished everything" screen. It dims the
+  // view but never pauses or ends the game — the player can close it and keep
+  // exploring. Shown once per save via the persisted allQuestsCelebrated flag.
+  function showCompletionScreen() {
+    if (!completionScreen) {
+      return;
+    }
+    const name = (player.name || "wanderer").trim() || "wanderer";
+    const total = game.quests.length;
+    if (completionTitle) {
+      completionTitle.textContent = "All Quests Complete";
+    }
+    if (completionFlavor) {
+      completionFlavor.textContent = `Every hearth mapped, every road quieted, every relic recovered. `
+        + `Ironhold's people owe their dawn to you, ${name}. The wilds remain open — wander on.`;
+    }
+    if (completionRows) {
+      completionRows.textContent = "";
+      const tally = document.createElement("div");
+      tally.textContent = `${total} of ${total} quests fulfilled`;
+      const hint = document.createElement("div");
+      hint.className = "result-row-muted";
+      hint.textContent = "Your world stays open to explore.";
+      completionRows.append(tally, hint);
+    }
+    completionScreen.hidden = false;
+    void completionScreen.offsetWidth;
+    completionScreen.classList.add("visible");
+    playSfx("arenaMilestone", 1);
+  }
+
+  function dismissCompletionScreen() {
+    if (!completionScreen || completionScreen.hidden) {
+      return;
+    }
+    completionScreen.classList.remove("visible");
+    completionScreen.hidden = true;
+  }
+
+  // Fire the celebration the first time the full quest set is finished. Hooked
+  // from the quest claim path (the only place a quest becomes "done").
+  function maybeCelebrateAllQuestsComplete() {
+    if (game.mode !== "exploration" || game.exploration.allQuestsCelebrated) {
+      return;
+    }
+    if (!allQuestsComplete()) {
+      return;
+    }
+    game.exploration.allQuestsCelebrated = true;
+    saveProgress();
+    showCompletionScreen();
+  }
+
   // Activity outcome overlay: a non-interactive centered panel that holds the
   // arena/dungeon result (victory/defeat/withdrawal) on screen long enough to
   // read. pointer-events stays none, so it can never trap input or block
@@ -18016,21 +18605,32 @@ import {
     }
   }
 
+  const IMPACT_PARTICLE_LIMIT = 256;
+  const impactParticleGeometry = new THREE.SphereGeometry(1, 8, 6);
+  const impactParticlePool = [];
+
+  function recycleImpactParticle(particle) {
+    scene.remove(particle.mesh);
+    impactParticlePool.push(particle);
+  }
+
   function spawnImpact(position, color, count) {
-    for (let i = 0; i < count; i += 1) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.045 + Math.random() * 0.045, 8, 6),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 })
-      );
+    const available = Math.min(count, IMPACT_PARTICLE_LIMIT - game.particles.length);
+    for (let i = 0; i < available; i += 1) {
+      const particle = impactParticlePool.pop() || {
+        mesh: new THREE.Mesh(impactParticleGeometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 })),
+        velocity: new THREE.Vector3(), life: 0, maxLife: 0.8
+      };
+      const mesh = particle.mesh;
+      mesh.material.color.setHex(color);
+      mesh.material.opacity = 1;
+      mesh.scale.setScalar(0.045 + Math.random() * 0.045);
       mesh.position.copy(position);
       mesh.position.y += 0.8 + Math.random() * 0.8;
       scene.add(mesh);
-      game.particles.push({
-        mesh,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 3.8, 1.3 + Math.random() * 2.2, (Math.random() - 0.5) * 3.8),
-        life: 0.45 + Math.random() * 0.35,
-        maxLife: 0.8
-      });
+      particle.velocity.set((Math.random() - 0.5) * 3.8, 1.3 + Math.random() * 2.2, (Math.random() - 0.5) * 3.8);
+      particle.life = 0.45 + Math.random() * 0.35;
+      game.particles.push(particle);
     }
   }
 
@@ -18350,8 +18950,19 @@ import {
   }
 
   function updateEnemyHealthBillboards() {
+    const activityId = localPlayerInSharedActivity() ? activeCombatActivity()?.activityId : "";
     for (const enemy of game.enemies) {
-      if (!enemy.dead) {
+      const distanceSq = horizontalDistanceSq(enemy.position, player.position);
+      // This controls only the local view. The host still simulates enemies
+      // near other players and replicates their complete combat state.
+      const sameWorld = activityId ? enemy.activityId === activityId : !enemy.activityId;
+      enemy.group.visible = !enemy.dead && sameWorld
+        && distanceSq < EXPLORATION_NPC_VISIBLE_DISTANCE_SQ;
+      if (enemy.healthRoot) {
+        enemy.healthRoot.visible = enemy.group.visible
+          && distanceSq < EXPLORATION_ENEMY_DETAIL_DISTANCE_SQ;
+      }
+      if (!enemy.dead && enemy.group.visible && enemy.healthRoot?.visible) {
         updateEnemyHealthBillboard(enemy);
       }
     }
@@ -18441,6 +19052,7 @@ import {
     player.partingPoseTimer = Math.max(0, (player.partingPoseTimer || 0) - dt);
     player.hurtTimer = Math.max(0, player.hurtTimer - dt);
     player.rollTimer = Math.max(0, player.rollTimer - dt);
+    player.invulnTimer = Math.max(0, (player.invulnTimer || 0) - dt);
     if (player.character === "wizard" || player.character === "ranger" || player.character === "sentinel") {
       player.mana = Math.min(player.maxMana, player.mana + dt * player.manaRegen);
       player.potionCooldown = Math.max(0, player.potionCooldown - dt);
@@ -18663,6 +19275,7 @@ import {
     } else {
       animatePlayerWalk(dt);
     }
+    updateCharacterGrips(player);
     const hurt = player.hurtTimer > 0 ? 1 : 0;
     player.body.material.emissive = player.body.material.emissive || new THREE.Color(0x000000);
     player.body.material.emissive.setRGB(0.4 * hurt, 0.02 * hurt, 0.02 * hurt);
@@ -18771,39 +19384,46 @@ import {
     }
   }
 
-  function updateRangerDrawAnimation(t, swing) {
-    if (player.attackKind === "heartseeker") {
+  function updateRangerShotPose(actor, t, swing, kind) {
+    const pivot = actor.weaponPivot || actor.bowPivot;
+    if (kind === "heartseeker") {
       // Heartseeker: deliberate 0.7s draw — ease to a full anchor, hold almost
       // perfectly still at aim through the hit frame, then a clean follow-through.
       const draw = smoothstep(0, 0.52, t);
       const anchor = smoothstep(0.4, 0.56, t);
       const pose = draw * (1 - smoothstep(0.62, 0.95, t));
-      if (player.bowPivot) {
-        player.bowPivot.rotation.y = -0.3 - pose * 1.06;
-        player.bowPivot.rotation.z = -0.06 - pose * 0.18;
+      if (pivot) {
+        pivot.rotation.y = -0.3 - pose * 1.06;
+        pivot.rotation.z = -0.06 - pose * 0.18;
       }
-      if (player.leftArm) {
-        player.leftArm.rotation.x = -pose * 1.34;
-        player.leftArm.rotation.z = pose * 0.16;
+      if (actor.leftArm) {
+        actor.leftArm.rotation.x = -pose * 1.34;
+        actor.leftArm.rotation.z = pose * 0.16;
       }
-      if (player.rightArm) {
-        player.rightArm.rotation.x = -pose * (1.12 + anchor * 0.14);
-        player.rightArm.rotation.z = -pose * 0.52;
+      if (actor.rightArm) {
+        actor.rightArm.rotation.x = -pose * (1.12 + anchor * 0.14);
+        actor.rightArm.rotation.z = -pose * 0.52;
       }
+      updateRangerBowPose(actor, pose);
       return;
     }
-    if (player.bowPivot) {
-      player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -1.25, swing);
-      player.bowPivot.rotation.z = -0.06 - swing * 0.1;
+    if (pivot) {
+      pivot.rotation.y = lerp(pivot.rotation.y, -1.25, swing);
+      pivot.rotation.z = -0.06 - swing * 0.1;
     }
-    if (player.leftArm) {
-      player.leftArm.rotation.x = -swing * 1.25;
-      player.leftArm.rotation.z = swing * 0.2;
+    if (actor.leftArm) {
+      actor.leftArm.rotation.x = -swing * 1.25;
+      actor.leftArm.rotation.z = swing * 0.2;
     }
-    if (player.rightArm) {
-      player.rightArm.rotation.x = -swing * 1.1;
-      player.rightArm.rotation.z = -swing * 0.45;
+    if (actor.rightArm) {
+      actor.rightArm.rotation.x = -swing * 1.1;
+      actor.rightArm.rotation.z = -swing * 0.45;
     }
+    updateRangerBowPose(actor, swing);
+  }
+
+  function updateRangerDrawAnimation(t, swing) {
+    updateRangerShotPose(player, t, swing, player.attackKind);
   }
 
   function updatePartingShotPose() {
@@ -18811,18 +19431,24 @@ import {
     // the body springs backward (rollTimer drives the spring), easing out
     // over the 0.3s pose timer back to the rest pose.
     const snap = Math.pow(clamp(player.partingPoseTimer / 0.3, 0, 1), 0.6);
-    if (player.bowPivot) {
-      player.bowPivot.rotation.y = -0.3 - snap * 1.05;
-      player.bowPivot.rotation.z = -0.06 + snap * 0.72;
+    updateRangerPartingPose(player, snap);
+  }
+
+  function updateRangerPartingPose(actor, snap) {
+    const pivot = actor.weaponPivot || actor.bowPivot;
+    if (pivot) {
+      pivot.rotation.y = -0.3 - snap * 1.05;
+      pivot.rotation.z = -0.06 + snap * 0.72;
     }
-    if (player.leftArm) {
-      player.leftArm.rotation.x = -snap * 1.5;
-      player.leftArm.rotation.z = snap * 0.3;
+    if (actor.leftArm) {
+      actor.leftArm.rotation.x = -snap * 1.5;
+      actor.leftArm.rotation.z = snap * 0.3;
     }
-    if (player.rightArm) {
-      player.rightArm.rotation.x = snap * 0.85;
-      player.rightArm.rotation.z = -snap * 0.22;
+    if (actor.rightArm) {
+      actor.rightArm.rotation.x = snap * 0.85;
+      actor.rightArm.rotation.z = -snap * 0.22;
     }
+    updateRangerBowPose(actor, snap);
   }
 
   function resetRangerDrawPose(dt) {
@@ -18831,6 +19457,13 @@ import {
       player.bowPivot.rotation.y = lerp(player.bowPivot.rotation.y, -0.3, ease);
       player.bowPivot.rotation.z = lerp(player.bowPivot.rotation.z, -0.06, ease);
     }
+    for (let i = 0; i < 2; i++) {
+      const arm = i === 0 ? player.leftArm : player.rightArm;
+      if (!arm) continue;
+      arm.rotation.x = lerp(arm.rotation.x, 0, ease);
+      arm.rotation.z = lerp(arm.rotation.z, 0, ease);
+    }
+    updateRangerBowPose(player, 0, ease);
   }
 
   // Sentinel polearm choreography. The halberd rests upright (swordPivot
@@ -19114,6 +19747,7 @@ import {
     }
     player.mana -= cost;
     player.rollTimer = 0.38;
+    player.invulnTimer = DODGE_IFRAME_SECONDS;
     player.secondaryCooldown = 0.95;
     // Roll toward current input direction, falling back to facing.
     const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
@@ -19429,6 +20063,7 @@ import {
     // Spring backward, away from facing.
     player.velocity.addScaledVector(forward, -10);
     player.rollTimer = Math.max(player.rollTimer, 0.3);
+    player.invulnTimer = Math.max(player.invulnTimer || 0, DODGE_IFRAME_SECONDS);
     // Snap-shot pose, decayed in updatePlayer (parting bypasses player.attacking).
     player.partingPoseTimer = 0.3;
     playSfx("arrow", 1.05);
@@ -19507,8 +20142,8 @@ import {
     projectile.hitIds = new Set();
     // Icy tint to read differently from lightning.
     if (projectile.shell) {
-      projectile.shell.material = materials.wisp.clone();
-      projectile.core.material = materials.wispCore.clone();
+      projectile.shell.material.copy(materials.wisp);
+      projectile.core.material.copy(materials.wispCore);
     }
     game.playerProjectiles.push(tagActiveCombatActor(projectile));
   }
@@ -19738,6 +20373,8 @@ import {
       netId: options.netId || nextNetworkId("projectile"),
       type: "lightning",
       group,
+      ownedGeometries: [shell.geometry, core.geometry, ringA.geometry, ringB.geometry],
+      ownedMaterials: [shell.material, core.material, ringA.material, ringB.material],
       shell,
       core,
       ringA,
@@ -19761,6 +20398,7 @@ import {
     shaft.rotation.x = Math.PI / 2;
     // Apex toward -Z (direction of travel): cylinder +Y maps to -Z with Rx(-90deg).
     const head = makeCylinder(0.0, 0.045, 0.14, 6, materials.steel.clone(), 0, 0, -0.45);
+    const ownedMaterials = [head.material];
     head.rotation.x = -Math.PI / 2;
     const fletch = makeBox(0.012, 0.09, 0.14, materials.cloth, 0, 0, 0.34);
     group.add(shaft, head, fletch);
@@ -19779,6 +20417,7 @@ import {
       const core = makeCylinder(0.0, 0.032, 0.18, 8, coreMaterial, 0, 0, -0.59);
       core.rotation.x = -Math.PI / 2;
       const ember = makeSphere(0.035, coreMaterial.clone(), 0, 0, -0.22);
+      ownedMaterials.push(flameMaterial, coreMaterial, ember.material);
       group.add(flame, core, ember);
       flameParts.push(flame, core, ember);
     }
@@ -19791,6 +20430,8 @@ import {
       netId: options.netId || nextNetworkId("projectile"),
       type: "arrow",
       group,
+      ownedGeometries: [],
+      ownedMaterials,
       shell: null,
       core: null,
       ringA: null,
@@ -20107,7 +20748,7 @@ import {
             projectile.hitIds.add(enemy);
             continue;
           }
-          scene.remove(projectile.group);
+          removeProjectile(projectile);
           game.playerProjectiles.splice(i, 1);
           consumed = true;
           break;
@@ -20139,7 +20780,7 @@ import {
         if (projectile.impactSfx && projectile.flaming) {
           playPositionalSfx(projectile.impactSfx, projectile.group.position, 0.4, 30);
         }
-        scene.remove(projectile.group);
+        removeProjectile(projectile);
         game.playerProjectiles.splice(i, 1);
       }
     }
@@ -20537,11 +21178,22 @@ import {
   function updateSpiderAnimation(enemy, dt) {
     const speed = Math.min(1, enemy.velocity.length() / Math.max(0.001, enemy.speed));
     enemy.walkTime += dt * enemy.speed * (0.8 + speed * 1.4);
-    for (let i = 0; i < enemy.legs.length; i += 1) {
+    for (let i = 0; i < enemy.legs.length; i += 2) {
       const leg = enemy.legs[i];
-      const side = leg.position.x < 0 ? -1 : 1;
-      const phase = Math.sin(enemy.walkTime * 5.4 + i * 0.78) * 0.18 * (0.35 + speed);
-      leg.rotation.z = side * (Math.PI / (i % 2 ? 2.75 : 2.35)) + phase * side;
+      const rig = leg.userData.spiderRig;
+      const phase = enemy.walkTime * 5.4 + rig.index * Math.PI * 0.65 + (rig.side > 0 ? Math.PI : 0);
+      const stride = Math.sin(phase) * 0.11 * speed;
+      const lift = Math.max(0, Math.cos(phase)) * 0.1 * speed;
+      rig.knee.position.set(rig.elbow.x, rig.elbow.y + lift * 0.35, rig.elbow.z + stride * 0.45);
+      rig.foot.position.set(rig.toe.x, rig.toe.y + lift, rig.toe.z + stride).sub(rig.knee.position);
+      rig.upper.position.copy(rig.knee.position).multiplyScalar(0.5);
+      tmpVec.copy(rig.knee.position);
+      rig.upper.scale.y = tmpVec.length() / rig.upperLength;
+      rig.upper.quaternion.setFromUnitVectors(rig.up, tmpVec.normalize());
+      rig.shin.position.copy(rig.foot.position).multiplyScalar(0.5);
+      tmpVec.copy(rig.foot.position).multiplyScalar(-1);
+      rig.shin.scale.y = tmpVec.length() / rig.lowerLength;
+      rig.shin.quaternion.setFromUnitVectors(rig.up, tmpVec.normalize());
     }
     enemy.body.rotation.x = enemy.stunned > 0 ? -0.18 : Math.sin(enemy.walkTime * 2.8) * 0.035;
   }
@@ -21112,8 +21764,11 @@ import {
     }
   }
 
+  const enemySeparationGrid = new EnemySeparationGrid();
+
   function updateExplorationEnemies(dt) {
     updateExplorationNpcs(dt);
+    let separationReady = false;
     for (const enemy of game.enemies) {
       if (enemy.dead) {
         continue;
@@ -21123,9 +21778,11 @@ import {
       enemy.stunned = Math.max(0, enemy.stunned - dt);
       updateEnemyBurn(enemy, dt);
       if (enemy.dead) {
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
       if (maybeResetAbandonedEnemyCombat(enemy)) {
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
 
@@ -21142,22 +21799,27 @@ import {
       const playerDirection = toPlayer.multiplyScalar(1 / playerDistance);
       if (enemy.type === "dragon") {
         updateExplorationDragonEnemy(enemy, dt, playerDistance, playerDirection);
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
       if (enemy.type === "spider") {
         updateExplorationSpiderEnemy(enemy, dt, playerDistance, playerDirection);
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
       if (enemy.type === "wisp") {
         updateExplorationWispEnemy(enemy, dt, playerDistance, playerDirection);
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
       if (enemy.type === "banditArcher") {
         updateExplorationBanditEnemy(enemy, dt, playerDistance, playerDirection);
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
       if (enemy.type === "sandViper") {
         updateExplorationViperEnemy(enemy, dt, playerDistance, playerDirection);
+        if (separationReady) enemySeparationGrid.update(enemy);
         continue;
       }
 
@@ -21204,26 +21866,17 @@ import {
       }
 
       if (playerDistance < EXPLORATION_ENEMY_SEPARATION_DISTANCE || enemy.state !== "patrol") {
-        for (const other of game.enemies) {
-          if (other === enemy || other.dead) {
-            continue;
-          }
-          const dx = enemy.position.x - other.position.x;
-          const dz = enemy.position.z - other.position.z;
-          const d2 = dx * dx + dz * dz;
-          const minDistance = enemy.radius + other.radius + 0.2;
-          if (d2 > 0.0001 && d2 < minDistance * minDistance) {
-            const d = Math.sqrt(d2);
-            const push = (minDistance - d) * 0.45;
-            enemy.velocity.x += (dx / d) * push * 2.4;
-            enemy.velocity.z += (dz / d) * push * 2.4;
-          }
+        if (!separationReady) {
+          enemySeparationGrid.rebuild(game.enemies);
+          separationReady = true;
         }
+        enemySeparationGrid.apply(enemy, 0.2, 0.45, 2.4);
       }
 
       enemy.position.addScaledVector(enemy.velocity, dt);
       enemy.velocity.multiplyScalar(Math.pow(0.24, dt));
       constrainExplorationEnemy(enemy);
+      if (separationReady) enemySeparationGrid.update(enemy);
       enemy.group.position.set(enemy.position.x, explorationGroundWorldY(enemy.position.x, enemy.position.z), enemy.position.z);
       applyEnemyVisualYaw(enemy, dt);
       if (enemy.type === "briarBeast") {
@@ -21234,6 +21887,7 @@ import {
         enemy.rightLeg.rotation.x = -legSwing;
         enemy.chest.rotation.x = enemy.stunned > 0 ? -0.22 : 0;
       }
+      updateEnemyGrips(enemy);
       updateEnemyMovementAudio(enemy, dt);
     }
 
@@ -21370,6 +22024,7 @@ import {
     const activityCenterX = activity ? activity.center?.x || 0 : 0;
     const activityCenterZ = activity ? activity.center?.z || 0 : 0;
     const activityRadius = Math.max(8, activity ? activity.radius || arenaRadius : arenaRadius);
+    enemySeparationGrid.rebuild(game.enemies, activityId);
     for (const enemy of game.enemies) {
       if (enemy.dead || (activityId && enemy.activityId !== activityId)) {
         continue;
@@ -21413,20 +22068,8 @@ import {
         }
       }
 
-      for (const other of game.enemies) {
-        if (other === enemy || other.dead || (activityId && other.activityId !== activityId) || (enemy.entering && enemy.entryDelay > 0)) {
-          continue;
-        }
-        const dx = enemy.position.x - other.position.x;
-        const dz = enemy.position.z - other.position.z;
-        const d2 = dx * dx + dz * dz;
-        const minDistance = enemy.radius + other.radius + 0.18;
-        if (d2 > 0.0001 && d2 < minDistance * minDistance) {
-          const d = Math.sqrt(d2);
-          const push = (minDistance - d) * 0.5;
-          enemy.velocity.x += (dx / d) * push * 3.2;
-          enemy.velocity.z += (dz / d) * push * 3.2;
-        }
+      if (!(enemy.entering && enemy.entryDelay > 0)) {
+        enemySeparationGrid.apply(enemy, 0.18, 0.5, 3.2);
       }
 
       enemy.position.addScaledVector(enemy.velocity, dt);
@@ -21437,6 +22080,7 @@ import {
         enemy.position.x = activityCenterX + (enemy.position.x - activityCenterX) * scale;
         enemy.position.z = activityCenterZ + (enemy.position.z - activityCenterZ) * scale;
       }
+      enemySeparationGrid.update(enemy);
       if (enemy.type === "dragon") {
         const hover = enemy.hoverHeight + Math.sin(clock.elapsedTime * 3.4 + enemy.bobSeed) * 0.28;
         enemy.group.position.set(enemy.position.x, hover, enemy.position.z);
@@ -21445,6 +22089,7 @@ import {
       }
       applyEnemyVisualYaw(enemy, dt);
       updateActivityEnemyAnimation(enemy, dt);
+      updateEnemyGrips(enemy);
       updateEnemyMovementAudio(enemy, dt);
     }
 
@@ -21522,7 +22167,7 @@ import {
     enemy.body.rotation.z = lerp(enemy.body.rotation.z, clamp(-enemy.velocity.x * 0.035, -0.26, 0.26), 1 - Math.pow(0.0004, dt));
 
     const mouthOpen = enemy.state === "fire" ? Math.sin(attackT * Math.PI) : 0;
-    enemy.lowerJaw.rotation.x = lerp(enemy.lowerJaw.rotation.x, mouthOpen * 0.82, 1 - Math.pow(0.0001, dt));
+    enemy.lowerJaw.rotation.x = lerp(enemy.lowerJaw.rotation.x, -mouthOpen * 0.82, 1 - Math.pow(0.0001, dt));
     enemy.mouthGlow.visible = mouthOpen > 0.08;
     enemy.mouthGlow.scale.setScalar(0.8 + mouthOpen * 1.8);
     enemy.mouthGlow.material.opacity = 0.35 + mouthOpen * 0.65;
@@ -21647,7 +22292,7 @@ import {
     enemy.velocity.set(0, 0, 0);
     enemy.attackDuration = type === "heavy" ? 1.38 : 0.82;
     enemy.telegraph.visible = true;
-    enemy.telegraph.material = type === "heavy" ? materials.heavyDanger.clone() : materials.danger.clone();
+    enemy.telegraph.material.copy(type === "heavy" ? materials.heavyDanger : materials.danger);
     enemy.telegraph.scale.setScalar(type === "heavy" ? 1.45 : 1.05);
     playPositionalSfx(type === "heavy" ? "barbarianHeavy" : "barbarianAttack", enemy.position, 0.9, 36);
   }
@@ -21718,6 +22363,14 @@ import {
   }
 
   function applyPlayerDamage(damage, guardDamage, direction, extraPush) {
+    // Dodge i-frames: a well-timed roll fully evades. This is a time window
+    // (not a position test), so it stays fair under latency and is what the
+    // host honors for joiners who dodged on their own screen.
+    if ((player.invulnTimer || 0) > 0) {
+      spawnImpact(player.position, 0xbfe9ff, 8);
+      playSfx("roll", 0.7);
+      return;
+    }
     const playerForward = forwardFromYaw(player.yaw, new THREE.Vector3());
     const attackerInFront = playerForward.dot(direction.clone().multiplyScalar(-1)) > -0.08;
     let finalDamage = damage;
@@ -21885,7 +22538,7 @@ import {
         spawnImpact(fireball.group.position, impactColor, 18);
         playPositionalSfx(impactSfx, fireball.group.position, 1.0, 70);
         broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: impactColor, count: 18, sfx: impactSfx, sfxIntensity: 1.0, sfxDistance: 70 });
-        scene.remove(fireball.group);
+        removeProjectile(fireball);
         game.fireballs.splice(i, 1);
         continue;
       }
@@ -21896,7 +22549,7 @@ import {
         spawnImpact(fireball.group.position, impactColor, 10);
         playPositionalSfx(impactSfx, fireball.group.position, 0.7, 58);
         broadcastOnlineEffect({ type: "impact", x: fireball.group.position.x, y: fireball.group.position.y, z: fireball.group.position.z, color: impactColor, count: 10, sfx: impactSfx, sfxIntensity: 0.7, sfxDistance: 58 });
-        scene.remove(fireball.group);
+        removeProjectile(fireball);
         game.fireballs.splice(i, 1);
       }
     }
@@ -21990,7 +22643,7 @@ import {
       particle.mesh.position.addScaledVector(particle.velocity, dt);
       particle.mesh.material.opacity = clamp(particle.life / particle.maxLife, 0, 1);
       if (particle.life <= 0) {
-        scene.remove(particle.mesh);
+        recycleImpactParticle(particle);
         game.particles.splice(i, 1);
       }
     }
@@ -22048,10 +22701,60 @@ import {
   }
 
   function updateLights(dt, elapsed) {
+    const sun = game.atmosphereLights?.sun;
+    if (sun) {
+      const texel = 100 / sun.shadow.mapSize.x;
+      const x = Math.round(player.position.x / texel) * texel;
+      const z = Math.round(player.position.z / texel) * texel;
+      const y = player.group?.position.y ?? player.position.y;
+      sun.target.position.set(x, y, z);
+      sun.position.set(x - 44, y + 68, z - 32);
+      sun.target.updateMatrixWorld();
+    }
     for (const torch of game.torches) {
       const flicker = 0.85 + Math.sin(elapsed * 7.5 + torch.seed) * 0.11 + Math.sin(elapsed * 15.7 + torch.seed * 1.8) * 0.05;
       torch.light.intensity = 1.8 * flicker;
       torch.flame.scale.set(1 + (flicker - 1) * 0.6, 0.82 + flicker * 0.18, 1 + (flicker - 1) * 0.6);
+    }
+  }
+
+  function updateDayNightClock() {
+    const now = performance.now();
+    if (game.state === "playing") {
+      // Unlike combat's clamped dt, this keeps the sky's pace at low FPS.
+      // Joiners stop predicting shortly after snapshots stop (host pause).
+      const end = isJoinedClient() ? Math.min(now, daySyncedAt + DAY_CYCLE_PREDICTION_SECONDS * 1000) : now;
+      const start = isJoinedClient() ? Math.max(dayTickAt, daySyncedAt) : dayTickAt;
+      dayClock.advance(Math.max(0, Math.min(1, (end - start) / 1000)));
+    }
+    dayTickAt = now;
+  }
+
+  function renderDayNightAtmosphere() {
+    if (!dayNightSystem) return;
+    const outdoor = !game.dungeonGroup?.visible;
+    const groundY = outdoor ? explorationGroundWorldY(player.position.x, player.position.z) : 0;
+    // A player-centered sky cannot be left behind while crossing the valley.
+    game.skyGroup.position.set(player.position.x, groundY + 4, player.position.z);
+    const biome = biomeAt(player.position.x - game.exploration.origin.x, player.position.z - game.exploration.origin.z);
+    dayNightSystem.update({
+      phase: dayClock.phase,
+      position: player.position,
+      outdoor,
+      elapsed: clock.elapsedTime,
+      animate: game.state === "playing",
+      fireflyStrength: game.mode === "exploration" && !localPlayerInSharedActivity()
+        ? biome === "swamp" || biome === "briar" ? 1 : biome === "meadow" ? 0.65 : 0
+        : 0
+    });
+    if (daylightReadout && dayPhaseLabel) {
+      daylightReadout.hidden = !outdoor || game.mode !== "exploration" || !sessionIsActive();
+      const phase = describeDayPhase(dayClock.phase);
+      if (dayHudPhase !== phase.key) {
+        daylightReadout.dataset.phase = phase.key;
+        dayPhaseLabel.textContent = phase.label;
+        dayHudPhase = phase.key;
+      }
     }
   }
 
@@ -22139,10 +22842,14 @@ import {
       wizard ? tuning.stormcrownCooldown : ranger ? tuning.heartseekerCooldown : sentinel ? tuning.skewerCooldown : tuning.sweepCooldown);
   }
 
+  let hudUpdateIn = 0;
+
   function tick() {
+    const frameStartedAt = networkDebug.visible ? performance.now() : 0;
     requestAnimationFrame(tick);
     const dt = Math.min(clock.getDelta(), 0.034);
     const elapsed = clock.elapsedTime;
+    updateDayNightClock();
 
     if (game.state === "playing") {
       const joinedWorld = isJoinedClient();
@@ -22187,7 +22894,12 @@ import {
       updateAudio(dt);
       updateCamera(dt);
       updateEnemyHealthBillboards();
-      updateHud();
+      hudUpdateIn -= dt;
+      if (hudUpdateIn <= 0) {
+        hudUpdateIn = 1 / 15;
+        updateHud();
+      }
+      renderNetworkDebugPanel();
       if (game.bannerTime > 0) {
         game.bannerTime -= dt;
         if (game.bannerTime <= 0) {
@@ -22200,9 +22912,13 @@ import {
       updateParticles(dt);
       updateAudio(dt);
       updateCamera(dt);
+      renderNetworkDebugPanel();
     }
     updateLights(dt, elapsed);
+    renderDayNightAtmosphere();
+    const renderStartedAt = frameStartedAt ? performance.now() : 0;
     renderer.render(scene, camera);
+    if (frameStartedAt) recordFramePerformance(frameStartedAt, performance.now() - renderStartedAt);
   }
 
   function beginPlay() {
@@ -22249,6 +22965,18 @@ import {
         handleBenchDialogKey(event);
         return;
       }
+      if (completionScreen && !completionScreen.hidden
+        && (event.code === "Escape" || event.code === "Enter" || event.code === "NumpadEnter" || event.code === "Space")) {
+        event.preventDefault();
+        playSfx("uiBack", 1);
+        dismissCompletionScreen();
+        return;
+      }
+      if (isNetworkDebugToggleKey(event)) {
+        event.preventDefault();
+        toggleNetworkDebug();
+        return;
+      }
       if ((event.code === "Enter" || event.code === "NumpadEnter")
         && game.state === "playing" && online.connected && questDialog.hidden) {
         event.preventDefault();
@@ -22269,6 +22997,13 @@ import {
         return;
       }
       if (game.state !== "playing") {
+        return;
+      }
+      // God-mode (local testing) preview of the "all quests complete" screen,
+      // so it can be checked without finishing every quest. Press 0.
+      if (event.code === "Digit0" && localGodModeEnabled() && game.mode === "exploration") {
+        event.preventDefault();
+        showCompletionScreen();
         return;
       }
       if (event.code === "KeyV") {
@@ -22519,6 +23254,13 @@ import {
       closeQuestDialog();
     });
 
+    if (completionContinueButton) {
+      completionContinueButton.addEventListener("click", () => {
+        playSfx("uiBack", 1);
+        dismissCompletionScreen();
+      });
+    }
+
     roomCodeInput.addEventListener("input", () => {
       roomCodeInput.value = normalizeRoomCode(roomCodeInput.value);
     });
@@ -22537,13 +23279,25 @@ import {
   function onResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(renderPixelRatio());
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
   }
 
   setupLighting();
   setupArena();
   setupDungeonInterior();
+  game.arenaBatches = buildStaticWorldBatches({ THREE, root: game.arenaGroup,
+    cellSize: 24, excludeRoots: game.torches.map(torch => torch.flame) });
+  game.dungeonBatches = buildStaticWorldBatches({ THREE, root: game.dungeonGroup, cellSize: 24 });
+  dayNightSystem = createDayNightSystem({
+    THREE,
+    scene,
+    lights: game.atmosphereLights,
+    materials,
+    skyGroup: game.skyGroup,
+    cycleSeconds: DAY_CYCLE_SECONDS,
+    sampleGroundHeight: explorationGroundWorldY
+  });
   setPlayerCharacter("knight", true);
   setGameMode("exploration");
   setMenuPhase("landing");

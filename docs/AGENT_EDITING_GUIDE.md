@@ -11,6 +11,12 @@ Use these file boundaries when splitting future work across agents. Keep edits s
 - `src/content/dialogue.js`: NPC dialogue response helpers and authored dialogue merge behavior.
 - `src/content/help.js`: help-panel class guide, reward list, tuning labels, and formatting.
 - `src/systems/townRespawn.js`: town checkpoint persistence and exploration death respawn resolution.
+- `src/systems/dayNight.js`: transient valley clock, phase labels, outdoor light palettes, celestial visuals, and bounded fireflies. Host snapshots and session lifecycle stay in `src/main.js`.
+- `src/systems/staticWorldBatch.js`: reversible spatial batching of static opaque art. Exclude every subtree whose transforms, visibility, geometry, material assignment, or live raycast references change; dispose generated batches before rebuilding a world.
+- `src/systems/enemySeparation.js`: sequential crowd broad phase, with a direct scan for small populations. Preserve force arithmetic, simulation order, and activity membership.
+- `src/systems/projectileResources.js`: idempotent disposal of explicitly factory-owned resources. Cached primitive geometry and shared materials must never enter ownership lists.
+- `src/systems/characterGrip.js`: articulated arm placement against a held weapon handle after authored animations. Only rig child transforms change; weapon paths and shared geometry stay intact.
+- `src/systems/rangerBowPose.js`: shared local/remote bow lift, drawn string contact, and idle recovery. Combat timing and aim stay in `src/main.js`.
 
 ## Suggested Future Extractions
 
@@ -26,3 +32,19 @@ Use these file boundaries when splitting future work across agents. Keep edits s
 - If an agent needs a new shared constant, add it to `src/config/gameplay.js` instead of duplicating values.
 - If a new helper has no DOM, Three.js object mutation, or global state dependency, prefer `src/core/`.
 - Preserve existing quest IDs, progression keys, and online message shapes unless a migration is explicitly planned.
+
+## Model Verification
+
+`npm test` runs offline model and system checks. Dragon/Spider triangle and transform checks require the actual Three.js module used by the browser; those five tests skip when no module is supplied. Run the full suite against Three.js 0.160.0 with:
+
+```sh
+curl -fsSL https://unpkg.com/three@0.160.0/build/three.module.js -o /tmp/ironhold-three-0.160.0.mjs
+CHARACTER_MODELS_THREE_MODULE=/tmp/ironhold-three-0.160.0.mjs \
+CHARACTER_GRIP_THREE_MODULE=/tmp/ironhold-three-0.160.0.mjs \
+HUMANOID_MODELS_THREE_MODULE=/tmp/ironhold-three-0.160.0.mjs \
+RANGER_BOW_THREE_MODULE=/tmp/ironhold-three-0.160.0.mjs \
+STATIC_BATCH_THREE_MODULE=file:///tmp/ironhold-three-0.160.0.mjs \
+npm test
+```
+
+Model QA must include all nine enemy factories: Barbarian, Dragon, Spider, Wisp, Bandit Archer, Sand Viper, Bonewarden, Bog Lurker, and Briar Beast. Check rest, movement, and attack poses; retain the Wisp's intended hover and the Dragon's flight clearance. Also compare all four local/remote heroes, NPC faces, and the seven house/stable styles. Browser checks complement the focused builder/pose tests; the tests do not execute a complete hosted session.

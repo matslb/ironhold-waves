@@ -503,6 +503,55 @@ canvas {
   color: #a8e9ff;
 }
 
+/* One-time "all quests complete" celebration. Informational and dismissible;
+   it dims the screen but does not pause the game (stays inside #hud). */
+.completion-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 6;
+  pointer-events: auto;
+  background: radial-gradient(120% 120% at 50% 30%, rgba(20, 16, 8, 0.6), rgba(4, 6, 10, 0.84));
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.completion-screen.visible {
+  opacity: 1;
+}
+
+.completion-screen[hidden] {
+  display: none;
+}
+
+.completion-card {
+  width: min(560px, calc(100vw - 40px));
+  padding: 30px 34px 26px;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+  border-top: 2px solid rgba(213, 170, 80, 0.85);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  transform: translateY(10px) scale(0.98);
+  transition: transform 320ms ease;
+}
+
+.completion-screen.visible .completion-card {
+  transform: translateY(0) scale(1);
+}
+
+.completion-card .result-title {
+  font-size: 30px;
+}
+
+.completion-card .button-row {
+  margin-top: 8px;
+}
+
 .reticle {
   position: absolute;
   left: 50%;
@@ -1600,6 +1649,68 @@ button[hidden] {
 
 .minimap-panel[hidden] {
   display: none;
+}
+
+.daylight-readout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 176px;
+  min-height: 29px;
+  margin-bottom: 8px;
+  padding: 5px 12px;
+  color: #f0dba8;
+  background: linear-gradient(180deg, rgba(24, 25, 22, 0.78), rgba(11, 15, 16, 0.72));
+  border: 1px solid rgba(213, 170, 80, 0.26);
+  border-radius: 999px;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.22);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  pointer-events: auto;
+  transition: color 800ms ease, border-color 800ms ease;
+}
+
+.daylight-readout[hidden] {
+  display: none;
+}
+
+.daylight-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.daylight-moon,
+.daylight-horizon {
+  display: none;
+}
+
+.daylight-readout[data-phase="night"] {
+  color: #dedfec;
+  border-color: rgba(199, 205, 234, 0.25);
+}
+
+.daylight-readout[data-phase="dusk"] {
+  color: #e8ba92;
+}
+
+.daylight-readout[data-phase="dawn"] {
+  color: #f0d7b9;
+}
+
+.daylight-readout[data-phase="night"] .daylight-sun,
+.daylight-readout[data-phase="dusk"] .daylight-sun,
+.daylight-readout[data-phase="dawn"] .daylight-sun {
+  display: none;
+}
+
+.daylight-readout[data-phase="night"] .daylight-moon,
+.daylight-readout[data-phase="dusk"] .daylight-horizon,
+.daylight-readout[data-phase="dawn"] .daylight-horizon {
+  display: block;
 }
 
 .minimap-canvas {

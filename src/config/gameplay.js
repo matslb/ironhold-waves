@@ -1,6 +1,12 @@
 export const TAU = Math.PI * 2;
 export const arenaRadius = 25;
 
+// A full valley day lasts twelve minutes of active play. New rooms begin
+// in daylight; the host shares the transient phase through world snapshots.
+export const DAY_CYCLE_SECONDS = 720;
+export const DAY_CYCLE_START_PHASE = 0.35;
+export const DAY_CYCLE_PREDICTION_SECONDS = 1;
+
 export const DUNGEON_RADIUS = 16.5;
 export const BELLWATER_DUNGEON_ID = "bellwaterUnderworks";
 export const BELLWATER_DUNGEON_NAME = "Bellwater Underworks";

@@ -57,6 +57,7 @@ This roadmap is intentionally alive. Update it when priorities shift, systems ma
 
 ### Content Expansion
 
+- The valley now has a shared twelve-minute day/night cycle, warm dusk, moonlight, stars, and biome-aware fireflies. Keep future atmosphere changes readable during combat and reuse the existing lighting budget.
 - Add Crownford, a civic city hub with the Crownring arena district, Marshal Rowan Vale, an infirmary, and non-arena city hooks.
 - Briarfall Woods is now a shipped biome slice: mossy old-growth terrain, a timber village, briarback rootmaw monsters, Briarfall gear kits, Pathcraft perk, ambient barks, and a road-clearing quest.
 - Expand roads and world decor so settlements feel lived-in: gently winding roads/trails, carts, buckets, brooms, lanterns, market clutter, training props, and biome-specific clutter.
@@ -206,10 +207,11 @@ Phase 3, Bounded Generated Dialogue:
 
 ### Performance Gate
 
+- The first measured optimization pass is implemented: spatial scenery batching, focused sun shadows, local actor/pickup visibility, capped impact pooling, private projectile cleanup, HUD throttling, and a large-crowd separation grid. See `docs/PERFORMANCE.md` for comparison conditions and results.
 - Target stable 60 FPS desktop on mid-range hardware.
 - Track draw calls, shadow cost, particles, enemy counts, and foliage density.
 - Stress-test max waves, mounted traversal, village NPCs, and online sessions.
-- Add internal FPS/memory overlay if needed.
+- Use the `-` overlay for FPS, CPU/render submission time, draw calls, geometry buffers, and network telemetry.
 - Treat performance as a required review note for every feature that adds repeated objects, per-frame logic, network messages, particles, lights, or audio voices.
 
 ### Audio Gate
