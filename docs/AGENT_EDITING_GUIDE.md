@@ -11,6 +11,7 @@ Use these file boundaries when splitting future work across agents. Keep edits s
 - `src/content/dialogue.js`: NPC dialogue response helpers and authored dialogue merge behavior.
 - `src/content/help.js`: help-panel class guide, reward list, tuning labels, and formatting.
 - `src/systems/townRespawn.js`: town checkpoint persistence and exploration death respawn resolution.
+- `src/systems/handheldInput.js`: touch detection, analog thumbstick math, independent pointer ownership, swipe look, held combat buttons, and cancellation/reset handling. Game actions, HUD, and camera integration stay in `src/main.js`.
 - `src/systems/dayNight.js`: transient valley clock, phase labels, outdoor light palettes, celestial visuals, and bounded fireflies. Host snapshots and session lifecycle stay in `src/main.js`.
 - `src/systems/staticWorldBatch.js`: reversible spatial batching of static opaque art. Exclude every subtree whose transforms, visibility, geometry, material assignment, or live raycast references change; dispose generated batches before rebuilding a world.
 - `src/systems/enemySeparation.js`: sequential crowd broad phase, with a direct scan for small populations. Preserve force arithmetic, simulation order, and activity membership.

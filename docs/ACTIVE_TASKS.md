@@ -38,6 +38,28 @@ Completion rules:
 
 These are ready-to-delegate tasks extracted from `docs/ROADMAP.md`.
 
+### T-035: Phones And Tablets
+
+Primary owner: Game Director / Integrator
+
+Review hats: UI / UX, Gameplay Systems, Rendering / Performance
+
+Status: `[x] Done`
+
+Scope: user reopened handheld support and specified phones/tablets. Support landscape touch play with an upright rotate/pause guard, retain desktop controls, and make every existing action reachable without a keyboard.
+
+Done evidence:
+- Independent analog thumbstick, world swipes for camera/aim, all five class ability buttons, held primary attacks/knight guard, potion drinking, and nearby Talk/Brew/Ride/Dismount.
+- Compact health/resource/level/activity HUD; World & Gear opens map, active quests, kit, potion pouch, buffs, and party roster. Menu exposes kit/mount changes, audio, activity yield, help, and normal session management. Online chat has explicit Send/Close.
+- Safe-area/dynamic-height layouts, scrollable short-screen menus/dialogue, 64px combat buttons and other action targets of at least 44px, landscape-only play with an upright rotate/pause guard, and touch-aware rendering capped at DPR 1.25/1.2 million pixels with a 1024px sun shadow map.
+- All 77 tests pass without skips, including eight focused pointer tests for analog movement, independent simultaneous gestures, held guard/attack, compatibility clicks, missing capture support, and cancellation on pause/resize/blur. Syntax and diff checks pass.
+- Browser QA covered landscape phones at 568×320, 667×375, and 844×390 and tablets at 1024×768 and 1366×1024. Controls fit without horizontal overflow; short menus scroll. Rotating upright pauses and clears input, prevents resume behind the rotate notice, and leaves play paused until Resume after returning to landscape.
+- All 20 class ability buttons dispatched their existing game actions. Simultaneous movement/look/attack, quest acceptance, map/gear, brewing/drinking, riding/dismounting, kit/mount changes, help, Crownring/dungeon entry and yield, and completion continuation passed. A phone host and tablet joiner exchanged chat and appeared together in the journal roster. Desktop movement, attacks, pause/resume, and first-touch conversion retained their expected behavior.
+- Full screen/Exit full screen is available in the touch toolbar and session menu. The integration supports standard and prefixed browser APIs, updates both buttons on browser exit, resets touch input, and resizes rendering. Browser enter/exit checks passed; unavailable and rejected requests showed usable guidance without console errors. iPhone Home Screen launches use web-app metadata for browser-free play.
+- Published to https://ironhold-game.web.app/ on 2026-10-01. All 16 deployed files match the working tree and the live game initializes without warnings/errors. Entry-page caching now uses no-cache while asset caching remains intact. Temporary QA fixtures use memory-only saves, live outside the repository, and are excluded from the release.
+
+Verification limit: browser layouts and game flows are checked; frame rates on physical phones/tablets have not been measured.
+
 ### T-034: Character And House Model Cleanup
 
 Primary owner: Game Director / Integrator
@@ -1379,7 +1401,7 @@ Support: Sound Design / Audio Agent, QA / Playtest Agent
 Status: `[~] Active`
 
 Done evidence:
-- Desktop-first scope is explicit; touch/handheld support is deferred.
+- Desktop-first scope was explicit for this historical slice; T-035 reopens phones/tablets.
 - Ability boxes show desktop key labels.
 - Keyboard-first quest/dialogue controls exist.
 - Procedural Web Audio covers player attacks, blocks, hits, potions, quest moments, level-ups, louder master mix, and light compression.
@@ -1398,7 +1420,7 @@ Remaining work:
 
 Task checklist:
 - [x] Keep desktop controls first-class.
-- [x] Defer handheld/touch play, landscape enforcement, and portrait notices until the project returns to small-screen support.
+- [x] Handheld support was deferred for this slice; T-035 adds phone/tablet landscape play.
 - [x] Add keyboard-first arena service dialogue: `E` interact/advance, `Up/Down` or `W/S` select, `Enter` choose, `Esc` or `Backspace` close.
 - [~] Add contextual prompts: `E Talk`, `Hold E Leave Arena`, `Hold R Yield`, `Enter Select`.
 - [~] During arena activity, temporarily show arena wave/status in the quest tracker area.
@@ -1480,7 +1502,7 @@ Acceptance:
 - Die in arena and confirm infirmary recovery.
 - Host/join smoke: both players see same arena enemies, fireballs, effects, and wizard potions.
 - Visual screenshots: starter house, Crownford street, Crownring, infirmary, NPC beside player, meadow village, desert spider, mountain dragon.
-- Touch/handheld checks are deferred until small-screen support returns to scope.
+- Phone/tablet checks are active under T-035: landscape sizes, upright rotate/pause behavior, multi-touch, menus, dialogue, mounts, and online chat.
 - Performance check during Crownford traversal and active arena waves.
 
 ## Implementation Policy

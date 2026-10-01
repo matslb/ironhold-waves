@@ -4,8 +4,8 @@ The September 30, 2026 performance pass reduces scene submission, shadow work, r
 
 ## Rendering And Simulation Contracts
 
-- Render resolution is capped at device pixel ratio 1.5 and three million drawing-buffer pixels. The CSS viewport and HUD layout stay unchanged.
-- Use one 2048×2048 directional sun shadow map, focused around the player with a ±50-unit orthographic extent. Torch point lights do not cast shadows.
+- Desktop render resolution is capped at device pixel ratio 1.5 and three million drawing-buffer pixels. Phones/tablets use DPR 1.25 and 1.2 million pixels, detected through coarse-pointer/touch capability or the first touch gesture. These caps do not scale the CSS viewport or touch targets.
+- Use one directional sun shadow map, focused around the player with a ±50-unit orthographic extent: 2048×2048 on desktop and 1024×1024 on touch devices. Torch point lights do not cast shadows. Mobile panels omit backdrop blur.
 - Static scenery batches use 32-unit cells in Exploration and 24-unit cells in the arena and dungeon. Preserve source materials, geometry, transforms, shadow flags, and render ordering. Exclude mutable or live-raycast roots: NPCs, quest items, herb nodes, mounts, animated torch flames, and Bellwater's ribbon, back sheet, and foam. Transparent and unsupported art remains separate.
 - Dispose generated batch geometry before rebuilding a world. Original cached geometry and shared materials remain owned by their existing systems; batch disposal restores the original hierarchy.
 - Enemy visibility is a local rendering decision. Distance and activity culling must not disable authoritative AI, combat, rewards, or snapshots for other players.

@@ -2,23 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <script>
     if (location.hostname === "matslb.github.io") {
       location.replace("https://ironhold-game.web.app/" + location.search + location.hash);
     }
   </script>
   <title>Ironhold</title>
-  <link rel="stylesheet" href="styles/app.css?v=20261001-model-cleanup">
+  <link rel="stylesheet" href="styles/app.css?v=20261001-handheld-fullscreen">
 </head>
 <body>
   <div id="game"></div>
+  <div id="orientationNotice" hidden role="status">
+    <section class="panel">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="20" width="44" height="24" rx="4"/><path d="M47 12a24 24 0 0 0-30 2M17 7v7h7M17 52a24 24 0 0 0 30-2M47 57v-7h-7"/><path d="M48 28v8"/></svg>
+      <h2>Rotate to play</h2>
+      <p>Turn your phone or tablet sideways. Ironhold plays in landscape.</p>
+    </section>
+  </div>
 
   <div id="hud" aria-live="polite">
     <div class="topbar">
       <section class="status panel" id="statusPanel" aria-label="Knight status">
         <div class="title-row">
-          <div class="mark"><span class="crest"></span><span id="classLabel">Knight</span></div>
+          <div class="mark"><span class="crest"></span><span id="classLabel">Knight</span><span id="handheldLevel">Lv 1</span></div>
           <div class="wave-pill" id="waveLabel">Wave 1</div>
         </div>
         <div class="meter-group">
@@ -33,6 +43,7 @@
             <span id="guardText">100</span>
           </div>
         </div>
+        <div id="handheldActivity" hidden></div>
       </section>
 
       <div id="banner" class="panel"></div>
@@ -74,6 +85,8 @@
       <form class="chat-input-row" id="chatForm" hidden autocomplete="off">
         <span class="chat-input-glyph" aria-hidden="true">&gt;</span>
         <input class="chat-input" id="chatInput" type="text" maxlength="140" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" aria-label="Chat message" placeholder="Message your party - Enter to send, Esc to cancel">
+        <button id="chatSendButton" type="submit">Send</button>
+        <button id="chatCloseButton" type="button" class="secondary" aria-label="Close chat">Close</button>
       </form>
     </section>
 
@@ -172,18 +185,27 @@
       </div>
     </div>
 
-    <div id="touchControls">
-      <div class="touch-pad">
-        <button class="up" data-touch-key="KeyW" aria-label="Forward">^</button>
-        <button class="left" data-touch-key="KeyA" aria-label="Left">&lt;</button>
-        <button class="right" data-touch-key="KeyD" aria-label="Right">&gt;</button>
-        <button class="down" data-touch-key="KeyS" aria-label="Back">v</button>
+    <div id="handheldToolbar" hidden>
+      <button id="handheldWorldButton" type="button" aria-label="Map, quests and gear">World</button>
+      <button id="handheldChatButton" type="button" hidden>Chat</button>
+      <button id="handheldFullscreenButton" type="button" data-fullscreen-toggle aria-pressed="false">Full screen</button>
+      <button id="handheldMenuButton" type="button" aria-label="Pause and session menu">Menu</button>
+    </div>
+    <div id="touchControls" hidden aria-label="Touch controls">
+      <div id="touchStick" role="group" aria-label="Movement thumbstick">
+        <span class="stick-guide" aria-hidden="true"></span><span id="touchStickThumb" aria-hidden="true"></span>
+        <span class="stick-caption">Move</span>
       </div>
+      <button id="touchInteractButton" data-touch-action="interact" type="button" hidden>Interact</button>
       <div class="touch-actions">
-        <button data-touch-action="attack" aria-label="Attack">A</button>
-        <button data-touch-action="block" aria-label="Block">B</button>
-        <button data-touch-action="potion" aria-label="Potion" hidden>P</button>
+        <button data-touch-action="secondary" type="button"><span class="touch-label">Guard</span></button>
+        <button data-touch-action="special" type="button"><span class="touch-label">Bash</span></button>
+        <button data-touch-action="utility" type="button"><span class="touch-label">Resolve</span></button>
+        <button data-touch-action="drink" type="button" aria-label="Drink stored potion"><span class="touch-label">Drink</span><span class="touch-state"></span></button>
+        <button data-touch-action="payoff" type="button"><span class="touch-label">Sweep</span></button>
+        <button data-touch-action="attack" type="button" class="touch-primary"><span class="touch-label">Strike</span></button>
       </div>
+      <span id="touchLookHint">Swipe the world to look</span>
     </div>
   </div>
 
@@ -246,14 +268,27 @@
         </button>
       </div>
       <div class="session-note" id="sessionNote" hidden></div>
+      <p id="fullscreenHint" class="fullscreen-hint" hidden role="status"></p>
       <div class="button-row">
         <button id="startButton" hidden>Start Exploration</button>
         <button id="resumeButton" hidden>Resume</button>
         <button id="helpButton" class="secondary" hidden>Help</button>
+        <button id="handheldJournalButton" class="secondary" type="button" hidden>World &amp; gear</button>
+        <button id="handheldKitButton" class="secondary" type="button" hidden>Change kit</button>
+        <button id="handheldMountButton" class="secondary" type="button" hidden>Change mount</button>
+        <button id="handheldYieldButton" class="secondary" type="button" hidden>Yield activity</button>
+        <button id="handheldMuteButton" class="secondary" type="button" hidden>Mute audio</button>
+        <button id="fullscreenMenuButton" class="secondary" type="button" data-fullscreen-toggle aria-pressed="false">Full screen</button>
         <button id="closeRoomButton" class="secondary" hidden>Close Room</button>
         <button id="leaveRoomButton" class="secondary" hidden>Leave Room</button>
         <button id="restartButton" class="secondary" hidden>Restart</button>
       </div>
+    </section>
+    <section id="handheldJournal" class="panel" hidden aria-label="World, quests and gear">
+      <div class="journal-head"><h2>World &amp; Gear</h2><button id="handheldJournalBack" class="secondary" type="button">Back</button></div>
+      <p id="handheldProgress"></p>
+      <div id="handheldJournalBody"></div>
+      <button id="handheldJournalResume" type="button">Resume journey</button>
     </section>
     <section class="help-card panel" id="helpPanel" hidden aria-label="How Ironhold works">
       <h2>How Ironhold Works</h2>
@@ -272,6 +307,6 @@
     </section>
   </div>
 
-  <script type="module" src="src/main.js?v=20261001-model-cleanup"></script>
+  <script type="module" src="src/main.js?v=20261001-handheld-fullscreen"></script>
 </body>
 </html>

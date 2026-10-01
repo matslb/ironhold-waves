@@ -66,7 +66,7 @@ import {
   WILDS_TIER_DELAY_MUL,
   WIZARD_DRAUGHT_POCKET_DELAY,
   arenaRadius
-} from "./config/gameplay.js?v=20261001-model-cleanup";
+} from "./config/gameplay.js?v=20261001-handheld";
 import {
   formatTuningSummary,
   helpClassGuide,
@@ -82,12 +82,13 @@ import {
   setExplorationRespawnTown as setTownRespawnPoint,
   villageDisplayName
 } from "./systems/townRespawn.js";
-import { createDayNightClock, createDayNightSystem, describeDayPhase } from "./systems/dayNight.js?v=20261001-model-cleanup";
+import { createDayNightClock, createDayNightSystem, describeDayPhase } from "./systems/dayNight.js?v=20261001-handheld";
 import { EnemySeparationGrid } from "./systems/enemySeparation.js";
 import { disposeProjectileResources } from "./systems/projectileResources.js";
 import { buildStaticWorldBatches } from "./systems/staticWorldBatch.js";
 import { createArmGripSolver } from "./systems/characterGrip.js";
 import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
+import { createHandheldInput, detectHandheldInput } from "./systems/handheldInput.js";
 
 (() => {
   "use strict";
@@ -198,9 +199,23 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   const chatLog = document.getElementById("chatLog");
   const chatForm = document.getElementById("chatForm");
   const chatInput = document.getElementById("chatInput");
-  const attackTouchButton = document.querySelector("[data-touch-action='attack']");
-  const secondaryTouchButton = document.querySelector("[data-touch-action='block']");
-  const potionTouchButton = document.querySelector("[data-touch-action='potion']");
+  const touchControls = document.getElementById("touchControls");
+  const touchButtons = [...document.querySelectorAll(".touch-actions [data-touch-action]")];
+  const touchInteractButton = document.getElementById("touchInteractButton");
+  const handheldToolbar = document.getElementById("handheldToolbar");
+  const handheldChatButton = document.getElementById("handheldChatButton");
+  const handheldJournal = document.getElementById("handheldJournal");
+  const handheldJournalBody = document.getElementById("handheldJournalBody");
+  const handheldLevel = document.getElementById("handheldLevel");
+  const orientationNotice = document.getElementById("orientationNotice");
+  const fullscreenButtons = [...document.querySelectorAll("[data-fullscreen-toggle]")];
+  const fullscreenHint = document.getElementById("fullscreenHint");
+  const handheldMenuButtons = ["Journal", "Kit", "Mount", "Yield", "Mute"].map(name => document.getElementById("handheld" + name + "Button"));
+  const journalNodes = [minimapPanel, questLog, kitReadout, potionInventory, buffsPanel, roomRoster];
+  const journalHomes = journalNodes.map(node => ({ node, parent: node.parentNode, next: node.nextSibling }));
+  let handheldMode = detectHandheldInput(window, navigator);
+  let handheldInput = null;
+  document.documentElement.classList.toggle("handheld", handheldMode);
 
   if (!THREE) {
     overlayCopy.textContent = "The 3D renderer could not be loaded.";
@@ -210,6 +225,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
+  const movementRight = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   // Third-person camera pitch (radians, negative looks down). The default
   // reproduces the legacy fixed framing: shoulder (0.95, 4.1, 7.7) looking at
@@ -270,7 +286,8 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   function renderPixelRatio() {
     const pixels = Math.max(1, window.innerWidth * window.innerHeight);
-    return Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(3000000 / pixels));
+    return Math.min(window.devicePixelRatio || 1, handheldMode ? 1.25 : 1.5,
+      Math.sqrt((handheldMode ? 1200000 : 3000000) / pixels));
   }
   renderer.setPixelRatio(renderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -2682,7 +2699,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     const index = available.indexOf(equippedWeapon(key));
     progress.equipment.weapon = available[(index + 1) % available.length];
     playSfx("ui", 1);
-    showBanner("Kit: " + equipmentDefs[progress.equipment.weapon].name + " - G to swap", 2.2);
+    showBanner("Kit: " + equipmentDefs[progress.equipment.weapon].name + (handheldMode ? " - Menu to swap" : " - G to swap"), 2.2);
     applyProgressionStats(false);
     refreshLocalWeaponModel();
     saveProgress();
@@ -4256,7 +4273,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.cameraYaw = 0;
     game.cameraPitch = CAMERA_PITCH_DEFAULT;
     playSfx("arenaStart", 1);
-    showBanner("Crownring opened - press Y to yield", 3);
+    showBanner(handheldMode ? "Crownring opened - Menu to yield" : "Crownring opened - press Y to yield", 3);
     updateHud();
   }
 
@@ -4703,7 +4720,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.cameraYaw = 0;
     spawnWave();
     playSfx("arenaStart", 1.1);
-    showBanner("Crownring opened - press Y to yield", 3);
+    showBanner(handheldMode ? "Crownring opened - Menu to yield" : "Crownring opened - press Y to yield", 3);
     sendOnlineMessage({ kind: "state", state: serializePlayerState() });
     sendWorldSnapshot(true);
     updateHud();
@@ -8375,7 +8392,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
       playSfx("quest", 0.55);
       if (!progression.exploration.herbHintSeen) {
         progression.exploration.herbHintSeen = true;
-        showBanner("Valley herb gathered 1/" + HERB_POUCH_CAP + " - every village well has a potion bench (E to brew)", 3.6);
+        showBanner("Valley herb gathered 1/" + HERB_POUCH_CAP + " - every village well has a potion bench" + (handheldMode ? " (tap Brew)" : " (E to brew)"), 3.6);
       } else {
         showBanner("Valley herb " + herbCount() + "/" + HERB_POUCH_CAP, 1.4);
       }
@@ -9341,6 +9358,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.dialogNpc = npc;
     game.dialogVoiceKey = "";
     keys.clear();
+    handheldInput?.reset();
     player.blockHeld = false;
     playSfx("ui", 0.7);
     refreshQuestDialog();
@@ -9363,6 +9381,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
   function restoreGameplayControlAfterActivityEntry() {
     keys.clear();
+    handheldInput?.reset();
     player.blockHeld = false;
     player.blocking = false;
     const activeElement = document.activeElement;
@@ -9599,6 +9618,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.activeBench = bench;
     game.benchOptionIndex = 0;
     keys.clear();
+    handheldInput?.reset();
     player.blockHeld = false;
     playSfx("ui", 0.7);
     renderBenchDialog();
@@ -9834,7 +9854,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     if (!quest) {
       if (serviceType === "crownring") {
         questDialogBody.textContent = "The Crownring is open to any sworn traveler. Step through the steward's gate, fight as many waves as you dare, then yield before pride empties your flask.";
-        questDialogStatus.textContent = serviceBlocked ? "Another shared activity is already active." : "Press Enter on the service button to enter the Crownring.";
+        questDialogStatus.textContent = serviceBlocked ? "Another shared activity is already active." : handheldMode ? "Tap Enter Crownring to enter the arena." : "Press Enter on the service button to enter the Crownring.";
         finishQuestDialogRefresh();
         return;
       }
@@ -12072,7 +12092,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     const sun = new THREE.DirectionalLight(0xffe3b0, 4.0);
     sun.position.set(-22, 34, -16);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(handheldMode ? 1024 : 2048, handheldMode ? 1024 : 2048);
     // Follow the player with one focused map rather than redraw the valley.
     sun.shadow.camera.near = 0.5;
     sun.shadow.camera.far = 160;
@@ -13473,16 +13493,20 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     utilityCooldownTime = utilityIcon.querySelector(".cooldown-time");
     payoffCooldownFill = payoffIcon.querySelector(".cooldown-fill");
     payoffCooldownTime = payoffIcon.querySelector(".cooldown-time");
-    if (attackTouchButton) {
-      attackTouchButton.setAttribute("aria-label", wizard ? "Lightning ball" : ranger ? "Quick Shot" : sentinel ? "Halberd Thrust" : "Attack");
+    const labels = wizard ? ["Bolt", "Burst", "Draught", "Frost", "Storm"]
+      : ranger ? ["Shoot", "Roll", "Flame", "Retreat", "Seeker"]
+      : sentinel ? ["Thrust", "Shove", "Moulinet", "Hook", "Skewer"]
+      : ["Strike", "Guard", "Bash", "Resolve", "Sweep"];
+    const slots = ["attack", "secondary", "special", "utility", "payoff"];
+    const icons = [attackIcon, blockIcon, potionIcon, utilityIcon, payoffIcon];
+    for (let i = 0; i < slots.length; i++) {
+      const button = touchButtons.find(button => button.dataset.touchAction === slots[i]);
+      button.innerHTML = icons[i].querySelector("svg").outerHTML
+        + '<span class="touch-label">' + labels[i] + '</span><span class="touch-state"></span>'
+        + (i >= 3 ? '<span class="cooldown-fill"></span><span class="cooldown-time"></span>' : "");
     }
-    if (secondaryTouchButton) {
-      secondaryTouchButton.setAttribute("aria-label", wizard ? "Arcane burst" : ranger ? "Tumble roll" : sentinel ? "Haft Shove" : "Block");
-    }
-    if (potionTouchButton) {
-      potionTouchButton.hidden = false;
-      potionTouchButton.setAttribute("aria-label", wizard ? "Potion" : ranger ? "Flaming Arrow" : sentinel ? "Moulinet" : "Shield bash");
-    }
+    const drink = touchButtons.find(button => button.dataset.touchAction === "drink");
+    drink.innerHTML = '<svg viewBox="0 0 32 32"><path d="M12 3h8M14 3v7l-5 8a7 7 0 0 0 6 11h2a7 7 0 0 0 6-11l-5-8V3"/><path d="M10 21h12"/></svg><span class="touch-label">Drink</span><span class="touch-state"></span>';
     characterCards.forEach(card => {
       const selected = card.dataset.character === player.character;
       card.classList.toggle("selected", selected);
@@ -13604,11 +13628,17 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
     const basics = helpSection("The Game");
     helpParagraph(basics, "Ironhold is an exploration RPG. Walk the valley, discover villages and Crownford, and take quests by talking to named NPCs. Quests reward XP, boons, perks, and weapon kits.");
-    helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you. In an online room, press Enter to chat with your party - recent messages appear in the upper left and fade during play.");
-    helpParagraph(basics, "The minimap in the lower right shows discovered terrain, roads, quest areas, and a compass. Your arrow sits at the center of attention; online teammates appear as small colored dots, pinned to the rim when they roam far away.");
+    helpParagraph(basics, "Leveling up unlocks new abilities. Progress saves locally on this browser every few seconds. Online sessions share one world: the host owns the room, friends join with the four digit code, and your character progress travels with you. " + (handheldMode ? "Tap Chat to read and message your party; Send submits and Close returns to play." : "In an online room, press Enter to chat with your party - recent messages appear in the upper left and fade during play."));
+    helpParagraph(basics, (handheldMode ? "The map in World & Gear" : "The minimap in the lower right") + " shows discovered terrain, roads, quest areas, and a compass. Your arrow sits at the center of attention; online teammates appear as small colored dots, pinned to the rim when they roam far away.");
     helpParagraph(basics, "The valley moves through daylight, golden dusk, moonlit night, and morning over twelve minutes of play. The time of day appears above the minimap. Stars and fireflies emerge after dusk; the host keeps everyone's sky in step. The cycle pauses with the host, and dungeon interiors keep their own lighting.");
 
     const controls = helpSection("Movement & Controls");
+    helpList(controls, [
+      { keys: "Touch", text: "On phones and tablets, play in landscape. Use the left thumbstick to move and swipe the world to look and aim. Movement, aiming, and combat work together with separate fingers. Turning upright pauses play; turn sideways and tap Resume to continue." },
+      { keys: "Combat", text: "Tap the labeled ability buttons; hold Strike, Bolt, Shoot, or Thrust to keep attacking. Knights hold Guard to block. Locked abilities show their unlock level, and utility/payoff buttons show cooldowns. Drink uses the leftmost stored potion." },
+      { keys: "World / Menu", text: "World opens the map, quests, gear, potion pouch, and party roster. Menu offers resume, help, kit/mount changes, audio, and activity yield. Use the nearby Talk, Brew, Ride, or Dismount button to interact. In online rooms, Chat opens a text field with Send and Close." },
+      { keys: "Full screen", text: "Tap Full screen in the toolbar or session menu, then Exit full screen to return. If your browser restricts fullscreen, the game explains how to launch it from the Home Screen on iPhone." }
+    ]);
     helpList(controls, [
       { keys: "W A S D", text: "Move. Click the game once to capture the mouse for camera look." },
       { keys: "Mouse / Q / E", text: "Look around. Vertical mouse-look tilts the camera and angles ranged shots up or down; Q / E turn the camera when the mouse is free." },
@@ -13636,7 +13666,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
         // entry's hand-written note is the fallback for ids without one.
         const description = abilityDescriptions[ability.id] || ability.note || "";
         return {
-          keys: ability.keys,
+          keys: handheldMode ? (ability.id === "block" ? "Hold Guard" : "Tap") : ability.keys,
           label: abilityDisplayNames[ability.id] || ability.id,
           text: (description ? description + " " : "") + unlockText + "."
         };
@@ -13656,7 +13686,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     ]);
 
     const kits = helpSection("Weapon Kits");
-    helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then press G to swap between unlocked kits. Swapping visibly changes your held weapon and nudges your stats - small health, guard, magica, regen, or speed trade-offs on top of the weapon tuning. Your equipped kit and its trade-offs show in the lower left; hover the panel for exact numbers.");
+    helpParagraph(kits, "Kits are sidegrades, not upgrades: each trades something away for a different strength. Earn them from quests and Crownring trials, then " + (handheldMode ? "use Menu > Change kit" : "press G") + " to swap between unlocked kits. Swapping visibly changes your held weapon and nudges your stats - small health, guard, magica, regen, or speed trade-offs on top of the weapon tuning. " + (handheldMode ? "World & Gear shows your equipped kit and its trade-offs." : "Your equipped kit and its trade-offs show in the lower left; hover the panel for exact numbers."));
     for (const entry of helpClassGuide) {
       const kitItems = Object.entries(equipmentDefs)
         .filter(([, def]) => def && def.character === entry.character && def.name)
@@ -13683,7 +13713,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
     const brewing = helpSection("Herbs And Potion Benches");
     helpParagraph(brewing, "Valley herbs grow in small leafy tufts across every biome - walk over one to pick it. You can carry up to " + HERB_POUCH_CAP + "; picked tufts regrow after a couple of minutes. Herbs are personal: in an online room everyone gathers their own.");
-    helpParagraph(brewing, "Every settlement keeps a potion bench beside its well, and Crownford keeps one on the beacon plaza. Stand at the bench and press E to brew.");
+    helpParagraph(brewing, "Every settlement keeps a potion bench beside its well, and Crownford keeps one on the beacon plaza. Stand at the bench and " + (handheldMode ? "tap Brew" : "press E") + " to brew.");
     helpList(brewing, [
       { keys: "3 herbs", label: "Field Potion", text: "+32 health, stored into a free pouch slot." },
       { keys: "7 herbs", label: "Full Recovery Potion", text: "fully restores health, stored into a free pouch slot." },
@@ -13702,7 +13732,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     const arena = helpSection("The Crownring Arena");
     helpParagraph(arena, "The Crownring is the wave arena built into Crownford's outer wall. Find the steward by the ring and choose Enter Crownring to start. Enemies attack in waves; each cleared wave pays a shared purse, and every third wave lands a milestone reward.");
     helpList(arena, [
-      { keys: "Y", label: "Yield", text: "leave mid-wave before the next purse is paid. Yielding is respected, not shameful." },
+      { keys: handheldMode ? "Menu" : "Y", label: "Yield", text: "leave mid-wave before the next purse is paid. Yielding is respected, not shameful." },
       { text: "Defeat never ends the game: you wake at the Crownford infirmary and Exploration continues - but like any death, defeat wipes current-level XP progress." },
       { text: "Online, everyone fights the same waves. Joiners arriving mid-wave wait at the infirmary and enter at the next bell." }
     ]);
@@ -13710,13 +13740,14 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     const dungeons = helpSection("Shared Dungeons");
     helpParagraph(dungeons, "Shared dungeons are sealed party chambers opened by local service NPCs. Bellwater Underworks starts from Mason Vale in Crownford or the Bellwater scout at the grate; Siltwell Cistern starts from Ilyas at the desert-fringe wellstone.");
     helpList(dungeons, [
-      { keys: "Y", label: "Ring out", text: "leave this dungeon without claiming the clear reward." },
+      { keys: handheldMode ? "Menu" : "Y", label: "Ring out", text: "leave this dungeon without claiming the clear reward." },
       { text: "Online, the host opens the selected entrance for everyone currently in the room. Late joiners wait outside until the return bell." },
       { text: "First clear of each dungeon grants its own small permanent boon once per player, so a veteran host does not consume a new player's first-clear reward." }
     ]);
   }
 
   function openHelpPanel() {
+    closeHandheldJournal();
     buildHelpContent();
     startCard.hidden = true;
     helpPanel.hidden = false;
@@ -13920,8 +13951,10 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   }
 
   function setMenuPhase(phase) {
+    if (phase !== "pause") closeHandheldJournal();
     game.menuPhase = phase;
     updateSessionMenu();
+    updateHandheldHud();
   }
 
   function startHostSessionFlow() {
@@ -13985,6 +14018,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.state = "paused";
     game.pausedFromPlay = true;
     keys.clear();
+    handheldInput?.reset();
     player.blockHeld = false;
     player.blocking = false;
     overlay.classList.remove("hidden");
@@ -14011,9 +14045,12 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   }
 
   function resumeSession() {
+    if (handheldIsPortrait()) { syncHandheldOrientation(); return; }
     if (game.state !== "paused") {
       return;
     }
+    closeHandheldJournal();
+    handheldInput?.reset();
     game.state = "playing";
     dayTickAt = performance.now();
     overlay.classList.add("hidden");
@@ -14028,6 +14065,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     game.state = "menu";
     game.pausedFromPlay = false;
     keys.clear();
+    handheldInput?.reset();
     player.blockHeld = false;
     player.blocking = false;
     overlay.classList.remove("hidden");
@@ -14467,21 +14505,28 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
       return;
     }
     chat.open = true;
+    document.documentElement.classList.add("chat-typing");
+    handheldInput?.reset();
     chatPanel.hidden = false;
     chat.panelShown = true;
     chatForm.hidden = false;
     chatInput.value = "";
+    chatInput.placeholder = handheldMode ? "Message your party" : "Message your party - Enter to send, Esc to cancel";
     // Drop any held movement/attack so typing never leaks into gameplay.
     keys.clear();
     player.blockHeld = false;
     refreshChatFade();
-    window.setTimeout(() => {
+    const focusChat = () => {
       try {
         chatInput.focus({ preventScroll: true });
       } catch (error) {
         chatInput.focus();
       }
-    }, 0);
+    };
+    // Mobile Safari opens the software keyboard only while the tap still
+    // owns user activation. Desktop can keep its deferred focus behavior.
+    if (handheldMode) focusChat();
+    else window.setTimeout(focusChat, 0);
   }
 
   function closeChatInput(silent = false) {
@@ -14489,6 +14534,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
       return;
     }
     chat.open = false;
+    document.documentElement.classList.remove("chat-typing");
     if (chatForm) {
       chatForm.hidden = true;
     }
@@ -19058,7 +19104,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
       player.potionCooldown = Math.max(0, player.potionCooldown - dt);
       player.blocking = false;
     } else {
-      const wantsBlock = !mounted && (player.blockHeld || keys.has("KeyK"));
+      const wantsBlock = !mounted && (player.blockHeld || keys.has("KeyK") || handheldInput?.state.secondaryHeld);
       player.blocking = wantsBlock && player.guard > 2 && !player.attacking;
       if (player.blocking && player.resolveTimer <= 0) {
         player.guard = Math.max(0, player.guard - dt * 8);
@@ -19073,12 +19119,12 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     }
     updatePlayerHealthRegen(dt);
 
-    const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
-    const inputZ = (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0) - (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0);
+    const inputX = movementInputX();
+    const inputZ = movementInputZ();
     tmpVec.set(0, 0, 0);
     if (inputX || inputZ) {
       const f = forwardFromYaw(game.cameraYaw, tmpVec2);
-      const r = rightFromYaw(game.cameraYaw, new THREE.Vector3());
+      const r = rightFromYaw(game.cameraYaw, movementRight);
       tmpVec.addScaledVector(f, -inputZ);
       tmpVec.addScaledVector(r, inputX);
       tmpVec.normalize();
@@ -19091,7 +19137,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
         : player.character === "sentinel"
         ? (player.attacking ? 4.3 : 6.25)
         : (player.blocking ? 3.1 : player.attacking ? 3.8 : 5.8);
-      const speed = mounted ? baseSpeed : baseSpeed * (player.kitMoveSpeedMul || 1);
+      const speed = (mounted ? baseSpeed : baseSpeed * (player.kitMoveSpeedMul || 1)) * Math.min(1, Math.hypot(inputX, inputZ));
       player.velocity.x = lerp(player.velocity.x, tmpVec.x * speed, 1 - Math.pow(0.001, dt));
       player.velocity.z = lerp(player.velocity.z, tmpVec.z * speed, 1 - Math.pow(0.001, dt));
       player.yaw = yawFromDirection(tmpVec);
@@ -19750,12 +19796,12 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     player.invulnTimer = DODGE_IFRAME_SECONDS;
     player.secondaryCooldown = 0.95;
     // Roll toward current input direction, falling back to facing.
-    const inputX = (keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0) - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0);
-    const inputZ = (keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0) - (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0);
+    const inputX = movementInputX();
+    const inputZ = movementInputZ();
     tmpVec.set(0, 0, 0);
     if (inputX || inputZ) {
       const f = forwardFromYaw(game.cameraYaw, tmpVec2);
-      const r = rightFromYaw(game.cameraYaw, new THREE.Vector3());
+      const r = rightFromYaw(game.cameraYaw, movementRight);
       tmpVec.addScaledVector(f, -inputZ);
       tmpVec.addScaledVector(r, inputX);
       tmpVec.normalize();
@@ -22113,7 +22159,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
           const xp = grantCrownringWaveReward(game.wave);
           const joinedAtBell = promotePendingArenaParticipants();
           playSfx(game.wave % 3 === 0 ? "arenaMilestone" : "waveClear", 1.1);
-          showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP" + (joinedAtBell ? " - allies joined" : " - press Y to yield"), 3);
+          showBanner("Crownring wave " + game.wave + " cleared +" + xp + " XP" + (joinedAtBell ? " - allies joined" : handheldMode ? " - Menu to yield" : " - press Y to yield"), 3);
           sendWorldSnapshot(true);
         } else {
           showBanner("Wave " + game.wave + " cleared");
@@ -22840,6 +22886,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     updateCooldownOverlay(payoffCooldownFill, payoffCooldownTime,
       player.payoffCooldown,
       wizard ? tuning.stormcrownCooldown : ranger ? tuning.heartseekerCooldown : sentinel ? tuning.skewerCooldown : tuning.sweepCooldown);
+    updateHandheldHud();
   }
 
   let hudUpdateIn = 0;
@@ -22850,8 +22897,11 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     const dt = Math.min(clock.getDelta(), 0.034);
     const elapsed = clock.elapsedTime;
     updateDayNightClock();
+    handheldInput?.update();
+    updateHandheldVisibility();
 
     if (game.state === "playing") {
+      if (handheldInput?.state.attackHeld && canUseHandheldControls()) startAttack();
       const joinedWorld = isJoinedClient();
       updatePlayer(dt);
       if (joinedWorld) {
@@ -22921,7 +22971,208 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     if (frameStartedAt) recordFramePerformance(frameStartedAt, performance.now() - renderStartedAt);
   }
 
+  function canUseHandheldControls() {
+    return !handheldIsPortrait() && game.state === "playing" && questDialog.hidden && benchDialog.hidden
+      && !chat.open && completionScreen.hidden && handheldJournal.hidden;
+  }
+
+  function movementInputX() {
+    return clamp((keys.has("KeyD") || keys.has("ArrowRight") ? 1 : 0)
+      - (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0) + (handheldInput?.state.x || 0), -1, 1);
+  }
+
+  function movementInputZ() {
+    return clamp((keys.has("KeyS") || keys.has("ArrowDown") ? 1 : 0)
+      - (keys.has("KeyW") || keys.has("ArrowUp") ? 1 : 0) + (handheldInput?.state.z || 0), -1, 1);
+  }
+
+  function enableHandheldMode() {
+    if (handheldMode) return;
+    handheldMode = true;
+    document.documentElement.classList.add("handheld");
+    document.exitPointerLock?.();
+    const sun = game.atmosphereLights?.sun;
+    if (sun && sun.shadow.mapSize.x !== 1024) {
+      sun.shadow.map?.dispose();
+      sun.shadow.map = null;
+      sun.shadow.mapSize.set(1024, 1024);
+    }
+    onResize();
+    syncHandheldViewport();
+    syncHandheldOrientation();
+    updateHandheldHud();
+  }
+
+  function handheldIsPortrait() {
+    return handheldMode && window.innerHeight > window.innerWidth;
+  }
+
+  function syncHandheldOrientation() {
+    const portrait = handheldIsPortrait();
+    setUiHidden(orientationNotice, !portrait);
+    if (portrait && game.state === "playing") {
+      closeChatInput(true);
+      openSessionMenu();
+    }
+  }
+
+  function syncHandheldViewport() {
+    if (!handheldMode) return;
+    const viewport = window.visualViewport;
+    document.documentElement.style.setProperty("--handheld-visible-height", (viewport?.height || window.innerHeight) + "px");
+    document.documentElement.style.setProperty("--handheld-viewport-top", (viewport?.offsetTop || 0) + "px");
+  }
+
+  function fullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement;
+  }
+
+  function syncFullscreenButtons() {
+    const active = !!fullscreenElement();
+    const homeScreen = navigator.standalone || window.matchMedia("(display-mode: standalone)").matches
+      || window.matchMedia("(display-mode: fullscreen)").matches;
+    const alreadyFull = homeScreen && !document.documentElement.requestFullscreen
+      && !document.documentElement.webkitRequestFullscreen;
+    for (const button of fullscreenButtons) {
+      button.textContent = active ? "Exit full screen" : "Full screen";
+      button.setAttribute("aria-pressed", String(active || alreadyFull));
+      button.disabled = !!alreadyFull;
+      button.title = alreadyFull ? "Already playing without browser controls" : button.textContent;
+    }
+  }
+
+  function showFullscreenHint(message) {
+    if (game.state === "playing") openSessionMenu();
+    closeHandheldJournal();
+    closeHelpPanel();
+    fullscreenHint.textContent = message;
+    fullscreenHint.hidden = false;
+  }
+
+  function handleFullscreenBlocked() {
+    showFullscreenHint("The browser blocked fullscreen. On iPhone, use Share → Add to Home Screen and open Ironhold from its icon. Otherwise, open the game directly in Safari or Chrome and try again.");
+    syncFullscreenButtons();
+  }
+
+  async function toggleFullscreen() {
+    handheldInput?.reset();
+    try {
+      if (fullscreenElement()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        await exit.call(document);
+      } else {
+        const root = document.documentElement;
+        if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: "hide" });
+        else if (root.webkitRequestFullscreen) await root.webkitRequestFullscreen();
+        else {
+          showFullscreenHint("Fullscreen is unavailable in this browser. On iPhone, use Share → Add to Home Screen, then open Ironhold from its icon for play without browser controls.");
+          return;
+        }
+      }
+      fullscreenHint.hidden = true;
+    } catch {
+      handleFullscreenBlocked();
+    }
+    syncFullscreenButtons();
+  }
+
+  function performHandheldAction(action) {
+    if (!canUseHandheldControls()) return;
+    if (action === "attack") startAttack();
+    else if (action === "secondary") startSecondaryAbility();
+    else if (action === "special") {
+      if (player.character === "knight") startKnightBash();
+      else if (player.character === "ranger") startRangerPierce();
+      else if (player.character === "sentinel") startSentinelMoulinet();
+      else dropWizardHealthPotion();
+    } else if (action === "utility") startUtilityAbility();
+    else if (action === "payoff") startPayoffAbility();
+    else if (action === "drink") handlePotionHotkey();
+    else if (action === "interact") {
+      if (isPlayerMounted()) toggleHorseMount();
+      else {
+        const npc = nearestNpc(), bench = nearestPotionBench();
+        if (npc) openNpcDialog(npc);
+        else if (bench) openBenchDialog(bench);
+        else if (nearestHorse()) toggleHorseMount();
+      }
+    }
+  }
+
+  function setUiHidden(element, hidden) {
+    if (element.hidden !== hidden) element.hidden = hidden;
+  }
+
+  function updateHandheldVisibility() {
+    if (!handheldMode) return;
+    const controls = canUseHandheldControls();
+    setUiHidden(touchControls, !controls);
+    setUiHidden(handheldToolbar, game.state !== "playing" || handheldIsPortrait());
+    setUiHidden(handheldChatButton, !online.connected);
+    setUiHidden(touchInteractButton, !controls || talkPrompt.hidden);
+  }
+
+  function updateHandheldHud() {
+    if (!handheldMode) return;
+    updateHandheldVisibility();
+    handheldLevel.textContent = "Lv " + getCharacterLevel();
+    const activity = document.getElementById("handheldActivity");
+    setUiHidden(activity, !localPlayerInSharedActivity());
+    activity.textContent = waveLabel.textContent;
+    document.getElementById("handheldProgress").textContent = "Level " + getCharacterLevel() + " · " + xpReadout.title;
+    if (!touchInteractButton.hidden) {
+      const label = talkAction.textContent + (talkTarget.textContent ? " · " + talkTarget.textContent : "");
+      if (touchInteractButton.textContent !== label) touchInteractButton.textContent = label;
+    }
+    const paused = game.state === "paused";
+    for (const button of handheldMenuButtons) setUiHidden(button, !paused);
+    setUiHidden(document.getElementById("handheldKitButton"), !paused || availableEquipmentForCharacter(player.character).length < 2);
+    setUiHidden(document.getElementById("handheldMountButton"), !paused || ownedMountIds().length < 2);
+    setUiHidden(document.getElementById("handheldYieldButton"), !paused || !localPlayerInSharedActivity());
+    document.getElementById("handheldMuteButton").textContent = audio.muted ? "Unmute audio" : "Mute audio";
+    const icons = { attack: attackIcon, secondary: blockIcon, special: potionIcon, utility: utilityIcon, payoff: payoffIcon };
+    for (const button of touchButtons) {
+      const source = icons[button.dataset.touchAction];
+      if (!source) continue;
+      const locked = source.classList.contains("locked");
+      button.disabled = locked || isPlayerMounted();
+      button.setAttribute("aria-label", source.title);
+      button.title = source.title;
+      button.querySelector(".touch-state").textContent = locked ? source.dataset.lock : "";
+      for (const name of ["active", "ready", "empowered"]) button.classList.toggle(name, source.classList.contains(name));
+      const fill = button.querySelector(".cooldown-fill");
+      if (fill) {
+        fill.style.transform = source.querySelector(".cooldown-fill").style.transform;
+        button.querySelector(".cooldown-time").textContent = source.querySelector(".cooldown-time").textContent;
+      }
+    }
+    const drink = touchButtons.find(button => button.dataset.touchAction === "drink");
+    const count = storedPotions().length;
+    drink.disabled = count === 0;
+    drink.querySelector(".touch-state").textContent = String(count);
+  }
+
+  function openHandheldJournal() {
+    if (game.state === "playing") openSessionMenu();
+    if (game.state !== "paused") return;
+    closeHelpPanel();
+    updateHud();
+    updateQuestLog();
+    for (const node of journalNodes) handheldJournalBody.appendChild(node);
+    handheldJournal.hidden = false;
+    startCard.hidden = true;
+  }
+
+  function closeHandheldJournal() {
+    if (handheldJournal.hidden) return;
+    for (const { node, parent, next } of journalHomes) parent.insertBefore(node, next?.parentNode === parent ? next : null);
+    handheldJournal.hidden = true;
+    startCard.hidden = false;
+  }
+
   function beginPlay() {
+    if (handheldIsPortrait()) { syncHandheldOrientation(); return; }
+    handheldInput?.reset();
     syncPlayerName();
     if (online.role === "join" && !online.connected) {
       updateOnlineStatus("Join a room first");
@@ -22933,7 +23184,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   }
 
   function requestGamePointerLock() {
-    if (!document.body.requestPointerLock) {
+    if (handheldMode || !document.body.requestPointerLock) {
       return;
     }
     try {
@@ -22947,6 +23198,33 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
   }
 
   function setupInput() {
+    handheldInput = createHandheldInput({
+      window, stick: document.getElementById("touchStick"), thumb: document.getElementById("touchStickThumb"),
+      lookSurface: renderer.domElement, buttons: document.querySelectorAll("[data-touch-action]"),
+      enabled: handheldMode, canPlay: canUseHandheldControls, onEnable: enableHandheldMode,
+      onLook: (dx, dy) => {
+        game.cameraYaw -= dx * 0.006;
+        game.cameraPitch = clamp(game.cameraPitch - dy * 0.004, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX);
+        if (dx || dy) document.getElementById("touchLookHint").hidden = true;
+      },
+      onAction: performHandheldAction, onSecondaryRelease: () => { player.blockHeld = false; }
+    });
+    syncHandheldViewport();
+    syncHandheldOrientation();
+    syncFullscreenButtons();
+    for (const button of fullscreenButtons) button.addEventListener("click", toggleFullscreen);
+    for (const event of ["fullscreenerror", "webkitfullscreenerror"]) document.addEventListener(event, handleFullscreenBlocked, true);
+    for (const event of ["fullscreenchange", "webkitfullscreenchange"]) document.addEventListener(event, () => {
+      handheldInput?.reset();
+      syncFullscreenButtons();
+      onResize();
+      syncHandheldViewport();
+      syncHandheldOrientation();
+    });
+    window.addEventListener("resize", syncHandheldViewport);
+    window.addEventListener("resize", syncHandheldOrientation);
+    window.visualViewport?.addEventListener("resize", syncHandheldViewport);
+    window.visualViewport?.addEventListener("scroll", syncHandheldViewport);
     window.addEventListener("pointerdown", unlockAudio, { once: true });
     window.addEventListener("keydown", unlockAudio, { once: true });
     window.addEventListener("keydown", event => {
@@ -22988,7 +23266,9 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
         if (game.state === "playing") {
           openSessionMenu();
         } else if (game.state === "paused") {
-          if (!helpPanel.hidden) {
+          if (!handheldJournal.hidden) {
+            closeHandheldJournal();
+          } else if (!helpPanel.hidden) {
             closeHelpPanel();
           } else {
             resumeSession();
@@ -23093,6 +23373,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
 
     window.addEventListener("mousedown", event => {
       if (game.state !== "playing" || !questDialog.hidden || !benchDialog.hidden || chat.open) return;
+      if (event.target !== renderer.domElement && event.target !== document.body) return;
       if (event.button === 0) {
         startAttack();
       }
@@ -23137,12 +23418,16 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
           submitChatInput();
         }
       });
-      chatInput.addEventListener("blur", () => {
-        if (chat.open) {
+      chatInput.addEventListener("blur", event => {
+        if (chat.open && !chatForm.contains(event.relatedTarget)) {
           closeChatInput(true);
         }
       });
       window.setInterval(refreshChatPanel, 450);
+      document.getElementById("chatCloseButton").addEventListener("click", () => closeChatInput());
+      for (const button of [document.getElementById("chatSendButton"), document.getElementById("chatCloseButton")]) {
+        button.addEventListener("pointerdown", event => event.preventDefault());
+      }
     }
 
     window.addEventListener("mousemove", event => {
@@ -23156,7 +23441,7 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
     document.addEventListener("pointerlockchange", () => {
       const wasPointerActive = game.pointerActive;
       game.pointerActive = document.pointerLockElement === document.body;
-      if (!game.pointerActive && game.state === "playing" && (wasPointerActive || game.startedOnce)) {
+      if (!handheldMode && !game.pointerActive && game.state === "playing" && (wasPointerActive || game.startedOnce)) {
         pauseForControlLoss();
       }
     });
@@ -23174,48 +23459,20 @@ import { createRangerBowPoseSystem } from "./systems/rangerBowPose.js";
       }
     });
 
-    for (const button of document.querySelectorAll("[data-touch-key]")) {
-      const code = button.dataset.touchKey;
-      const down = event => {
-        event.preventDefault();
-        keys.add(code);
-      };
-      const upTouch = event => {
-        event.preventDefault();
-        keys.delete(code);
-      };
-      button.addEventListener("pointerdown", down);
-      button.addEventListener("pointerup", upTouch);
-      button.addEventListener("pointercancel", upTouch);
-      button.addEventListener("pointerleave", upTouch);
-    }
-
-    for (const button of document.querySelectorAll("[data-touch-action]")) {
-      const action = button.dataset.touchAction;
-      button.addEventListener("pointerdown", event => {
-        event.preventDefault();
-        if (action === "attack") startAttack();
-        if (action === "block") startSecondaryAbility();
-        if (action === "potion") {
-          if (player.character === "knight") {
-            startKnightBash();
-          } else if (player.character === "ranger") {
-            startRangerPierce();
-          } else if (player.character === "sentinel") {
-            startSentinelMoulinet();
-          } else {
-            dropWizardHealthPotion();
-          }
-        }
-      });
-      button.addEventListener("pointerup", event => {
-        event.preventDefault();
-        if (action === "block" && player.character === "knight") player.blockHeld = false;
-      });
-      button.addEventListener("pointercancel", () => {
-        if (action === "block" && player.character === "knight") player.blockHeld = false;
-      });
-    }
+    document.getElementById("handheldMenuButton").addEventListener("click", openSessionMenu);
+    document.getElementById("handheldWorldButton").addEventListener("click", openHandheldJournal);
+    handheldChatButton.addEventListener("click", openChatInput);
+    document.getElementById("handheldJournalButton").addEventListener("click", openHandheldJournal);
+    document.getElementById("handheldJournalBack").addEventListener("click", closeHandheldJournal);
+    document.getElementById("handheldJournalResume").addEventListener("click", resumeSession);
+    document.getElementById("handheldKitButton").addEventListener("click", () => { resumeSession(); cycleEquippedWeapon(); });
+    document.getElementById("handheldMountButton").addEventListener("click", () => { resumeSession(); cycleActiveMount(); });
+    document.getElementById("handheldYieldButton").addEventListener("click", () => {
+      resumeSession();
+      if (localPlayerInArenaActivity()) endCrownringArenaActivity("yield");
+      else if (localPlayerInDungeonActivity()) endDungeonActivity("yield");
+    });
+    document.getElementById("handheldMuteButton").addEventListener("click", () => { setAudioMuted(!audio.muted); updateHandheldHud(); });
 
     for (const card of characterCards) {
       card.addEventListener("click", () => {

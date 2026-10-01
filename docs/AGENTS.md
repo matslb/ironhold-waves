@@ -180,7 +180,7 @@ Owns menus, HUD, quest log, map, pause/session flow, desktop and touch controls,
 
 Responsibilities:
 - Keep desktop gameplay primary.
-- Treat touch/handheld playability, landscape enforcement, and portrait notices as deferred work until the Game Director reopens small-screen support.
+- Phone/tablet play is active scope (T-035, user request): support landscape with complete touch controls and readable menus. Upright orientation shows a rotate prompt and pauses play; portrait layouts are outside scope.
 - Make room states understandable: start, host, join, pause, leave, close, resume.
 - Prevent UI interactions from firing world actions underneath.
 - Keep quest information compact and actionable.
@@ -188,8 +188,8 @@ Responsibilities:
 
 Definition of done:
 - Controls are discoverable.
-- Text does not overlap or clip at common desktop sizes.
-- Touch/handheld behavior is unchanged unless a task explicitly reopens small-screen support.
+- Text does not overlap or clip at common desktop, phone, and tablet sizes.
+- Touch supports movement, aiming, all abilities, interaction, and session flow; rotation, modal entry, and app switching release held input.
 - Escape, pointer lock, dialogs, and menus behave predictably.
 - Current game state is obvious.
 
